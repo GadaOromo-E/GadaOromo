@@ -1,51 +1,119 @@
+    * {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: Arial, sans-serif;
+}
+
 body {
-    font-family: Arial, sans-serif;
-    background: linear-gradient(to right, #e8f0ff, #f9fbff);
-    display: flex;
-    justify-content: center;
-    padding: 20px;
+  background: #000;
+  color: #fff;
 }
 
-.container {
-    background: white;
-    max-width: 500px;
-    width: 100%;
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0px 0px 15px rgba(0,0,0,0.1);
+/* Navbar */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  background: #111;
 }
 
-h1, h2 {
-    text-align: center;
+.logo {
+  font-size: 24px;
+  font-weight: bold;
+  color: red;
 }
 
-input, button {
-    width: 100%;
-    padding: 10px;
-    margin: 5px 0;
-    border-radius: 6px;
-    border: 1px solid #ccc;
+.navbar nav a {
+  color: white;
+  margin-left: 20px;
+  text-decoration: none;
+  font-weight: bold;
 }
 
-button {
-    background: #4a6cff;
-    color: white;
-    border: none;
-    cursor: pointer;
+.navbar nav a:hover {
+  color: red;
 }
 
-button:hover {
-    background: #3a5be0;
+/* Hero */
+.hero {
+  text-align: center;
+  padding: 80px 20px;
 }
 
-a {
-    text-decoration: none;
-    color: #4a6cff;
+.hero h1 {
+  font-size: 48px;
+  color: white;
+}
+
+.slogan {
+  color: red;
+  font-size: 20px;
+  margin: 10px 0;
+}
+
+.subtitle {
+  margin: 20px 0;
+  color: #ccc;
+}
+
+.hero input {
+  padding: 12px;
+  width: 250px;
+  border-radius: 5px;
+  border: none;
+  margin-right: 10px;
+}
+
+.hero button {
+  padding: 12px 20px;
+  background: red;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.hero button:hover {
+  background: darkred;
+}
+
+.result {
+  margin-top: 20px;
+  background: #111;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+/* Features */
+.features {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  padding: 60px 20px;
+  flex-wrap: wrap;
 }
 
 .card {
-    background: #f1f5ff;
-    padding: 10px;
-    border-radius: 8px;
-    margin-top: 10px;
+  background: #111;
+  padding: 20px;
+  width: 250px;
+  border-radius: 10px;
+  text-align: center;
+  border: 1px solid #222;
+}
+
+.card h3 {
+  color: red;
+  margin-bottom: 10px;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  padding: 20px;
+  background: #111;
+  color: #aaa;
+  font-size: 14px;
 }

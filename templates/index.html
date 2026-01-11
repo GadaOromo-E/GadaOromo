@@ -1,36 +1,62 @@
 <!DOCTYPE html>
-<html>
+<html lang="om">
 <head>
-    <title>GadaOromo Dictionary</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h1>🌍 GadaOromo Dictionary</h1>
+  <header class="navbar">
+    <div class="logo">GADA</div>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/submit">Submit</a>
+      <a href="#">About</a>
+      <a href="#">Community</a>
+    </nav>
+  </header>
 
-<form method="POST">
-    <input type="text" name="word" placeholder="Search English or Oromo" required>
-    <button type="submit">Search</button>
-</form>
+  <section class="hero">
+    <h1>Gada Oromo Dictionary</h1>
+    <p class="slogan">Your global Oromo dictionary</p>
 
-{% if result %}
-    <h3>Result</h3>
-    <p><b>English:</b> {{ result[0] }}</p>
-    <p><b>Oromo:</b> {{ result[1] }}</p>
-{% endif %}
+    <p class="subtitle">
+      <strong>Afaan Oromo:</strong> Kuusaa jechoota Afaan Oromo addunyaa guutuu<br>
+      <strong>English:</strong> A global Oromo language dictionary
+    </p>
 
-<hr>
+    <form method="POST" action="/">
+      <input type="text" name="query" placeholder="Barbaadi / Search..." required>
+      <button type="submit">Search</button>
+    </form>
 
-<h2>📚 Approved Words</h2>
-<ul>
-{% for w in words %}
-    <li>{{ w[0] }} — {{ w[1] }}</li>
-{% endfor %}
-</ul>
+    {% if result %}
+      <div class="result">
+        <p><strong>Result:</strong> {{ result }}</p>
+      </div>
+    {% endif %}
+  </section>
 
-<hr>
+  <section class="features">
+    <div class="card">
+      <h3>🌍 Global</h3>
+      <p>Accessible from anywhere in the world.</p>
+    </div>
+    <div class="card">
+      <h3>🤝 Community</h3>
+      <p>Built by and for the Oromo community.</p>
+    </div>
+    <div class="card">
+      <h3>📚 Learning</h3>
+      <p>Preserving language and culture.</p>
+    </div>
+  </section>
 
-<a href="/submit">➕ Submit a Word</a> |
-<a href="/admin">🔐 Admin Login</a>
+  <footer>
+    <p>© 2026 Gada Oromo Dictionary | Built for the world 🌍</p>
+  </footer>
 
 </body>
 </html>
