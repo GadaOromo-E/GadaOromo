@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GadaOromo Dictionary</title>
+</head>
+<body>
+
+<h1>🌍 GadaOromo Dictionary</h1>
+
+<form method="POST">
+    <input type="text" name="word" placeholder="Search English or Oromo" required>
+    <button type="submit">Search</button>
+</form>
+
+{% if result %}
+    <h3>Result</h3>
+    <p><b>English:</b> {{ result[0] }}</p>
+    <p><b>Oromo:</b> {{ result[1] }}</p>
+{% endif %}
+
+<hr>
+
+<h2>📚 Approved Words</h2>
+<ul>
+{% for w in words %}
+    <li>{{ w[0] }} — {{ w[1] }}</li>
+{% endfor %}
+</ul>
+
+<hr>
+
+<a href="/submit">➕ Submit a Word</a> |
+<a href="/admin">🔐 Admin Login</a>
+
+</body>
+</html>
