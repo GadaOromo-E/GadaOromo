@@ -3,25 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Submit Phrase | Gada Oromo Dictionary</title>
+  <title>Submit Word | Gada Oromo Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-
 <div class="container">
-  <h2>Submit a Phrase / Sentence</h2>
 
-  <form method="POST">
-    <input type="text" name="english" placeholder="English phrase" required>
-    <input type="text" name="oromo" placeholder="Afaan Oromo phrase" required>
-    <button type="submit">Submit Phrase</button>
-  </form>
-
-  <div style="text-align:center; margin-top:16px;">
-    <a href="/">⬅ Home</a>
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Submit a Word</h2>
+        <div class="subtle">Your submission will be reviewed by admin before it appears publicly.</div>
+      </div>
+      <a class="btn" href="/">⬅ Home</a>
+    </div>
   </div>
-</div>
 
+  <div class="card">
+    <form method="POST" autocomplete="off">
+      <input type="text" name="english" placeholder="English word (example: water)" required>
+      <div style="height:10px;"></div>
+      <input type="text" name="oromo" placeholder="Afaan Oromo word (example: bishaan)" required>
+      <div style="height:10px;"></div>
+      <button type="submit">Submit Word</button>
+    </form>
+  </div>
+
+</div>
 </body>
 </html>
+
+
+
 

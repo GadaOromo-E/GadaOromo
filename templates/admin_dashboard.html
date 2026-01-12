@@ -8,55 +8,80 @@
 </head>
 <body>
 
-  <div class="container">
-    <h1>Admin Dashboard</h1>
-    <p>Pending submissions (approve or reject).</p>
+<div class="container">
 
-    <!-- ================= WORDS ================= -->
-    <h2>Pending Words</h2>
-
-    {% if pending and pending|length > 0 %}
-      {% for p in pending %}
-        <div class="card">
-          <div><b>English:</b> {{ p[1] }}</div>
-          <div><b>Oromo:</b> {{ p[2] }}</div>
-
-          <div style="margin-top:10px; display:flex; gap:10px;">
-            <a class="btn" href="/approve/{{ p[0] }}">✅ Approve</a>
-            <a class="btn danger" href="/reject/{{ p[0] }}">❌ Reject</a>
-          </div>
-        </div>
-      {% endfor %}
-    {% else %}
-      <div class="card">No pending words right now ✅</div>
-    {% endif %}
-
-    <hr>
-
-    <!-- ================= PHRASES ================= -->
-    <h2>Pending Phrases</h2>
-
-    {% if pending_phrases and pending_phrases|length > 0 %}
-      {% for p in pending_phrases %}
-        <div class="card">
-          <div><b>English phrase:</b> {{ p[1] }}</div>
-          <div><b>Oromo phrase:</b> {{ p[2] }}</div>
-
-          <div style="margin-top:10px; display:flex; gap:10px;">
-            <a class="btn" href="/approve_phrase/{{ p[0] }}">✅ Approve</a>
-            <a class="btn danger" href="/reject_phrase/{{ p[0] }}">❌ Reject</a>
-          </div>
-        </div>
-      {% endfor %}
-    {% else %}
-      <div class="card">No pending phrases right now ✅</div>
-    {% endif %}
-
-    <hr>
-    <div style="text-align:center;">
-      <a href="/logout">Logout</a> | <a href="/">Home</a>
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Admin Dashboard</h2>
+        <div class="subtle">Approve or reject pending submissions.</div>
+      </div>
+      <a class="btn danger" href="/logout">🚪 Logout</a>
     </div>
   </div>
 
+  <div class="card">
+    <div class="quick-actions">
+      <a class="btn" href="/">🏠 Home</a>
+      <a class="btn" href="/translate">🌍 Translator</a>
+      <a class="btn" href="/submit">➕ Submit Word</a>
+      <a class="btn" href="/submit_phrase">➕ Submit Phrase</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Pending Words</h2>
+
+    {% if pending and pending|length > 0 %}
+      <div class="grid">
+        {% for p in pending %}
+          <div class="card" style="margin-top:0;">
+            <div class="subtle">English</div>
+            <div class="result-box" style="margin-top:8px;"><b>{{ p[1] }}</b></div>
+
+            <div class="subtle" style="margin-top:10px;">Oromo</div>
+            <div class="result-box" style="margin-top:8px;"><b>{{ p[2] }}</b></div>
+
+            <div class="small-actions">
+              <a class="btn primary" href="/approve/{{ p[0] }}">✅ Approve</a>
+              <a class="btn danger" href="/reject/{{ p[0] }}" onclick="return confirm('Reject this word?');">❌ Reject</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No pending words right now ✅</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Pending Phrases</h2>
+
+    {% if pending_phrases and pending_phrases|length > 0 %}
+      <div class="grid">
+        {% for p in pending_phrases %}
+          <div class="card" style="margin-top:0;">
+            <div class="subtle">English phrase</div>
+            <div class="result-box" style="margin-top:8px;"><b>{{ p[1] }}</b></div>
+
+            <div class="subtle" style="margin-top:10px;">Oromo phrase</div>
+            <div class="result-box" style="margin-top:8px;"><b>{{ p[2] }}</b></div>
+
+            <div class="small-actions">
+              <a class="btn primary" href="/approve_phrase/{{ p[0] }}">✅ Approve</a>
+              <a class="btn danger" href="/reject_phrase/{{ p[0] }}" onclick="return confirm('Reject this phrase?');">❌ Reject</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No pending phrases right now ✅</div>
+    {% endif %}
+  </div>
+
+</div>
+
 </body>
 </html>
+
+

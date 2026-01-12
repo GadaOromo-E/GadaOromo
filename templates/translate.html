@@ -9,99 +9,169 @@
 <body>
 
 <div class="container">
-  <h2>🌍 Oromo ↔ English Translator</h2>
 
-  <form method="POST">
-    <select name="direction">
-      <option value="auto" {% if direction == "auto" %}selected{% endif %}>Auto Detect</option>
-      <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
-      <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
-    </select>
-
-    <button type="button" class="mic-btn" onclick="startVoice()">🎤 Speak</button>
-
-    <textarea name="text" placeholder="Type word or sentence..." required>{{ text or "" }}</textarea>
-    <button type="submit">Translate</button>
-  </form>
-
-  <div class="sound-buttons">
-    <button type="button" onclick="speakInput()">🔊 Speak Input</button>
-    <button type="button" onclick="speakResult()">🔊 Speak Result</button>
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">🌍 Oromo ↔ English Translator</h2>
+        <div class="subtle">
+          {% if direction == "om_en" %}Detected/Selected: Oromo → English
+          {% elif direction == "en_om" %}Detected/Selected: English → Oromo
+          {% else %}Detected/Selected: Auto{% endif %}
+        </div>
+      </div>
+      <a class="btn" href="/">⬅ Home</a>
+    </div>
   </div>
 
-  {% if result %}
-    <div class="result-box">
-      <strong>Result:</strong> <span id="resultText">{{ result }}</span>
-    </div>
-  {% else %}
-    <div class="result-box" style="opacity:0.8;">
-      Result will appear here…
-    </div>
-  {% endif %}
+  <div class="card">
+    <form method="POST" id="translateForm">
+      <div class="row">
+        <select name="direction" id="directionSelect">
+          <option value="auto" {% if direction == "auto" %}selected{% endif %}>Auto Detect</option>
+          <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
+          <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
+        </select>
 
-  <div style="text-align:center; margin-top:16px;">
-    <a href="/">⬅ Home</a>
+        <button type="button" onclick="startVoice()">🎤 Speak</button>
+      </div>
+
+      <textarea name="text" id="textInput" placeholder="Type word or sentence..." required oninput="autoGrow(this)">{{ text or "" }}</textarea>
+
+      <div class="bottom-bar">
+        <div class="bottom-actions">
+          <button type="submit">Translate</button>
+          <a class="btn" href="javascript:void(0)" onclick="speakInput()">🔊 Speak</a>
+        </div>
+      </div>
+
+      <div class="small-actions">
+        <button type="button" class="btn" onclick="clearInput()">🧹 Clear</button>
+        <button type="button" class="btn" onclick="swapDirection()">🔁 Swap</button>
+      </div>
+    </form>
+
+    {% if result %}
+      <div class="result-box">
+        <strong>Result:</strong> <span id="resultText">{{ result }}</span>
+      </div>
+
+      <div class="small-actions">
+        <button type="button" class="btn" onclick="speakResult()">🔊 Speak Result</button>
+        <button type="button" class="btn" onclick="copyResult()">📋 Copy Result</button>
+      </div>
+    {% else %}
+      <div class="result-box" style="opacity:0.85;">Result will appear here…</div>
+    {% endif %}
+
+    {% if suggestions %}
+      <div style="margin-top:14px;">
+        <h2>Did you mean…</h2>
+
+        {% if suggestions.closest and suggestions.closest|length > 0 %}
+          <div class="subtle">Closest matches</div>
+          <div class="chips">
+            {% for s in suggestions.closest %}
+              <span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if suggestions.prefix and suggestions.prefix|length > 0 %}
+          <div class="subtle" style="margin-top:10px;">Starts with</div>
+          <div class="chips">
+            {% for s in suggestions.prefix %}
+              <span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if suggestions.partial and suggestions.partial|length > 0 %}
+          <div class="subtle" style="margin-top:10px;">Contains</div>
+          <div class="chips">
+            {% for s in suggestions.partial %}
+              <span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if trending %}
+      <div style="margin-top:14px;">
+        <h2>🔥 Trending</h2>
+        <div class="chips">
+          {% for row in trending %}
+            <span class="chip" onclick="useSuggestion('{{ row[0]|e }}')">{{ row[0] }}</span>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
   </div>
 </div>
 
 <script>
-function speakText(text, langCode) {
-  if (!('speechSynthesis' in window)) {
-    alert("Speech is not supported in this browser.");
-    return;
-  }
-  if (!text || !text.trim()) {
-    alert("Nothing to speak.");
-    return;
-  }
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = langCode;
+function autoGrow(el){ el.style.height="auto"; el.style.height=(el.scrollHeight)+"px"; }
+window.addEventListener("load", ()=>{ const ta=document.getElementById("textInput"); if(ta) autoGrow(ta); });
+
+function useSuggestion(text){ const ta=document.getElementById("textInput"); ta.value=text; autoGrow(ta); document.getElementById("translateForm").submit(); }
+function clearInput(){ const ta=document.getElementById("textInput"); ta.value=""; autoGrow(ta); ta.focus(); }
+function swapDirection(){
+  const sel=document.getElementById("directionSelect");
+  if(sel.value==="om_en") sel.value="en_om";
+  else if(sel.value==="en_om") sel.value="om_en";
+  else sel.value="en_om";
+}
+function copyResult(){
+  const el=document.getElementById("resultText");
+  const txt=el?el.innerText:"";
+  if(!txt) return alert("Nothing to copy.");
+  navigator.clipboard.writeText(txt).then(()=>alert("Copied!")).catch(()=>alert("Copy failed."));
+}
+
+function speakText(text, langCode){
+  if(!('speechSynthesis' in window)) return alert("Speech is not supported in this browser.");
+  if(!text || !text.trim()) return alert("Nothing to speak.");
+  const u=new SpeechSynthesisUtterance(text);
+  u.lang=langCode;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
-
-function speakInput() {
-  const txt = document.querySelector('textarea[name="text"]').value;
-  const dir = document.querySelector('select[name="direction"]').value;
-  const lang = (dir === "om_en") ? "om-ET" : "en-US";
+function speakInput(){
+  const txt=document.getElementById("textInput").value;
+  const dir=document.getElementById("directionSelect").value;
+  const lang=(dir==="om_en") ? "om-ET" : "en-US";
+  speakText(txt, lang);
+}
+function speakResult(){
+  const el=document.getElementById("resultText");
+  const txt=el?el.innerText:"";
+  const dir=document.getElementById("directionSelect").value;
+  const lang=(dir==="om_en") ? "en-US" : "om-ET";
   speakText(txt, lang);
 }
 
-function speakResult() {
-  const el = document.getElementById("resultText");
-  const txt = el ? el.innerText : "";
-  const dir = document.querySelector('select[name="direction"]').value;
-  const lang = (dir === "om_en") ? "en-US" : "om-ET";
-  speakText(txt, lang);
-}
-</script>
-
-<script>
-function startVoice() {
+function startVoice(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    alert("Voice input not supported. Use Chrome on PC/Android.");
-    return;
-  }
+  if(!SpeechRecognition) return alert("Voice input not supported. Use Chrome on PC/Android.");
+  const recognition=new SpeechRecognition();
+  const dir=document.getElementById("directionSelect").value;
+  recognition.lang=(dir==="om_en") ? "om-ET" : "en-US";
+  recognition.interimResults=false;
 
-  const recognition = new SpeechRecognition();
-  const dir = document.querySelector('select[name="direction"]').value;
-
-  recognition.lang = (dir === "om_en") ? "om-ET" : "en-US";
-  recognition.interimResults = false;
-
-  recognition.onresult = function(event) {
-    const text = event.results[0][0].transcript;
-    document.querySelector('textarea[name="text"]').value = text;
+  recognition.onresult=function(event){
+    const text=event.results[0][0].transcript;
+    const ta=document.getElementById("textInput");
+    ta.value=text; autoGrow(ta);
   };
-
-  recognition.onerror = function(e) {
-    alert("Voice input error: " + e.error);
-  };
-
+  recognition.onerror=function(e){ alert("Voice input error: " + e.error); };
   recognition.start();
 }
 </script>
 
 </body>
 </html>
+
+
+

@@ -9,11 +9,30 @@ from flask import Flask, render_template, request, redirect, session
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 import os
+import re
+from difflib import get_close_matches
 
 app = Flask(__name__)
-app.secret_key = "gadaoromo_secret_key"
+app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
 DB_NAME = "gadaoromo.db"
+
+# ------------------ STOPWORDS (START SMALL, EXPAND LATER) ------------------
+
+OROMO_STOP = {"fi", "kan", "inni", "isaan", "ani", "ati", "nu", "keessa", "irratti"}
+EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", "with", "it", "this"}
+
+# ------------------ TEXT NORMALIZATION ------------------
+
+def normalize_text(text: str) -> str:
+    t = (text or "").lower().strip()
+    t = re.sub(r"[^\w\s]", " ", t)      # punctuation clean
+    t = re.sub(r"\s+", " ", t).strip()  # collapse spaces
+    return t
+
+def normalize_tokens(text: str):
+    t = normalize_text(text)
+    return t.split() if t else []
 
 # ------------------ DATABASE SETUP ------------------
 
@@ -50,17 +69,191 @@ def init_db():
         )
     """)
 
+    # Analytics: raw logs (optional but useful)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS search_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            direction TEXT,
+            is_phrase INTEGER DEFAULT 0,
+            is_exact INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # Analytics: aggregated counts (fast trending)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS search_counts (
+            query TEXT PRIMARY KEY,
+            total_count INTEGER DEFAULT 0,
+            today_count INTEGER DEFAULT 0,
+            week_count INTEGER DEFAULT 0,
+            last_searched_at DATETIME
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 init_db()
 
+# ------------------ ANALYTICS HELPERS ------------------
+
+def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int):
+    q = normalize_text(raw_query)
+    if not q:
+        return
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute(
+        "INSERT INTO search_logs (query, direction, is_phrase, is_exact) VALUES (?, ?, ?, ?)",
+        (q, direction, int(is_phrase), int(is_exact))
+    )
+
+    c.execute("SELECT total_count FROM search_counts WHERE query=?", (q,))
+    row = c.fetchone()
+
+    if row:
+        c.execute("""
+            UPDATE search_counts
+            SET total_count = total_count + 1,
+                today_count = today_count + 1,
+                week_count = week_count + 1,
+                last_searched_at = CURRENT_TIMESTAMP
+            WHERE query=?
+        """, (q,))
+    else:
+        c.execute("""
+            INSERT INTO search_counts (query, total_count, today_count, week_count, last_searched_at)
+            VALUES (?, 1, 1, 1, CURRENT_TIMESTAMP)
+        """, (q,))
+
+    conn.commit()
+    conn.close()
+
+def get_trending(limit=20):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        SELECT query, today_count, week_count, total_count
+        FROM search_counts
+        ORDER BY today_count DESC, week_count DESC, total_count DESC
+        LIMIT ?
+    """, (limit,))
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+# ------------------ SUGGESTIONS (“DID YOU MEAN…”) ------------------
+
+def suggest_terms(term: str, direction: str, limit: int = 8):
+    t = normalize_text(term)
+    if not t:
+        return {"closest": [], "prefix": [], "partial": []}
+
+    col = "oromo" if direction == "om_en" else "english"
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # Prefix matches
+    c.execute(f"""
+        SELECT {col} FROM words
+        WHERE status='approved' AND {col} LIKE ?
+        LIMIT ?
+    """, (t + "%", limit))
+    prefix = [r[0] for r in c.fetchall()]
+
+    # Partial matches
+    c.execute(f"""
+        SELECT {col} FROM words
+        WHERE status='approved' AND {col} LIKE ?
+        LIMIT ?
+    """, ("%" + t + "%", limit))
+    partial = [r[0] for r in c.fetchall()]
+
+    # Fuzzy candidates (cap to avoid huge scan)
+    c.execute(f"""
+        SELECT {col} FROM words
+        WHERE status='approved'
+        ORDER BY id DESC
+        LIMIT 3000
+    """)
+    candidates = [r[0] for r in c.fetchall()]
+    conn.close()
+
+    closest = get_close_matches(t, candidates, n=limit, cutoff=0.75)
+
+    def dedup(seq):
+        seen = set()
+        out = []
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    return {"closest": dedup(closest), "prefix": dedup(prefix), "partial": dedup(partial)}
+
+# ------------------ AUTO LANGUAGE DETECT (IMPROVED) ------------------
+
+def detect_direction_auto(text: str) -> str:
+    t = normalize_text(text)
+    tokens = t.split()
+    if not tokens:
+        return "en_om"
+
+    filtered = [w for w in tokens if w not in EN_STOP and w not in OROMO_STOP]
+    if not filtered:
+        filtered = tokens
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    or_score = 0
+    en_score = 0
+
+    # Word hits
+    for w in filtered:
+        c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
+        if c.fetchone():
+            or_score += 1
+
+        c.execute("SELECT 1 FROM words WHERE status='approved' AND english=?", (w,))
+        if c.fetchone():
+            en_score += 1
+
+    # Phrase exact match bonus (strong signal)
+    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
+    if c.fetchone():
+        or_score += 4
+
+    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND english=?", (t,))
+    if c.fetchone():
+        en_score += 4
+
+    conn.close()
+
+    # Threshold avoids flipping on tiny differences
+    if or_score > en_score + 0.5:
+        return "om_en"
+    if en_score > or_score + 0.5:
+        return "en_om"
+    return "en_om"
+
 # ------------------ TRANSLATION LOGIC (PHRASES FIRST, THEN WORDS) ------------------
 
-def translate_text(text: str, direction: str = "om_en") -> str:
-    t = (text or "").lower().strip()
+def translate_text(text: str, direction: str = "om_en"):
+    """
+    Returns: (translated_text, is_exact, is_phrase)
+    is_exact: 1 when exact phrase/word found, else 0
+    is_phrase: 1 when exact phrase matched, else 0
+    """
+    t = normalize_text(text)
     if not t:
-        return ""
+        return "", 0, 0
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -71,43 +264,53 @@ def translate_text(text: str, direction: str = "om_en") -> str:
         row = c.fetchone()
         if row:
             conn.close()
-            return row[0]
+            return row[0], 1, 1
     else:
         c.execute("SELECT oromo FROM phrases WHERE status='approved' AND english=?", (t,))
         row = c.fetchone()
         if row:
             conn.close()
-            return row[0]
+            return row[0], 1, 1
 
-    # 2) Word exact match
-    if direction == "om_en":
-        c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (t,))
-        row = c.fetchone()
-        if row:
-            conn.close()
-            return row[0]
-    else:
-        c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (t,))
-        row = c.fetchone()
-        if row:
-            conn.close()
-            return row[0]
+    # 2) Word exact match (only if input is single token)
+    tokens = t.split()
+    if len(tokens) == 1:
+        if direction == "om_en":
+            c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (t,))
+            row = c.fetchone()
+            if row:
+                conn.close()
+                return row[0], 1, 0
+        else:
+            c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (t,))
+            row = c.fetchone()
+            if row:
+                conn.close()
+                return row[0], 1, 0
 
     # 3) Word-by-word fallback
-    tokens = t.split()
     out = []
+    any_translated = False
     for w in tokens:
         if direction == "om_en":
             c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (w,))
             r = c.fetchone()
-            out.append(r[0] if r else w)
+            if r:
+                out.append(r[0])
+                any_translated = True
+            else:
+                out.append(w)
         else:
             c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (w,))
             r = c.fetchone()
-            out.append(r[0] if r else w)
+            if r:
+                out.append(r[0])
+                any_translated = True
+            else:
+                out.append(w)
 
     conn.close()
-    return " ".join(out)
+    return " ".join(out), 0, 0
 
 # ------------------ HOME PAGE ------------------
 
@@ -117,81 +320,78 @@ def home():
     c = conn.cursor()
 
     result = None
+    suggestions = None
+
     if request.method == "POST":
-        word = request.form.get("word", "").lower().strip()
+        word = normalize_text(request.form.get("word", ""))
         c.execute(
             "SELECT english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?)",
             (word, word)
         )
         result = c.fetchone()
 
+        # Suggestions if not found
+        if not result and word:
+            # try both directions for suggestions (word could be either)
+            suggestions = {
+                "en": suggest_terms(word, "en_om"),
+                "om": suggest_terms(word, "om_en")
+            }
+
     c.execute("SELECT english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
     all_words = c.fetchall()
     conn.close()
 
-    return render_template("index.html", result=result, words=all_words)
+    trending = get_trending(limit=15)
 
-# ------------------ TRANSLATOR PAGE (AUTO DETECT) ------------------
+    return render_template("index.html", result=result, words=all_words, suggestions=suggestions, trending=trending)
+
+# ------------------ TRANSLATOR PAGE (AUTO DETECT + SUGGESTIONS + ANALYTICS) ------------------
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
     result = None
     text = ""
     direction = "auto"
+    suggestions = None
 
     if request.method == "POST":
         text = request.form.get("text", "")
         direction = request.form.get("direction", "auto")
-        t = (text or "").lower().strip()
 
         if direction == "auto":
-            tokens = t.split()
+            direction = detect_direction_auto(text)
 
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
+        translated, is_exact, is_phrase = translate_text(text, direction)
 
-            oromo_hits = 0
-            english_hits = 0
+        # analytics
+        record_search(text, direction, is_phrase, is_exact)
 
-            # Token matches in words
-            for w in tokens:
-                c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
-                if c.fetchone():
-                    oromo_hits += 1
+        result = translated
 
-                c.execute("SELECT 1 FROM words WHERE status='approved' AND english=?", (w,))
-                if c.fetchone():
-                    english_hits += 1
+        # suggestions (only when not exact, and input is basically one word)
+        clean = normalize_text(text)
+        if clean and not is_exact and len(clean.split()) == 1:
+            suggestions = suggest_terms(clean, direction)
 
-            # Whole sentence matches in phrases (weighted)
-            c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
-            if c.fetchone():
-                oromo_hits += 3
+    trending = get_trending(limit=15)
 
-            c.execute("SELECT 1 FROM phrases WHERE status='approved' AND english=?", (t,))
-            if c.fetchone():
-                english_hits += 3
-
-            conn.close()
-
-            if oromo_hits > english_hits:
-                direction = "om_en"
-            elif english_hits > oromo_hits:
-                direction = "en_om"
-            else:
-                direction = "en_om"
-
-        result = translate_text(text, direction)
-
-    return render_template("translate.html", result=result, text=text, direction=direction)
+    return render_template(
+        "translate.html",
+        result=result,
+        text=text,
+        direction=direction,
+        suggestions=suggestions,
+        trending=trending
+    )
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
     if request.method == "POST":
-        english = request.form.get("english", "").lower().strip()
-        oromo = request.form.get("oromo", "").lower().strip()
+        english = normalize_text(request.form.get("english", ""))
+        oromo = normalize_text(request.form.get("oromo", ""))
 
         if not english or not oromo:
             return "Please provide both English and Oromo. <a href='/submit'>Try again</a>"
@@ -211,8 +411,8 @@ def submit():
 @app.route("/submit_phrase", methods=["GET", "POST"])
 def submit_phrase():
     if request.method == "POST":
-        english = request.form.get("english", "").lower().strip()
-        oromo = request.form.get("oromo", "").lower().strip()
+        english = normalize_text(request.form.get("english", ""))
+        oromo = normalize_text(request.form.get("oromo", ""))
 
         if not english or not oromo:
             return "Please provide both English and Oromo phrase. <a href='/submit_phrase'>Try again</a>"
@@ -267,9 +467,11 @@ def dashboard():
 
     conn.close()
 
-    return render_template("admin_dashboard.html",
-                           pending=pending_words,
-                           pending_phrases=pending_phrases)
+    return render_template(
+        "admin_dashboard.html",
+        pending=pending_words,
+        pending_phrases=pending_phrases
+    )
 
 # ------------------ APPROVE / REJECT WORDS ------------------
 
@@ -335,19 +537,28 @@ def logout():
     return redirect("/")
 
 # ------------------ CREATE FIRST ADMIN (RUN ONCE) ------------------
+# IMPORTANT: Protect this route with an environment variable.
+# Set: ENABLE_CREATE_ADMIN=1 only temporarily.
 
 @app.route("/create_admin")
 def create_admin():
+    if os.environ.get("ENABLE_CREATE_ADMIN") != "1":
+        return "Disabled."
+
     email = "jewargure1@gmail.com"
     password = generate_password_hash("admin123")
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, password))
-    conn.commit()
-    conn.close()
 
-    return "Admin created. You can now login."
+    # avoid duplicates
+    c.execute("SELECT 1 FROM admin WHERE email=?", (email,))
+    if not c.fetchone():
+        c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, password))
+        conn.commit()
+
+    conn.close()
+    return "Admin created (or already exists). You can now login."
 
 # ------------------ RUN ------------------
 

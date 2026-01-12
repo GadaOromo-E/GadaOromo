@@ -1,80 +1,124 @@
 <!DOCTYPE html>
-<html lang="om">
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Gada Oromo Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-  <header class="navbar">
-    <div class="logo">GADA</div>
-    <nav>
-      <a href="/">Home</a>
-      <a href="/translate">Translate</a>
-      <a href="/submit">Submit</a>
-      <a href="#">About</a>
-      <a href="#">Community</a>
-    </nav>
+<div class="container">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>Gada Oromo Dictionary</h1>
+      <p class="tagline">Your global Oromo ↔ English community dictionary</p>
+    </div>
   </header>
 
-  <section class="hero">
-    <h1>Gada Oromo Dictionary</h1>
-    <p class="slogan">Your global Oromo dictionary</p>
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+    <a class="nav-link" href="/admin">Admin</a>
+  </nav>
 
-    <p class="subtitle">
-      <strong>Afaan Oromo:</strong> Kuusaa jechoota Afaan Oromo addunyaa guutuu<br>
-      <strong>English:</strong> A global Oromo language dictionary
-    </p>
+  <section class="card">
+    <h2>Search Dictionary</h2>
 
-    <form method="POST" action="/">
-      <input type="text" name="query" placeholder="Barbaadi / Search..." required>
+    <form method="POST" id="searchForm" class="row" style="align-items:stretch;">
+      <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
       <button type="submit">Search</button>
     </form>
 
     {% if result %}
-      <div class="result">
-        <p><strong>Result:</strong> {{ result }}</p>
+      <div class="result-box">
+        <b>English:</b> {{ result[0] }} <br>
+        <b>Oromo:</b> {{ result[1] }}
       </div>
+    {% elif result is not none %}
+      <div class="result-box">No exact match found.</div>
+    {% endif %}
+
+    {% if suggestions %}
+      <div style="margin-top:14px;">
+        <h2>Did you mean…</h2>
+
+        {% if suggestions.en %}
+          <div class="subtle">English suggestions</div>
+          <div class="chips">
+            {% for s in suggestions.en.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.en.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.en.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+          </div>
+        {% endif %}
+
+        {% if suggestions.om %}
+          <div class="subtle" style="margin-top:10px;">Oromo suggestions</div>
+          <div class="chips">
+            {% for s in suggestions.om.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.om.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.om.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="quick-actions">
+      <a class="btn primary" href="/translate">🌍 Translator</a>
+      <a class="btn" href="/submit">➕ Add Word</a>
+      <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
+    </div>
+  </section>
+
+  {% if trending %}
+    <section class="card">
+      <h2>🔥 Trending Searches</h2>
+      <div class="chips">
+        {% for t in trending %}
+          <span class="chip" onclick="useSuggestion('{{ t[0]|e }}')">{{ t[0] }} <span class="muted">({{ t[1] }})</span></span>
+        {% endfor %}
+      </div>
+      <div class="subtle" style="margin-top:8px;">Tap a trending word to search it.</div>
+    </section>
+  {% endif %}
+
+  <section class="card">
+    <h2>Approved Words</h2>
+
+    {% if words and words|length > 0 %}
+      <div class="word-list">
+        {% for w in words %}
+          <div class="word-row">
+            <span><b>{{ w[0] }}</b></span>
+            <span class="muted">→</span>
+            <span><b>{{ w[1] }}</b></span>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No approved words yet. Be the first to submit!</p>
     {% endif %}
   </section>
 
-  <section class="features">
-    <div class="card">
-      <h3>🌍 Global</h3>
-      <p>Accessible from anywhere in the world.</p>
-    </div>
-    <div class="card">
-      <h3>🤝 Community</h3>
-      <p>Built by and for the Oromo community.</p>
-    </div>
-    <div class="card">
-      <h3>📚 Learning</h3>
-      <p>Preserving language and culture.</p>
-    </div>
-  </section>
-
-  <footer>
-    <p>© 2026 Gada Oromo Dictionary | Built for the world 🌍</p>
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary</p>
   </footer>
+
+</div>
+
+<script>
+function useSuggestion(text){
+  const inp=document.getElementById("searchWord");
+  if(inp) inp.value=text;
+  document.getElementById("searchForm").submit();
+}
+</script>
 
 </body>
 </html>
-<section class="translator">
-  <h2>Quick Translator</h2>
 
-  <form method="POST">
-    <select name="direction">
-      <option value="om_en">Oromo → English</option>
-      <option value="en_om">English → Oromo</option>
-    </select>
 
-    <input type="text" name="translate_text" placeholder="Type here..." required>
-    <button type="submit">Translate</button>
-  </form>
 
-  {% if translation %}
-    <div class="result-box">{{ translation }}</div>
-  {% endif %}
-</section>
