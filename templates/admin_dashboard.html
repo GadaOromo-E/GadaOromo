@@ -12,6 +12,9 @@
     <h1>Admin Dashboard</h1>
     <p>Pending submissions (approve or reject).</p>
 
+    <!-- ================= WORDS ================= -->
+    <h2>Pending Words</h2>
+
     {% if pending and pending|length > 0 %}
       {% for p in pending %}
         <div class="card">
@@ -25,13 +28,34 @@
         </div>
       {% endfor %}
     {% else %}
-      <div class="card">
-        No pending submissions right now ✅
-      </div>
+      <div class="card">No pending words right now ✅</div>
     {% endif %}
 
     <hr>
-    <a href="/logout">Logout</a> | <a href="/">Home</a>
+
+    <!-- ================= PHRASES ================= -->
+    <h2>Pending Phrases</h2>
+
+    {% if pending_phrases and pending_phrases|length > 0 %}
+      {% for p in pending_phrases %}
+        <div class="card">
+          <div><b>English phrase:</b> {{ p[1] }}</div>
+          <div><b>Oromo phrase:</b> {{ p[2] }}</div>
+
+          <div style="margin-top:10px; display:flex; gap:10px;">
+            <a class="btn" href="/approve_phrase/{{ p[0] }}">✅ Approve</a>
+            <a class="btn danger" href="/reject_phrase/{{ p[0] }}">❌ Reject</a>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="card">No pending phrases right now ✅</div>
+    {% endif %}
+
+    <hr>
+    <div style="text-align:center;">
+      <a href="/logout">Logout</a> | <a href="/">Home</a>
+    </div>
   </div>
 
 </body>

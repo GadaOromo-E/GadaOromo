@@ -1,20 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Submit Word - GadaOromo</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Submit Phrase | Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
-<h1>Submit a New Word</h1>
+<div class="container">
+  <h2>Submit a Phrase / Sentence</h2>
 
-<form method="POST">
-    <input type="text" name="english" placeholder="English word" required><br><br>
-    <input type="text" name="oromo" placeholder="Oromo word" required><br><br>
-    <button type="submit">Submit</button>
-</form>
+  <form method="POST">
+    <input type="text" name="english" placeholder="English phrase" required>
+    <input type="text" name="oromo" placeholder="Afaan Oromo phrase" required>
+    <button type="submit">Submit Phrase</button>
+  </form>
 
-<br>
-<a href="/">⬅ Back to Home</a>
+  <div style="text-align:center; margin-top:16px;">
+    <a href="/">⬅ Home</a>
+  </div>
+</div>
 
 </body>
 </html>
+

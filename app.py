@@ -13,12 +13,15 @@ import os
 app = Flask(__name__)
 app.secret_key = "gadaoromo_secret_key"
 
+DB_NAME = "gadaoromo.db"
+
 # ------------------ DATABASE SETUP ------------------
 
 def init_db():
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
+    # Words table
     c.execute("""
         CREATE TABLE IF NOT EXISTS words (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +31,17 @@ def init_db():
         )
     """)
 
+    # Phrases table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS phrases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            english TEXT,
+            oromo TEXT,
+            status TEXT
+        )
+    """)
+
+    # Admin table
     c.execute("""
         CREATE TABLE IF NOT EXISTS admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,17 +55,31 @@ def init_db():
 
 init_db()
 
-# ------------------ TRANSLATION LOGIC (DB-POWERED) ------------------
+# ------------------ TRANSLATION LOGIC (PHRASES FIRST, THEN WORDS) ------------------
 
 def translate_text(text: str, direction: str = "om_en") -> str:
     t = (text or "").lower().strip()
     if not t:
         return ""
 
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # 1) Exact phrase match
+    # 1) Phrase exact match
+    if direction == "om_en":
+        c.execute("SELECT english FROM phrases WHERE status='approved' AND oromo=?", (t,))
+        row = c.fetchone()
+        if row:
+            conn.close()
+            return row[0]
+    else:
+        c.execute("SELECT oromo FROM phrases WHERE status='approved' AND english=?", (t,))
+        row = c.fetchone()
+        if row:
+            conn.close()
+            return row[0]
+
+    # 2) Word exact match
     if direction == "om_en":
         c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (t,))
         row = c.fetchone()
@@ -65,11 +93,10 @@ def translate_text(text: str, direction: str = "om_en") -> str:
             conn.close()
             return row[0]
 
-    # 2) Word-by-word fallback
-    words = t.split()
+    # 3) Word-by-word fallback
+    tokens = t.split()
     out = []
-
-    for w in words:
+    for w in tokens:
         if direction == "om_en":
             c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (w,))
             r = c.fetchone()
@@ -86,23 +113,25 @@ def translate_text(text: str, direction: str = "om_en") -> str:
 
 @app.route("/", methods=["GET", "POST"])
 def home():
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     result = None
-
     if request.method == "POST":
-        word = request.form.get("word", "").lower()
-        c.execute("SELECT english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?)", (word, word))
+        word = request.form.get("word", "").lower().strip()
+        c.execute(
+            "SELECT english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?)",
+            (word, word)
+        )
         result = c.fetchone()
 
-    c.execute("SELECT english, oromo FROM words WHERE status='approved'")
+    c.execute("SELECT english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
     all_words = c.fetchall()
-
     conn.close()
+
     return render_template("index.html", result=result, words=all_words)
 
-# ------------------ TRANSLATOR PAGE ------------------
+# ------------------ TRANSLATOR PAGE (AUTO DETECT) ------------------
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
@@ -115,18 +144,17 @@ def translate():
         direction = request.form.get("direction", "auto")
         t = (text or "").lower().strip()
 
-        # ---- AUTO DETECT (sentence-aware) ----
         if direction == "auto":
-            words = t.split()
+            tokens = t.split()
 
-            conn = sqlite3.connect("gadaoromo.db")
+            conn = sqlite3.connect(DB_NAME)
             c = conn.cursor()
 
-            # Count how many tokens match Oromo vs English in DB
             oromo_hits = 0
             english_hits = 0
 
-            for w in words:
+            # Token matches in words
+            for w in tokens:
                 c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
                 if c.fetchone():
                     oromo_hits += 1
@@ -135,49 +163,79 @@ def translate():
                 if c.fetchone():
                     english_hits += 1
 
+            # Whole sentence matches in phrases (weighted)
+            c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
+            if c.fetchone():
+                oromo_hits += 3
+
+            c.execute("SELECT 1 FROM phrases WHERE status='approved' AND english=?", (t,))
+            if c.fetchone():
+                english_hits += 3
+
             conn.close()
 
-            # Decide direction based on which side matches more
             if oromo_hits > english_hits:
                 direction = "om_en"
             elif english_hits > oromo_hits:
                 direction = "en_om"
             else:
-                # fallback: if it contains many non-ascii letters, treat as Oromo; otherwise English
                 direction = "en_om"
 
         result = translate_text(text, direction)
 
     return render_template("translate.html", result=result, text=text, direction=direction)
 
-
-# ------------------ PUBLIC SUBMISSION ------------------
+# ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
     if request.method == "POST":
-        english = request.form["english"].lower()
-        oromo = request.form["oromo"].lower()
+        english = request.form.get("english", "").lower().strip()
+        oromo = request.form.get("oromo", "").lower().strip()
 
-        conn = sqlite3.connect("gadaoromo.db")
+        if not english or not oromo:
+            return "Please provide both English and Oromo. <a href='/submit'>Try again</a>"
+
+        conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
         conn.commit()
         conn.close()
 
-        return "Thank you! Your submission is waiting for admin approval. <br><a href='/'>Go back</a>"
+        return "Thank you! Your word is waiting for admin approval. <br><a href='/'>Go back</a>"
 
     return render_template("submit.html")
+
+# ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
+
+@app.route("/submit_phrase", methods=["GET", "POST"])
+def submit_phrase():
+    if request.method == "POST":
+        english = request.form.get("english", "").lower().strip()
+        oromo = request.form.get("oromo", "").lower().strip()
+
+        if not english or not oromo:
+            return "Please provide both English and Oromo phrase. <a href='/submit_phrase'>Try again</a>"
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
+        conn.commit()
+        conn.close()
+
+        return "Thank you! Your phrase is waiting for admin approval. <br><a href='/'>Go back</a>"
+
+    return render_template("submit_phrase.html")
 
 # ------------------ ADMIN LOGIN ------------------
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
-        email = request.form["email"]
-        password = request.form["password"]
+        email = request.form.get("email", "").strip()
+        password = request.form.get("password", "")
 
-        conn = sqlite3.connect("gadaoromo.db")
+        conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("SELECT id, password FROM admin WHERE email=?", (email,))
         admin = c.fetchone()
@@ -186,8 +244,8 @@ def admin_login():
         if admin and check_password_hash(admin[1], password):
             session["admin"] = admin[0]
             return redirect("/dashboard")
-        else:
-            return "Invalid login"
+
+        return "Invalid login"
 
     return render_template("admin_login.html")
 
@@ -198,24 +256,72 @@ def dashboard():
     if "admin" not in session:
         return redirect("/admin")
 
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT id, english, oromo FROM words WHERE status='pending'")
-    pending = c.fetchall()
+
+    c.execute("SELECT id, english, oromo FROM words WHERE status='pending' ORDER BY id DESC")
+    pending_words = c.fetchall()
+
+    c.execute("SELECT id, english, oromo FROM phrases WHERE status='pending' ORDER BY id DESC")
+    pending_phrases = c.fetchall()
+
     conn.close()
 
-    return render_template("admin_dashboard.html", pending=pending)
+    return render_template("admin_dashboard.html",
+                           pending=pending_words,
+                           pending_phrases=pending_phrases)
 
-# ------------------ APPROVE WORD ------------------
+# ------------------ APPROVE / REJECT WORDS ------------------
 
 @app.route("/approve/<int:word_id>")
 def approve(word_id):
     if "admin" not in session:
         return redirect("/admin")
 
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("UPDATE words SET status='approved' WHERE id=?", (word_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/dashboard")
+
+@app.route("/reject/<int:word_id>")
+def reject(word_id):
+    if "admin" not in session:
+        return redirect("/admin")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM words WHERE id=? AND status='pending'", (word_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/dashboard")
+
+# ------------------ APPROVE / REJECT PHRASES ------------------
+
+@app.route("/approve_phrase/<int:phrase_id>")
+def approve_phrase(phrase_id):
+    if "admin" not in session:
+        return redirect("/admin")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE phrases SET status='approved' WHERE id=?", (phrase_id,))
+    conn.commit()
+    conn.close()
+
+    return redirect("/dashboard")
+
+@app.route("/reject_phrase/<int:phrase_id>")
+def reject_phrase(phrase_id):
+    if "admin" not in session:
+        return redirect("/admin")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM phrases WHERE id=? AND status='pending'", (phrase_id,))
     conn.commit()
     conn.close()
 
@@ -235,7 +341,7 @@ def create_admin():
     email = "jewargure1@gmail.com"
     password = generate_password_hash("admin123")
 
-    conn = sqlite3.connect("gadaoromo.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, password))
     conn.commit()
