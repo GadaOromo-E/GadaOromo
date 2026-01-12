@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Translator | Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+  <h2>🌍 Oromo ↔ English Translator</h2>
+
+  <form method="POST">
+    <select name="direction">
+      <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
+      <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
+    </select>
+
+    <textarea name="text" placeholder="Type word or sentence..." required>{{ text or "" }}</textarea>
+    <button type="submit">Translate</button>
+  </form>
+
+  <!-- SOUND BUTTONS (always visible) -->
+  <div class="sound-buttons">
+    <button type="button" onclick="speakInput()">🔊 Speak Input</button>
+    <button type="button" onclick="speakResult()">🔊 Speak Result</button>
+  </div>
+
+  {% if result %}
+    <div class="result-box">
+      <strong>Result:</strong> <span id="resultText">{{ result }}</span>
+    </div>
+  {% else %}
+    <div class="result-box" style="opacity:0.8;">
+      Result will appear here…
+    </div>
+  {% endif %}
+
+  <div style="text-align:center; margin-top:16px;">
+    <a href="/">⬅ Home</a>
+  </div>
+</div>
+
+<script>
+function speakText(text, langCode) {
+  if (!('speechSynthesis' in window)) {
+    alert("Speech is not supported in this browser.");
+    return;
+  }
+  if (!text || !text.trim()) {
+    alert("Nothing to speak.");
+    return;
+  }
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = langCode; // e.g. 'en-US'
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+
+function speakInput() {
+  const txt = document.querySelector('textarea[name="text"]').value;
+  const dir = document.querySelector('select[name="direction"]').value;
+
+  // Oromo voice is not always available on every computer.
+  // We'll try Oromo language code, but if it fails, browser uses closest voice.
+  const lang = (dir === "om_en") ? "om-ET" : "en-US";
+  speakText(txt, lang);
+}
+
+function speakResult() {
+  const el = document.getElementById("resultText");
+  const txt = el ? el.innerText : "";
+  const dir = document.querySelector('select[name="direction"]').value;
+
+  const lang = (dir === "om_en") ? "en-US" : "om-ET";
+  speakText(txt, lang);
+}
+</script>
+
+</body>
+</html>
+

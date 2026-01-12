@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard | Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="container">
+    <h1>Admin Dashboard</h1>
+    <p>Pending submissions (approve or reject).</p>
+
+    {% if pending and pending|length > 0 %}
+      {% for p in pending %}
+        <div class="card">
+          <div><b>English:</b> {{ p[1] }}</div>
+          <div><b>Oromo:</b> {{ p[2] }}</div>
+
+          <div style="margin-top:10px; display:flex; gap:10px;">
+            <a class="btn" href="/approve/{{ p[0] }}">✅ Approve</a>
+            <a class="btn danger" href="/reject/{{ p[0] }}">❌ Reject</a>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div class="card">
+        No pending submissions right now ✅
+      </div>
+    {% endif %}
+
+    <hr>
+    <a href="/logout">Logout</a> | <a href="/">Home</a>
+  </div>
+
+</body>
+</html>

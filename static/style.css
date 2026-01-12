@@ -117,3 +117,52 @@ footer {
   color: #aaa;
   font-size: 14px;
 }
+textarea {
+  width: 100%;
+  height: 100px;
+  margin-top: 10px;
+}
+
+.result-box {
+  background: #111;
+  color: white;
+  padding: 15px;
+  margin-top: 15px;
+  border-left: 4px solid red;
+}
+
+.translator {
+  padding: 40px;
+  text-align: center;
+}
+.btn{
+  display:inline-block;
+  padding:10px 14px;
+  background:red;
+  color:white;
+  text-decoration:none;
+  border-radius:6px;
+  font-weight:bold;
+}
+.btn:hover{ opacity:0.9; }
+.btn.danger{ background:#444; }
+.sound-buttons{
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.sound-buttons button{
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  background: red;
+  color: white;
+  font-weight: bold;
+}
+.sound-buttons button:hover{
+  opacity: 0.9;
+}

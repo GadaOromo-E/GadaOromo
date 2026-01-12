@@ -12,6 +12,7 @@
     <div class="logo">GADA</div>
     <nav>
       <a href="/">Home</a>
+      <a href="/translate">Translate</a>
       <a href="/submit">Submit</a>
       <a href="#">About</a>
       <a href="#">Community</a>
@@ -60,3 +61,20 @@
 
 </body>
 </html>
+<section class="translator">
+  <h2>Quick Translator</h2>
+
+  <form method="POST">
+    <select name="direction">
+      <option value="om_en">Oromo → English</option>
+      <option value="en_om">English → Oromo</option>
+    </select>
+
+    <input type="text" name="translate_text" placeholder="Type here..." required>
+    <button type="submit">Translate</button>
+  </form>
+
+  {% if translation %}
+    <div class="result-box">{{ translation }}</div>
+  {% endif %}
+</section>
