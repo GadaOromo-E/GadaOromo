@@ -108,14 +108,48 @@ def home():
 def translate():
     result = None
     text = ""
-    direction = "om_en"
+    direction = "auto"
 
     if request.method == "POST":
         text = request.form.get("text", "")
-        direction = request.form.get("direction", "om_en")
+        direction = request.form.get("direction", "auto")
+        t = (text or "").lower().strip()
+
+        # ---- AUTO DETECT (sentence-aware) ----
+        if direction == "auto":
+            words = t.split()
+
+            conn = sqlite3.connect("gadaoromo.db")
+            c = conn.cursor()
+
+            # Count how many tokens match Oromo vs English in DB
+            oromo_hits = 0
+            english_hits = 0
+
+            for w in words:
+                c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
+                if c.fetchone():
+                    oromo_hits += 1
+
+                c.execute("SELECT 1 FROM words WHERE status='approved' AND english=?", (w,))
+                if c.fetchone():
+                    english_hits += 1
+
+            conn.close()
+
+            # Decide direction based on which side matches more
+            if oromo_hits > english_hits:
+                direction = "om_en"
+            elif english_hits > oromo_hits:
+                direction = "en_om"
+            else:
+                # fallback: if it contains many non-ascii letters, treat as Oromo; otherwise English
+                direction = "en_om"
+
         result = translate_text(text, direction)
 
     return render_template("translate.html", result=result, text=text, direction=direction)
+
 
 # ------------------ PUBLIC SUBMISSION ------------------
 

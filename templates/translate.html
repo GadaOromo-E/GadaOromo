@@ -13,16 +13,17 @@
 
   <form method="POST">
     <select name="direction">
+      <option value="auto" {% if direction == "auto" %}selected{% endif %}>Auto Detect</option>
       <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
       <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
     </select>
-<button type="button" onclick="startVoice()">🎤 Speak</button>
+
+    <button type="button" class="mic-btn" onclick="startVoice()">🎤 Speak</button>
 
     <textarea name="text" placeholder="Type word or sentence..." required>{{ text or "" }}</textarea>
     <button type="submit">Translate</button>
   </form>
 
-  <!-- SOUND BUTTONS (always visible) -->
   <div class="sound-buttons">
     <button type="button" onclick="speakInput()">🔊 Speak Input</button>
     <button type="button" onclick="speakResult()">🔊 Speak Result</button>
@@ -54,7 +55,7 @@ function speakText(text, langCode) {
     return;
   }
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = langCode; // e.g. 'en-US'
+  u.lang = langCode;
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
@@ -62,9 +63,6 @@ function speakText(text, langCode) {
 function speakInput() {
   const txt = document.querySelector('textarea[name="text"]').value;
   const dir = document.querySelector('select[name="direction"]').value;
-
-  // Oromo voice is not always available on every computer.
-  // We'll try Oromo language code, but if it fails, browser uses closest voice.
   const lang = (dir === "om_en") ? "om-ET" : "en-US";
   speakText(txt, lang);
 }
@@ -73,11 +71,11 @@ function speakResult() {
   const el = document.getElementById("resultText");
   const txt = el ? el.innerText : "";
   const dir = document.querySelector('select[name="direction"]').value;
-
   const lang = (dir === "om_en") ? "en-US" : "om-ET";
   speakText(txt, lang);
 }
 </script>
+
 <script>
 function startVoice() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -87,10 +85,10 @@ function startVoice() {
   }
 
   const recognition = new SpeechRecognition();
-  recognition.lang = "en-US"; // default
   const dir = document.querySelector('select[name="direction"]').value;
-  // If Oromo → English, user speaks Oromo (may not be available on all devices)
+
   recognition.lang = (dir === "om_en") ? "om-ET" : "en-US";
+  recognition.interimResults = false;
 
   recognition.onresult = function(event) {
     const text = event.results[0][0].transcript;
@@ -107,4 +105,3 @@ function startVoice() {
 
 </body>
 </html>
-
