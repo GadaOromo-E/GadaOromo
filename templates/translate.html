@@ -16,6 +16,7 @@
       <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
       <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
     </select>
+<button type="button" onclick="startVoice()">🎤 Speak</button>
 
     <textarea name="text" placeholder="Type word or sentence..." required>{{ text or "" }}</textarea>
     <button type="submit">Translate</button>
@@ -75,6 +76,32 @@ function speakResult() {
 
   const lang = (dir === "om_en") ? "en-US" : "om-ET";
   speakText(txt, lang);
+}
+</script>
+<script>
+function startVoice() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert("Voice input not supported. Use Chrome on PC/Android.");
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-US"; // default
+  const dir = document.querySelector('select[name="direction"]').value;
+  // If Oromo → English, user speaks Oromo (may not be available on all devices)
+  recognition.lang = (dir === "om_en") ? "om-ET" : "en-US";
+
+  recognition.onresult = function(event) {
+    const text = event.results[0][0].transcript;
+    document.querySelector('textarea[name="text"]').value = text;
+  };
+
+  recognition.onerror = function(e) {
+    alert("Voice input error: " + e.error);
+  };
+
+  recognition.start();
 }
 </script>
 
