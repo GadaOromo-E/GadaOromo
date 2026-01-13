@@ -56,25 +56,32 @@ def require_admin() -> bool:
 def google_translate_v2(text: str, target: str, source: str = "en") -> str:
     api_key = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
     if not api_key:
+        print("GOOGLE_TRANSLATE_API_KEY is missing")
         return ""
 
     url = "https://translation.googleapis.com/language/translate/v2"
     payload = {
         "q": text,
         "source": source,
-        "target": target,
+        "target": target,   # Oromo should be "om"
         "format": "text",
         "key": api_key
     }
 
     try:
         r = requests.post(url, data=payload, timeout=20)
-        r.raise_for_status()
+        if r.status_code != 200:
+            print("Google Translate API error:", r.status_code, r.text)
+            return ""
+
         data = r.json()
         out = data["data"]["translations"][0]["translatedText"]
         return normalize_text(out)
-    except Exception:
+
+    except Exception as e:
+        print("Google Translate exception:", repr(e))
         return ""
+
 
 # ------------------ AUDIO HELPERS ------------------
 
@@ -930,4 +937,3 @@ def create_admin():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
