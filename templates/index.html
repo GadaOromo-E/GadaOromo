@@ -30,49 +30,64 @@
 
     <form method="POST" id="searchForm" class="row" style="align-items:stretch;">
       <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
+      <button type="button" onclick="startVoiceSearch()" title="Speak search">🎤</button>
       <button type="submit">Search</button>
     </form>
 
+    <div class="subtle" style="margin-top:10px;">
+      Tip: press 🎤 and speak the word if you can’t type.
+    </div>
+
     {% if result %}
-      <div class="result-box">
-        <b>English:</b> {{ result[0] }} <br>
-        <b>Oromo:</b> {{ result[1] }}
-      </div>
+      <div class="result-box" style="margin-top:14px;">
+        <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
+        <div style="margin-top:6px;"><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
 
-      <!-- ===== Community Audio (Word exact match) ===== -->
-      {% if result_id %}
-        <div class="card" style="margin-top:14px;">
-          <h2 style="margin-top:0;">🎧 Community Audio</h2>
+        <!-- Priority: Community audio (real Oromo speakers) -->
+        {% if audio and (audio.oromo or audio.english) %}
+          <div style="margin-top:14px;">
+            <div class="subtle">🎧 Community pronunciation (admin approved)</div>
 
-          {% if audio %}
             {% if audio.oromo %}
-              <div class="subtle">Oromo audio</div>
-              <audio controls style="width:100%; margin-top:6px;">
+              <div class="subtle" style="margin-top:10px;">Oromo audio</div>
+              <audio controls style="width:100%;">
                 <source src="{{ url_for('static', filename=audio.oromo) }}">
               </audio>
             {% endif %}
 
             {% if audio.english %}
               <div class="subtle" style="margin-top:10px;">English audio</div>
-              <audio controls style="width:100%; margin-top:6px;">
+              <audio controls style="width:100%;">
                 <source src="{{ url_for('static', filename=audio.english) }}">
               </audio>
             {% endif %}
-          {% endif %}
+          </div>
+        {% else %}
+          <div class="muted" style="margin-top:10px;">
+            No approved community audio yet. You can help by uploading pronunciation below.
+          </div>
+        {% endif %}
 
+        <!-- Speak buttons (browser TTS fallback) -->
+        <div class="small-actions" style="margin-top:12px;">
+          <button type="button" class="btn" onclick="speakEnglish()">🔊 Speak English</button>
+          <button type="button" class="btn" onclick="speakOromo()">🔊 Speak Oromo</button>
+        </div>
+
+        <!-- Upload buttons (only when we have a real approved word id) -->
+        {% if result_id %}
           <div class="small-actions" style="margin-top:12px;">
             <a class="btn" href="/upload_audio/word/{{ result_id }}/oromo">🎙 Upload Oromo audio</a>
             <a class="btn" href="/upload_audio/word/{{ result_id }}/english">🎙 Upload English audio</a>
           </div>
-
           <div class="muted" style="margin-top:8px; font-size:14px;">
             Audio becomes public after admin approval.
           </div>
-        </div>
-      {% endif %}
+        {% endif %}
+      </div>
 
     {% elif result is not none %}
-      <div class="result-box">No exact match found.</div>
+      <div class="result-box" style="margin-top:14px;">No exact match found.</div>
     {% endif %}
 
     {% if suggestions %}
@@ -147,6 +162,78 @@ function useSuggestion(text){
   const inp=document.getElementById("searchWord");
   if(inp) inp.value=text;
   document.getElementById("searchForm").submit();
+}
+
+/* ===== Speech-to-text for Dictionary Search ===== */
+function startVoiceSearch(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    alert("Voice input not supported. Use Chrome on PC/Android.");
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  // Most browsers don't support om-ET reliably; use en-US to still capture speech.
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+
+  recognition.onresult = function(event){
+    const text = event.results[0][0].transcript;
+    document.getElementById("searchWord").value = text;
+    document.getElementById("searchForm").submit();
+  };
+
+  recognition.onerror = function(e){
+    alert("Voice input error: " + e.error);
+  };
+
+  recognition.start();
+}
+
+/* ===== Voice output fallback (Browser TTS) ===== */
+let cachedVoices = [];
+function loadVoices(){
+  if(!('speechSynthesis' in window)) return;
+  cachedVoices = window.speechSynthesis.getVoices() || [];
+}
+if ('speechSynthesis' in window) {
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+}
+function pickBestVoice(langCode){
+  if(!cachedVoices || cachedVoices.length===0) return null;
+  const lc=(langCode||"").toLowerCase();
+  let v=cachedVoices.find(x => (x.lang||"").toLowerCase()===lc);
+  if(v) return v;
+  const base=lc.split("-")[0];
+  v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith(base));
+  if(v) return v;
+  v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith("en"));
+  return v || null;
+}
+function speakText(text, langCode){
+  if(!('speechSynthesis' in window)) return alert("Speech is not supported in this browser.");
+  if(!text || !text.trim()) return alert("Nothing to speak.");
+  const u=new SpeechSynthesisUtterance(text);
+  const best=pickBestVoice(langCode);
+  if(best){
+    u.voice=best;
+    u.lang=best.lang;
+  } else {
+    u.lang=langCode;
+  }
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+function speakEnglish(){
+  const el=document.getElementById("enText");
+  const txt=el?el.innerText:"";
+  speakText(txt, "en-US");
+}
+function speakOromo(){
+  const el=document.getElementById("omText");
+  const txt=el?el.innerText:"";
+  speakText(txt, "om-ET");
 }
 </script>
 

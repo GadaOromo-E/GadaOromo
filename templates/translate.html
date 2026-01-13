@@ -20,7 +20,7 @@
           {% else %}Detected/Selected: Auto{% endif %}
         </div>
       </div>
-      <a class="btn" href="/">⬅ Home</a>
+      <a class="btn danger" href="/">⬅ Home</a>
     </div>
   </div>
 
@@ -41,7 +41,7 @@
       <div class="bottom-bar">
         <div class="bottom-actions">
           <button type="submit">Translate</button>
-          <a class="btn" href="javascript:void(0)" onclick="speakInput()">🔊 Speak</a>
+          <a class="btn" href="javascript:void(0)" onclick="speakInput()">🔊 Speak Input</a>
         </div>
       </div>
 
@@ -64,34 +64,42 @@
       <div class="result-box" style="opacity:0.85;">Result will appear here…</div>
     {% endif %}
 
-    <!-- ===== Community Audio (only when we matched an approved word/phrase) ===== -->
-    {% if matched %}
-      <div class="card" style="margin-top:14px;">
-        <h2 style="margin-top:0;">🎧 Community Audio</h2>
+    <!-- ===== Community Audio (approved) ===== -->
+    {% if audio %}
+      <div style="margin-top:14px;">
+        <h2>🎧 Community Pronunciation</h2>
 
-        {% if audio %}
-          {% if audio.oromo %}
-            <div class="subtle">Oromo audio</div>
-            <audio controls style="width:100%; margin-top:6px;">
-              <source src="{{ url_for('static', filename=audio.oromo) }}">
-            </audio>
-          {% endif %}
-
-          {% if audio.english %}
-            <div class="subtle" style="margin-top:10px;">English audio</div>
-            <audio controls style="width:100%; margin-top:6px;">
-              <source src="{{ url_for('static', filename=audio.english) }}">
-            </audio>
-          {% endif %}
+        {% if audio.oromo %}
+          <div class="subtle">Oromo audio</div>
+          <audio controls>
+            <source src="{{ url_for('static', filename=audio.oromo) }}">
+          </audio>
         {% endif %}
 
-        <div class="small-actions" style="margin-top:12px;">
-          <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo">🎙 Upload Oromo audio</a>
-          <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/english">🎙 Upload English audio</a>
+        {% if audio.english %}
+          <div class="subtle" style="margin-top:10px;">English audio</div>
+          <audio controls>
+            <source src="{{ url_for('static', filename=audio.english) }}">
+          </audio>
+        {% endif %}
+
+        {% if not audio.oromo and not audio.english %}
+          <div class="muted">No approved audio yet.</div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <!-- ===== Upload Audio Buttons (only when exact match exists) ===== -->
+    {% if matched %}
+      <div style="margin-top:14px;">
+        <h2>🎙 Help the community</h2>
+        <div class="muted" style="margin-top:6px;">
+          Upload pronunciation audio. It becomes public after admin approval.
         </div>
 
-        <div class="muted" style="margin-top:8px; font-size:14px;">
-          Audio becomes public after admin approval.
+        <div class="small-actions" style="margin-top:10px;">
+          <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo">Upload Oromo audio</a>
+          <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/english">Upload English audio</a>
         </div>
       </div>
     {% endif %}
@@ -147,15 +155,8 @@
 function autoGrow(el){ el.style.height="auto"; el.style.height=(el.scrollHeight)+"px"; }
 window.addEventListener("load", ()=>{ const ta=document.getElementById("textInput"); if(ta) autoGrow(ta); });
 
-function useSuggestion(text){
-  const ta=document.getElementById("textInput");
-  ta.value=text; autoGrow(ta);
-  document.getElementById("translateForm").submit();
-}
-function clearInput(){
-  const ta=document.getElementById("textInput");
-  ta.value=""; autoGrow(ta); ta.focus();
-}
+function useSuggestion(text){ const ta=document.getElementById("textInput"); ta.value=text; autoGrow(ta); document.getElementById("translateForm").submit(); }
+function clearInput(){ const ta=document.getElementById("textInput"); ta.value=""; autoGrow(ta); ta.focus(); }
 function swapDirection(){
   const sel=document.getElementById("directionSelect");
   if(sel.value==="om_en") sel.value="en_om";
@@ -169,7 +170,7 @@ function copyResult(){
   navigator.clipboard.writeText(txt).then(()=>alert("Copied!")).catch(()=>alert("Copy failed."));
 }
 
-/* ===== Better voice picking (helps Oromo when browser has no om-ET voice) ===== */
+/* Voice output */
 let cachedVoices = [];
 function loadVoices(){ cachedVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }
 if ('speechSynthesis' in window) {
@@ -178,33 +179,22 @@ if ('speechSynthesis' in window) {
 }
 function pickBestVoice(langCode){
   if(!cachedVoices || cachedVoices.length===0) return null;
-
-  const lc = (langCode || "").toLowerCase();
-  let v = cachedVoices.find(x => (x.lang||"").toLowerCase() === lc);
+  const lc=(langCode||"").toLowerCase();
+  let v=cachedVoices.find(x => (x.lang||"").toLowerCase()===lc);
   if(v) return v;
-
-  const base = lc.split("-")[0];
-  v = cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith(base));
+  const base=lc.split("-")[0];
+  v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith(base));
   if(v) return v;
-
-  v = cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith("en"));
+  v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith("en"));
   return v || null;
 }
 
 function speakText(text, langCode){
   if(!('speechSynthesis' in window)) return alert("Speech is not supported in this browser.");
   if(!text || !text.trim()) return alert("Nothing to speak.");
-
-  const u = new SpeechSynthesisUtterance(text);
-  const best = pickBestVoice(langCode);
-
-  if(best){
-    u.voice = best;
-    u.lang = best.lang;
-  } else {
-    u.lang = langCode;
-  }
-
+  const u=new SpeechSynthesisUtterance(text);
+  const best=pickBestVoice(langCode);
+  if(best){ u.voice=best; u.lang=best.lang; } else { u.lang=langCode; }
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }
@@ -223,6 +213,7 @@ function speakResult(){
   speakText(txt, lang);
 }
 
+/* Speech-to-text */
 function startVoice(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition) return alert("Voice input not supported. Use Chrome on PC/Android.");
