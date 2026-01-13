@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Import Words | Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">📥 Import English → Oromo</h2>
+        <div class="subtle">Paste one English word per line. Uses Google Cloud Translation API.</div>
+      </div>
+      <a class="btn danger" href="/dashboard">⬅ Back</a>
+    </div>
+  </div>
+
+  {% if msg %}
+    <div class="result-box">{{ msg }}</div>
+  {% endif %}
+
+  <div class="card">
+    <form method="POST" autocomplete="off">
+      <textarea name="words" placeholder="water&#10;food&#10;school" style="min-height:220px;" required></textarea>
+      <div style="height:12px;"></div>
+      <button type="submit">Import</button>
+    </form>
+
+    <div class="muted" style="margin-top:10px; font-size:14px;">
+      Imported words are saved as <b>pending</b>. Approve them in the Admin Dashboard.
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

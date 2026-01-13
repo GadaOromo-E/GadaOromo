@@ -4,7 +4,6 @@ Created on Sun Jan 11 16:32:35 2026
 
 @author: ademo
 """
-
 from flask import Flask, render_template, request, redirect, session
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,6 +12,7 @@ import os
 import re
 from difflib import get_close_matches
 from uuid import uuid4
+import requests
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
@@ -49,6 +49,32 @@ def normalize_tokens(text: str):
 
 def require_admin() -> bool:
     return "admin" in session
+
+# ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
+# Uses env var: GOOGLE_TRANSLATE_API_KEY
+
+def google_translate_v2(text: str, target: str, source: str = "en") -> str:
+    api_key = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+    if not api_key:
+        return ""
+
+    url = "https://translation.googleapis.com/language/translate/v2"
+    payload = {
+        "q": text,
+        "source": source,
+        "target": target,
+        "format": "text",
+        "key": api_key
+    }
+
+    try:
+        r = requests.post(url, data=payload, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+        out = data["data"]["translations"][0]["translatedText"]
+        return normalize_text(out)
+    except Exception:
+        return ""
 
 # ------------------ AUDIO HELPERS ------------------
 
@@ -639,6 +665,69 @@ def dashboard():
         pending_audio=pending_audio
     )
 
+# ------------------ ADMIN IMPORT (GOOGLE CLOUD TRANSLATE) ------------------
+
+@app.route("/admin/import", methods=["GET", "POST"])
+def admin_import():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        raw = request.form.get("words", "")
+        lines = [normalize_text(x) for x in raw.splitlines()]
+        lines = [x for x in lines if x]
+
+        if not lines:
+            msg = "No words provided."
+            return render_template("admin_import.html", msg=msg)
+
+        # Safety limit to control cost
+        MAX_LINES = 200
+        if len(lines) > MAX_LINES:
+            lines = lines[:MAX_LINES]
+            msg = f"Only first {MAX_LINES} lines were processed (cost control)."
+
+        inserted = 0
+        skipped = 0
+        failed = 0
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+
+        for en in lines:
+            # skip if exists already (approved or pending)
+            c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, en))
+            if c.fetchone():
+                skipped += 1
+                continue
+
+            om = google_translate_v2(en, target="om", source="en")
+            if not om:
+                failed += 1
+                continue
+
+            # avoid duplicates after translation
+            c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, om))
+            if c.fetchone():
+                skipped += 1
+                continue
+
+            c.execute(
+                "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+                (en, om)
+            )
+            inserted += 1
+
+        conn.commit()
+        conn.close()
+
+        msg2 = f"Imported: {inserted} | Skipped: {skipped} | Failed: {failed}. Approve in Dashboard."
+        msg = (msg + " " + msg2).strip() if msg else msg2
+
+    return render_template("admin_import.html", msg=msg)
+
 # ------------------ ADMIN MANAGEMENT ------------------
 
 @app.route("/admin/manage", methods=["GET", "POST"])
@@ -841,3 +930,4 @@ def create_admin():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
