@@ -45,6 +45,11 @@ def normalize_tokens(text: str):
     t = normalize_text(text)
     return t.split() if t else []
 
+# ------------------ ADMIN HELPER ------------------
+
+def require_admin() -> bool:
+    return "admin" in session
+
 # ------------------ AUDIO HELPERS ------------------
 
 def allowed_audio(filename: str) -> bool:
@@ -381,7 +386,6 @@ def home():
             result = (row[1], row[2])
             audio = get_approved_audio("word", result_id)
 
-        # Suggestions if not found
         if not row and word:
             suggestions = {
                 "en": suggest_terms(word, "en_om"),
@@ -404,7 +408,7 @@ def home():
         trending=trending
     )
 
-# ------------------ TRANSLATOR PAGE (AUTO DETECT + SUGGESTIONS + ANALYTICS) ------------------
+# ------------------ TRANSLATOR PAGE ------------------
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
@@ -424,7 +428,6 @@ def translate():
 
         clean = normalize_text(text)
 
-        # First: check exact phrase match to get ID
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
@@ -438,7 +441,6 @@ def translate():
                 matched = {"type": "phrase", "id": pr[0]}
                 audio = get_approved_audio("phrase", pr[0])
 
-        # If not phrase, check exact word match (single token) to get ID
         if not matched and clean and len(clean.split()) == 1:
             if direction == "om_en":
                 c.execute("SELECT id FROM words WHERE status='approved' AND oromo=?", (clean,))
@@ -452,13 +454,9 @@ def translate():
         conn.close()
 
         translated, is_exact, is_phrase = translate_text(text, direction)
-
-        # analytics
         record_search(text, direction, is_phrase, is_exact)
-
         result = translated
 
-        # suggestions (only when not exact, and input is basically one word)
         if clean and not is_exact and len(clean.split()) == 1:
             suggestions = suggest_terms(clean, direction)
 
@@ -489,7 +487,6 @@ def submit():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        # basic duplicate prevention
         c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (english, oromo))
         if c.fetchone():
             conn.close()
@@ -534,13 +531,11 @@ def submit_phrase():
 
 @app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
 def upload_audio(entry_type, entry_id, lang):
-    # Validate
     if entry_type not in ("word", "phrase"):
         return "Invalid entry type", 400
     if lang not in ("oromo", "english"):
         return "Invalid language", 400
 
-    # Ensure entry exists + approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if entry_type == "word":
@@ -594,7 +589,7 @@ def upload_audio(entry_type, entry_id, lang):
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
     if request.method == "POST":
-        email = request.form.get("email", "").strip()
+        email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
 
         conn = sqlite3.connect(DB_NAME)
@@ -615,7 +610,7 @@ def admin_login():
 
 @app.route("/dashboard")
 def dashboard():
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -644,11 +639,100 @@ def dashboard():
         pending_audio=pending_audio
     )
 
+# ------------------ ADMIN MANAGEMENT ------------------
+
+@app.route("/admin/manage", methods=["GET", "POST"])
+def admin_manage():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        action = request.form.get("action", "")
+
+        if action == "add_admin":
+            email = (request.form.get("email") or "").strip().lower()
+            password = request.form.get("password") or ""
+
+            if not email or not password:
+                msg = "Please provide email and password."
+            else:
+                pw_hash = generate_password_hash(password)
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admin WHERE email=?", (email,))
+                if c.fetchone():
+                    msg = "Admin already exists with this email."
+                else:
+                    c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, pw_hash))
+                    conn.commit()
+                    msg = "New admin added successfully."
+                conn.close()
+
+        elif action == "delete_admin":
+            admin_id = int(request.form.get("admin_id") or "0")
+            current_id = int(session.get("admin"))
+
+            if admin_id == current_id:
+                msg = "You cannot delete your own admin account."
+            else:
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("DELETE FROM admin WHERE id=?", (admin_id,))
+                conn.commit()
+                conn.close()
+                msg = "Admin deleted."
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT id, email FROM admin ORDER BY id ASC")
+    admins = c.fetchall()
+    conn.close()
+
+    return render_template("admin_manage.html", admins=admins, msg=msg)
+
+@app.route("/admin/change_password", methods=["GET", "POST"])
+def admin_change_password():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        current_pw = request.form.get("current_password") or ""
+        new_pw = request.form.get("new_password") or ""
+        confirm_pw = request.form.get("confirm_password") or ""
+
+        if not current_pw or not new_pw or not confirm_pw:
+            msg = "Please fill in all fields."
+        elif new_pw != confirm_pw:
+            msg = "New passwords do not match."
+        elif len(new_pw) < 6:
+            msg = "Password must be at least 6 characters."
+        else:
+            admin_id = session["admin"]
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute("SELECT password FROM admin WHERE id=?", (admin_id,))
+            row = c.fetchone()
+
+            if not row or not check_password_hash(row[0], current_pw):
+                msg = "Current password is incorrect."
+                conn.close()
+            else:
+                c.execute("UPDATE admin SET password=? WHERE id=?", (generate_password_hash(new_pw), admin_id))
+                conn.commit()
+                conn.close()
+                msg = "Password changed successfully."
+
+    return render_template("admin_change_password.html", msg=msg)
+
 # ------------------ APPROVE / REJECT WORDS ------------------
 
 @app.route("/approve/<int:word_id>")
 def approve(word_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -656,12 +740,11 @@ def approve(word_id):
     c.execute("UPDATE words SET status='approved' WHERE id=?", (word_id,))
     conn.commit()
     conn.close()
-
     return redirect("/dashboard")
 
 @app.route("/reject/<int:word_id>")
 def reject(word_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -669,14 +752,13 @@ def reject(word_id):
     c.execute("DELETE FROM words WHERE id=? AND status='pending'", (word_id,))
     conn.commit()
     conn.close()
-
     return redirect("/dashboard")
 
 # ------------------ APPROVE / REJECT PHRASES ------------------
 
 @app.route("/approve_phrase/<int:phrase_id>")
 def approve_phrase(phrase_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -684,12 +766,11 @@ def approve_phrase(phrase_id):
     c.execute("UPDATE phrases SET status='approved' WHERE id=?", (phrase_id,))
     conn.commit()
     conn.close()
-
     return redirect("/dashboard")
 
 @app.route("/reject_phrase/<int:phrase_id>")
 def reject_phrase(phrase_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -697,14 +778,13 @@ def reject_phrase(phrase_id):
     c.execute("DELETE FROM phrases WHERE id=? AND status='pending'", (phrase_id,))
     conn.commit()
     conn.close()
-
     return redirect("/dashboard")
 
 # ------------------ APPROVE / REJECT AUDIO ------------------
 
 @app.route("/approve_audio/<int:audio_id>")
 def approve_audio(audio_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -716,7 +796,7 @@ def approve_audio(audio_id):
 
 @app.route("/reject_audio/<int:audio_id>")
 def reject_audio(audio_id):
-    if "admin" not in session:
+    if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
@@ -748,7 +828,6 @@ def create_admin():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # avoid duplicates
     c.execute("SELECT 1 FROM admin WHERE email=?", (email,))
     if not c.fetchone():
         c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, password))

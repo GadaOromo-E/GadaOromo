@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Management | Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Admin Management</h2>
+        <div class="subtle">Add admins, remove admins, manage access.</div>
+      </div>
+      <a class="btn danger" href="/dashboard">⬅ Back</a>
+    </div>
+  </div>
+
+  {% if msg %}
+    <div class="result-box">{{ msg }}</div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Admins</h2>
+
+    {% if admins and admins|length > 0 %}
+      <div class="grid">
+        {% for a in admins %}
+          <div class="card" style="margin-top:0;">
+            <div class="subtle">Admin ID</div>
+            <div class="result-box" style="margin-top:8px;"><b>#{{ a[0] }}</b></div>
+
+            <div class="subtle" style="margin-top:10px;">Email</div>
+            <div class="result-box" style="margin-top:8px;"><b>{{ a[1] }}</b></div>
+
+            <form method="POST" style="margin-top:12px;">
+              <input type="hidden" name="action" value="delete_admin">
+              <input type="hidden" name="admin_id" value="{{ a[0] }}">
+              <button class="btn danger" type="submit" onclick="return confirm('Delete this admin?');">
+                ❌ Delete Admin
+              </button>
+            </form>
+
+            <div class="muted" style="margin-top:8px; font-size:14px;">
+              Note: you cannot delete your own account.
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No admins found.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Add New Admin</h2>
+
+    <form method="POST" autocomplete="off">
+      <input type="hidden" name="action" value="add_admin">
+
+      <label class="subtle" style="display:block; margin-bottom:6px;">Email</label>
+      <input type="email" name="email" placeholder="admin@example.com" required>
+
+      <div style="height:12px;"></div>
+
+      <label class="subtle" style="display:block; margin-bottom:6px;">Password</label>
+      <input type="password" name="password" placeholder="Set a strong password" required>
+
+      <div style="height:14px;"></div>
+
+      <button type="submit">➕ Add Admin</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Security</h2>
+    <div class="small-actions">
+      <a class="btn" href="/admin/change_password">🔑 Change My Password</a>
+      <a class="btn danger" href="/logout">🚪 Logout</a>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
