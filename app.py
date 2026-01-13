@@ -8,14 +8,25 @@ Created on Sun Jan 11 16:32:35 2026
 from flask import Flask, render_template, request, redirect, session
 import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 import os
 import re
 from difflib import get_close_matches
+from uuid import uuid4
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
 DB_NAME = "gadaoromo.db"
+
+# ------------------ UPLOAD CONFIG (AUDIO) ------------------
+
+UPLOAD_FOLDER = os.path.join("static", "uploads")
+ALLOWED_AUDIO = {"mp3", "wav", "m4a"}
+MAX_AUDIO_MB = 15  # adjust if needed
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 # ------------------ STOPWORDS (START SMALL, EXPAND LATER) ------------------
 
@@ -33,6 +44,36 @@ def normalize_text(text: str) -> str:
 def normalize_tokens(text: str):
     t = normalize_text(text)
     return t.split() if t else []
+
+# ------------------ AUDIO HELPERS ------------------
+
+def allowed_audio(filename: str) -> bool:
+    if not filename or "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower()
+    return ext in ALLOWED_AUDIO
+
+def get_approved_audio(entry_type: str, entry_id: int) -> dict:
+    """
+    Returns {'oromo': 'uploads/x.mp3', 'english': 'uploads/y.mp3'} for approved audio.
+    entry_type: 'word' or 'phrase'
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        SELECT lang, file_path
+        FROM audio
+        WHERE status='approved' AND entry_type=? AND entry_id=?
+        ORDER BY id DESC
+    """, (entry_type, entry_id))
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    for lang, path in rows:
+        if lang not in out:
+            out[lang] = path
+    return out
 
 # ------------------ DATABASE SETUP ------------------
 
@@ -89,6 +130,18 @@ def init_db():
             today_count INTEGER DEFAULT 0,
             week_count INTEGER DEFAULT 0,
             last_searched_at DATETIME
+        )
+    """)
+
+    # Community audio recordings (admin approved)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS audio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_type TEXT,      -- 'word' or 'phrase'
+            entry_id INTEGER,     -- id from words/phrases table
+            lang TEXT,            -- 'oromo' or 'english'
+            file_path TEXT,       -- 'uploads/abc.mp3'
+            status TEXT           -- 'pending' or 'approved'
         )
     """)
 
@@ -215,7 +268,6 @@ def detect_direction_auto(text: str) -> str:
     or_score = 0
     en_score = 0
 
-    # Word hits
     for w in filtered:
         c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
         if c.fetchone():
@@ -225,7 +277,7 @@ def detect_direction_auto(text: str) -> str:
         if c.fetchone():
             en_score += 1
 
-    # Phrase exact match bonus (strong signal)
+    # Phrase exact match bonus
     c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
     if c.fetchone():
         or_score += 4
@@ -236,7 +288,6 @@ def detect_direction_auto(text: str) -> str:
 
     conn.close()
 
-    # Threshold avoids flipping on tiny differences
     if or_score > en_score + 0.5:
         return "om_en"
     if en_score > or_score + 0.5:
@@ -260,54 +311,45 @@ def translate_text(text: str, direction: str = "om_en"):
 
     # 1) Phrase exact match
     if direction == "om_en":
-        c.execute("SELECT english FROM phrases WHERE status='approved' AND oromo=?", (t,))
+        c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo=?", (t,))
         row = c.fetchone()
         if row:
             conn.close()
-            return row[0], 1, 1
+            return row[1], 1, 1
     else:
-        c.execute("SELECT oromo FROM phrases WHERE status='approved' AND english=?", (t,))
+        c.execute("SELECT id, oromo FROM phrases WHERE status='approved' AND english=?", (t,))
         row = c.fetchone()
         if row:
             conn.close()
-            return row[0], 1, 1
+            return row[1], 1, 1
 
     # 2) Word exact match (only if input is single token)
     tokens = t.split()
     if len(tokens) == 1:
         if direction == "om_en":
-            c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (t,))
+            c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo=?", (t,))
             row = c.fetchone()
             if row:
                 conn.close()
-                return row[0], 1, 0
+                return row[1], 1, 0
         else:
-            c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (t,))
+            c.execute("SELECT id, oromo FROM words WHERE status='approved' AND english=?", (t,))
             row = c.fetchone()
             if row:
                 conn.close()
-                return row[0], 1, 0
+                return row[1], 1, 0
 
     # 3) Word-by-word fallback
     out = []
-    any_translated = False
     for w in tokens:
         if direction == "om_en":
             c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (w,))
             r = c.fetchone()
-            if r:
-                out.append(r[0])
-                any_translated = True
-            else:
-                out.append(w)
+            out.append(r[0] if r else w)
         else:
             c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (w,))
             r = c.fetchone()
-            if r:
-                out.append(r[0])
-                any_translated = True
-            else:
-                out.append(w)
+            out.append(r[0] if r else w)
 
     conn.close()
     return " ".join(out), 0, 0
@@ -320,19 +362,27 @@ def home():
     c = conn.cursor()
 
     result = None
+    result_id = None
     suggestions = None
+    audio = None
 
     if request.method == "POST":
         word = normalize_text(request.form.get("word", ""))
-        c.execute(
-            "SELECT english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?)",
-            (word, word)
-        )
-        result = c.fetchone()
+
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND (english=? OR oromo=?)
+        """, (word, word))
+        row = c.fetchone()
+
+        if row:
+            result_id = row[0]
+            result = (row[1], row[2])
+            audio = get_approved_audio("word", result_id)
 
         # Suggestions if not found
-        if not result and word:
-            # try both directions for suggestions (word could be either)
+        if not row and word:
             suggestions = {
                 "en": suggest_terms(word, "en_om"),
                 "om": suggest_terms(word, "om_en")
@@ -344,7 +394,15 @@ def home():
 
     trending = get_trending(limit=15)
 
-    return render_template("index.html", result=result, words=all_words, suggestions=suggestions, trending=trending)
+    return render_template(
+        "index.html",
+        result=result,
+        result_id=result_id,
+        audio=audio,
+        words=all_words,
+        suggestions=suggestions,
+        trending=trending
+    )
 
 # ------------------ TRANSLATOR PAGE (AUTO DETECT + SUGGESTIONS + ANALYTICS) ------------------
 
@@ -354,6 +412,8 @@ def translate():
     text = ""
     direction = "auto"
     suggestions = None
+    audio = None
+    matched = None  # {'type': 'word'|'phrase', 'id': int}
 
     if request.method == "POST":
         text = request.form.get("text", "")
@@ -361,6 +421,35 @@ def translate():
 
         if direction == "auto":
             direction = detect_direction_auto(text)
+
+        clean = normalize_text(text)
+
+        # First: check exact phrase match to get ID
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+
+        if clean:
+            if direction == "om_en":
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo=?", (clean,))
+            else:
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND english=?", (clean,))
+            pr = c.fetchone()
+            if pr:
+                matched = {"type": "phrase", "id": pr[0]}
+                audio = get_approved_audio("phrase", pr[0])
+
+        # If not phrase, check exact word match (single token) to get ID
+        if not matched and clean and len(clean.split()) == 1:
+            if direction == "om_en":
+                c.execute("SELECT id FROM words WHERE status='approved' AND oromo=?", (clean,))
+            else:
+                c.execute("SELECT id FROM words WHERE status='approved' AND english=?", (clean,))
+            wr = c.fetchone()
+            if wr:
+                matched = {"type": "word", "id": wr[0]}
+                audio = get_approved_audio("word", wr[0])
+
+        conn.close()
 
         translated, is_exact, is_phrase = translate_text(text, direction)
 
@@ -370,7 +459,6 @@ def translate():
         result = translated
 
         # suggestions (only when not exact, and input is basically one word)
-        clean = normalize_text(text)
         if clean and not is_exact and len(clean.split()) == 1:
             suggestions = suggest_terms(clean, direction)
 
@@ -382,7 +470,9 @@ def translate():
         text=text,
         direction=direction,
         suggestions=suggestions,
-        trending=trending
+        trending=trending,
+        matched=matched,
+        audio=audio
     )
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
@@ -398,6 +488,13 @@ def submit():
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
+
+        # basic duplicate prevention
+        c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (english, oromo))
+        if c.fetchone():
+            conn.close()
+            return "This word already exists (or is pending). <a href='/submit'>Try another</a>"
+
         c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
         conn.commit()
         conn.close()
@@ -419,6 +516,12 @@ def submit_phrase():
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
+
+        c.execute("SELECT 1 FROM phrases WHERE english=? OR oromo=?", (english, oromo))
+        if c.fetchone():
+            conn.close()
+            return "This phrase already exists (or is pending). <a href='/submit_phrase'>Try another</a>"
+
         c.execute("INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
         conn.commit()
         conn.close()
@@ -426,6 +529,65 @@ def submit_phrase():
         return "Thank you! Your phrase is waiting for admin approval. <br><a href='/'>Go back</a>"
 
     return render_template("submit_phrase.html")
+
+# ------------------ COMMUNITY AUDIO UPLOAD ------------------
+
+@app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
+def upload_audio(entry_type, entry_id, lang):
+    # Validate
+    if entry_type not in ("word", "phrase"):
+        return "Invalid entry type", 400
+    if lang not in ("oromo", "english"):
+        return "Invalid language", 400
+
+    # Ensure entry exists + approved
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if entry_type == "word":
+        c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        return "Entry not found or not approved.", 404
+
+    if request.method == "POST":
+        f = request.files.get("audio")
+        if not f or not f.filename:
+            return "Please choose an audio file.", 400
+        if not allowed_audio(f.filename):
+            return "Allowed audio: mp3, wav, m4a", 400
+
+        original = secure_filename(f.filename)
+        ext = original.rsplit(".", 1)[1].lower()
+
+        new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+        save_path = os.path.join(UPLOAD_FOLDER, new_name)
+        f.save(save_path)
+
+        rel_path = f"uploads/{new_name}"
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+            VALUES (?, ?, ?, ?, 'pending')
+        """, (entry_type, entry_id, lang, rel_path))
+        conn.commit()
+        conn.close()
+
+        return "Thanks! Audio submitted for admin approval. <br><a href='/'>Home</a>"
+
+    return render_template(
+        "upload_audio.html",
+        entry_type=entry_type,
+        entry_id=entry_id,
+        lang=lang,
+        english=row[1],
+        oromo=row[2]
+    )
 
 # ------------------ ADMIN LOGIN ------------------
 
@@ -465,12 +627,21 @@ def dashboard():
     c.execute("SELECT id, english, oromo FROM phrases WHERE status='pending' ORDER BY id DESC")
     pending_phrases = c.fetchall()
 
+    c.execute("""
+        SELECT id, entry_type, entry_id, lang, file_path
+        FROM audio
+        WHERE status='pending'
+        ORDER BY id DESC
+    """)
+    pending_audio = c.fetchall()
+
     conn.close()
 
     return render_template(
         "admin_dashboard.html",
         pending=pending_words,
-        pending_phrases=pending_phrases
+        pending_phrases=pending_phrases,
+        pending_audio=pending_audio
     )
 
 # ------------------ APPROVE / REJECT WORDS ------------------
@@ -527,6 +698,32 @@ def reject_phrase(phrase_id):
     conn.commit()
     conn.close()
 
+    return redirect("/dashboard")
+
+# ------------------ APPROVE / REJECT AUDIO ------------------
+
+@app.route("/approve_audio/<int:audio_id>")
+def approve_audio(audio_id):
+    if "admin" not in session:
+        return redirect("/admin")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("UPDATE audio SET status='approved' WHERE id=?", (audio_id,))
+    conn.commit()
+    conn.close()
+    return redirect("/dashboard")
+
+@app.route("/reject_audio/<int:audio_id>")
+def reject_audio(audio_id):
+    if "admin" not in session:
+        return redirect("/admin")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM audio WHERE id=? AND status='pending'", (audio_id,))
+    conn.commit()
+    conn.close()
     return redirect("/dashboard")
 
 # ------------------ LOGOUT ------------------

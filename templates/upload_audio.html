@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upload Audio | Gada Oromo Dictionary</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+  <header class="topbar">
+    <div class="title-row">
+      <div class="brand">
+        <h1 style="margin:0;">Upload Audio</h1>
+        <p class="tagline">Community pronunciation • Admin approved</p>
+      </div>
+      <a class="btn" href="/">⬅ Home</a>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2 style="margin-top:0;">
+      {{ entry_type|capitalize }} #{{ entry_id }} — {{ lang|capitalize }} audio
+    </h2>
+
+    <div class="result-box">
+      <b>English:</b> {{ english }}<br>
+      <b>Oromo:</b> {{ oromo }}
+    </div>
+
+    <p class="muted" style="margin-top:10px;">
+      Upload an audio file (mp3, wav, m4a). It will be reviewed by admin before becoming public.
+    </p>
+
+    <form method="POST" enctype="multipart/form-data" style="margin-top:12px;">
+      <input type="file" name="audio" accept=".mp3,.wav,.m4a" required>
+      <div style="height:12px;"></div>
+      <button type="submit">Submit Audio</button>
+    </form>
+  </div>
+
+</div>
+
+</body>
+</html>

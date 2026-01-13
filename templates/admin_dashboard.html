@@ -79,9 +79,39 @@
     {% endif %}
   </div>
 
+  <!-- ===== Pending Audio ===== -->
+  <div class="card">
+    <h2>Pending Audio</h2>
+
+    {% if pending_audio and pending_audio|length > 0 %}
+      <div class="grid">
+        {% for a in pending_audio %}
+          <div class="card" style="margin-top:0;">
+            <div class="subtle">Entry</div>
+            <div class="result-box" style="margin-top:8px;">
+              <b>{{ a[1] }}</b> #{{ a[2] }} — <b>{{ a[3] }}</b>
+            </div>
+
+            <audio controls style="width:100%; margin-top:10px;">
+              <source src="{{ url_for('static', filename=a[4]) }}">
+            </audio>
+
+            <div class="small-actions">
+              <a class="btn primary" href="/approve_audio/{{ a[0] }}">✅ Approve</a>
+              <a class="btn danger" href="/reject_audio/{{ a[0] }}" onclick="return confirm('Reject this audio?');">❌ Reject</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No pending audio right now ✅</div>
+    {% endif %}
+  </div>
+
 </div>
 
 </body>
 </html>
+
 
 

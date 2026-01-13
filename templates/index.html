@@ -38,6 +38,39 @@
         <b>English:</b> {{ result[0] }} <br>
         <b>Oromo:</b> {{ result[1] }}
       </div>
+
+      <!-- ===== Community Audio (Word exact match) ===== -->
+      {% if result_id %}
+        <div class="card" style="margin-top:14px;">
+          <h2 style="margin-top:0;">🎧 Community Audio</h2>
+
+          {% if audio %}
+            {% if audio.oromo %}
+              <div class="subtle">Oromo audio</div>
+              <audio controls style="width:100%; margin-top:6px;">
+                <source src="{{ url_for('static', filename=audio.oromo) }}">
+              </audio>
+            {% endif %}
+
+            {% if audio.english %}
+              <div class="subtle" style="margin-top:10px;">English audio</div>
+              <audio controls style="width:100%; margin-top:6px;">
+                <source src="{{ url_for('static', filename=audio.english) }}">
+              </audio>
+            {% endif %}
+          {% endif %}
+
+          <div class="small-actions" style="margin-top:12px;">
+            <a class="btn" href="/upload_audio/word/{{ result_id }}/oromo">🎙 Upload Oromo audio</a>
+            <a class="btn" href="/upload_audio/word/{{ result_id }}/english">🎙 Upload English audio</a>
+          </div>
+
+          <div class="muted" style="margin-top:8px; font-size:14px;">
+            Audio becomes public after admin approval.
+          </div>
+        </div>
+      {% endif %}
+
     {% elif result is not none %}
       <div class="result-box">No exact match found.</div>
     {% endif %}
@@ -119,6 +152,7 @@ function useSuggestion(text){
 
 </body>
 </html>
+
 
 
 
