@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Submit Word | Gada Oromo Dictionary</title>
+  <title>Submit File | Gada Oromo Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -12,21 +12,40 @@
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">Submit a Word</h2>
-        <div class="subtle">Your submission will be reviewed by admin before it appears publicly.</div>
+        <h2 style="margin:0;">📄 Submit a Translated File</h2>
+        <div class="subtle">
+          Community uploads must include <b>both</b> English and Oromo.
+          Your file will be reviewed by admin before it appears publicly.
+        </div>
       </div>
       <a class="btn" href="/">⬅ Home</a>
     </div>
   </div>
 
+  {% if msg %}
+    <div class="result-box">{{ msg }}</div>
+  {% endif %}
+
   <div class="card">
-    <form method="POST" autocomplete="off">
-      <input type="text" name="english" placeholder="English word (example: water)" required>
-      <div style="height:10px;"></div>
-      <input type="text" name="oromo" placeholder="Afaan Oromo word (example: bishaan)" required>
-      <div style="height:10px;"></div>
-      <button type="submit">Submit Word</button>
+    <form method="POST" enctype="multipart/form-data" autocomplete="off">
+      <label style="display:block; margin-bottom:8px;">Upload CSV or XLSX file</label>
+      <input type="file" name="file" accept=".csv,.xlsx" required>
+
+      <div style="height:12px;"></div>
+      <button type="submit">Submit File</button>
     </form>
+
+    <div class="muted" style="margin-top:14px; font-size:14px; line-height:1.5;">
+      <b>CSV format (required):</b><br>
+      <code>english,oromo</code><br>
+      <code>water,bishaan</code><br>
+      <code>school,mana barumsaa</code><br><br>
+
+      <b>XLSX format (required):</b><br>
+      Column A = English, Column B = Oromo<br><br>
+
+      ❌ English-only rows are not allowed for community uploads.
+    </div>
   </div>
 
 </div>

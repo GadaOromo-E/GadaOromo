@@ -13,14 +13,25 @@
     <div class="title-row">
       <div>
         <h2 style="margin:0;">Submit a Phrase / Sentence</h2>
-        <div class="subtle">Your submission will be reviewed by admin before it appears publicly.</div>
+        <div class="subtle">
+          You must provide <b>both</b> English and Oromo.  
+          File uploads must already be translated.  
+          All submissions are reviewed by admin.
+        </div>
       </div>
       <a class="btn" href="/">⬅ Home</a>
     </div>
   </div>
 
+  {% if msg %}
+    <div class="result-box">{{ msg }}</div>
+  {% endif %}
+
   <div class="card">
+    <h3>Manual submission</h3>
     <form method="POST" autocomplete="off">
+      <input type="hidden" name="mode" value="manual">
+
       <input type="text" name="english" placeholder="English phrase (example: how are you?)" required>
       <div style="height:10px;"></div>
       <input type="text" name="oromo" placeholder="Afaan Oromo phrase (example: akkam jirta?)" required>
@@ -29,9 +40,38 @@
     </form>
   </div>
 
+  <div class="card">
+    <h3>Upload translated file</h3>
+
+    <form method="POST" enctype="multipart/form-data" autocomplete="off">
+      <input type="hidden" name="mode" value="file">
+
+      <label style="display:block; margin-bottom:8px;">
+        Upload CSV or XLSX (must contain both languages)
+      </label>
+      <input type="file" name="file" accept=".csv,.xlsx" required>
+
+      <div style="height:10px;"></div>
+      <button type="submit">Upload File</button>
+    </form>
+
+    <div class="muted" style="margin-top:12px; font-size:14px; line-height:1.5;">
+      <b>CSV format:</b><br>
+      <code>english,oromo</code><br>
+      <code>how are you?,akkam jirta?</code><br>
+      <code>good morning,ganama gaarii</code><br><br>
+
+      <b>XLSX format:</b><br>
+      Column A = English, Column B = Oromo<br><br>
+
+      ❌ English-only rows are not allowed.
+    </div>
+  </div>
+
 </div>
 </body>
 </html>
+
 
 
 

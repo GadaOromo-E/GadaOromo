@@ -264,6 +264,47 @@ button:hover{ background: var(--redHover); }
   .nav{ top: 78px; }
 }
 
+/* =======================================================
+   NEW: File submission / multi-section forms improvements
+   (Submit File + Submit Phrase file upload)
+======================================================= */
 
+/* Make section titles (h3) look consistent inside cards */
+h3{
+  margin: 0 0 10px;
+  font-size: 1.05rem;
+}
 
+/* Make labels consistent */
+label{
+  font-weight: 700;
+  color: var(--black);
+}
+
+/* File input styling */
+input[type="file"]{
+  background: #fff;
+  border: 1px dashed rgba(0,0,0,0.22);
+  border-radius: var(--radiusSm);
+  padding: 12px;
+}
+
+/* Code examples (CSV format blocks) */
+code{
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.12);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.92rem;
+  margin-top: 4px;
+}
+
+/* Optional: a soft divider if you want it in templates */
+.divider{
+  height: 1px;
+  background: rgba(0,0,0,0.10);
+  margin: 14px 0;
+}
 

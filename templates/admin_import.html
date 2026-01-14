@@ -6,61 +6,58 @@
   <title>Import Words | Admin</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<script>
-  // clear textarea/file input after successful import so it doesn't look stuck
-  (function () {
-    const box = document.querySelector(".result-box");
-    if (box && box.textContent.includes("Imported:")) {
-      const ta = document.querySelector("textarea[name='words']");
-      if (ta) ta.value = "";
-      const fi = document.querySelector("input[type='file'][name='txt_file']");
-      if (fi) fi.value = "";
-    }
-  })();
-</script>
+
 <body>
 <div class="container">
 
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">📥 Import English → Oromo (TXT)</h2>
-        <div class="subtle">Upload a .txt file (one English word per line). Fast batch translation with Google API.</div>
+        <h2 style="margin:0;">📥 Import English → Oromo (GitHub One-Click)</h2>
+        <div class="subtle">
+          One click import: max <b>2000</b> words from GitHub, sent as <b>10</b> Google calls (batch size <b>200</b>).
+          Words are saved as <b>pending</b> for approval.
+        </div>
       </div>
       <a class="btn danger" href="/dashboard">⬅ Back</a>
     </div>
   </div>
 
   {% if msg %}
-    <div class="result-box">{{ msg }}</div>
+    <div class="result-box" id="resultBox">{{ msg }}</div>
   {% endif %}
 
   <div class="card">
-    <form method="POST" action="/admin/import" enctype="multipart/form-data" novalidate autocomplete="off">
-      <label style="display:block; margin-bottom:8px;">Choose TXT file</label>
-      <input type="file" name="txt_file" accept=".txt,text/plain" required>
-
-      <div style="height:12px;"></div>
-
-      <label style="display:block; margin-bottom:6px;">Max words to process (cost control)</label>
-      <input type="number" name="max_lines" value="2000" min="1" max="50000" style="width:160px;">
-
-      <div style="height:12px;"></div>
-
-      <label style="display:flex; gap:8px; align-items:center;">
-        <input type="checkbox" name="estimate_only" value="1">
-        Estimate only (no import)
-      </label>
-
-      <div style="height:12px;"></div>
-      <button type="submit">Import from TXT</button>
+    <!-- IMPORTANT: action is /admin/import_github and NO file input -->
+    <form id="importForm" method="POST" action="/admin/import_github" novalidate autocomplete="off">
+      <button id="importBtn" type="submit">🚀 Import Now (One Click)</button>
+      <div id="statusLine" class="muted" style="margin-top:10px; font-size:14px;"></div>
     </form>
 
     <div class="muted" style="margin-top:10px; font-size:14px;">
-      Imported words are saved as <b>pending</b>. Approve them in the Admin Dashboard.
+      This button downloads your word list from <b>WORDLIST_URL</b> (Render env var).
+      The GitHub file must be a <b>raw .txt</b> with <b>one English word per line</b>.
     </div>
   </div>
 
 </div>
+
+<script>
+  (function () {
+    const form = document.getElementById("importForm");
+    const btn = document.getElementById("importBtn");
+    const status = document.getElementById("statusLine");
+    if (!form || !btn || !status) return;
+
+    form.addEventListener("submit", function () {
+      btn.disabled = true;
+      btn.textContent = "Importing…";
+      status.textContent = "Downloading from GitHub, translating in 200×10 batches, saving as pending…";
+    });
+  })();
+</script>
+
 </body>
 </html>
+
+
