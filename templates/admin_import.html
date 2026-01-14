@@ -13,10 +13,11 @@
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">📥 Import English → Oromo (One-Click)</h2>
+        <h2 style="margin:0;">📥 Admin Import (English → Oromo)</h2>
         <div class="subtle">
-          Upload a file once, click import. Max <b>2000</b> words → translated using Google Translate API in
-          <b>10</b> calls (batch size <b>200</b>). Saved as <b>pending</b> for approval.
+          One-click import: upload a file and click Import. Up to <b>2000</b> English words will be translated using
+          <b>Google Translate API</b> (server-side) in <b>10</b> calls (batch size <b>200</b>).
+          Imported words are saved as <b>pending</b> for approval.
         </div>
       </div>
       <a class="btn danger" href="/dashboard">⬅ Back</a>
@@ -28,11 +29,12 @@
   {% endif %}
 
   <div class="card">
-    <!-- One-click: admin uploads file once, then clicks import -->
     <form id="importForm" method="POST" action="/admin/import" enctype="multipart/form-data" novalidate autocomplete="off">
 
       <label class="subtle" style="display:block; margin-bottom:6px;">Choose File (TXT / CSV / XLSX)</label>
       <input id="fileInput" type="file" name="file" accept=".txt,.csv,.xlsx" required>
+
+      <div id="fileName" class="muted" style="margin-top:8px; font-size:14px;"></div>
 
       <div style="height:14px;"></div>
 
@@ -43,8 +45,10 @@
     <div class="muted" style="margin-top:12px; font-size:14px; line-height:1.6;">
       <b>File rules (English-only list):</b><br>
       • <b>TXT</b>: one English word per line<br>
-      • <b>CSV</b>: column header <code>english</code> (recommended) or first column is used<br>
+      • <b>CSV</b>: header <code>english</code> (recommended) or first column is used<br>
       • <b>XLSX</b>: Column A = English (first row may be header “English”)<br><br>
+
+      <b>Important:</b> This import works only if the server has <code>GOOGLE_TRANSLATE_API_KEY</code> set.
       After importing, go to <b>Dashboard</b> to approve/reject.
     </div>
   </div>
@@ -57,8 +61,18 @@
     const btn = document.getElementById("importBtn");
     const status = document.getElementById("statusLine");
     const fileInput = document.getElementById("fileInput");
+    const fileName = document.getElementById("fileName");
 
-    if (!form || !btn || !status || !fileInput) return;
+    if (!form || !btn || !status || !fileInput || !fileName) return;
+
+    fileInput.addEventListener("change", function () {
+      if (fileInput.files && fileInput.files.length > 0) {
+        fileName.textContent = "Selected: " + fileInput.files[0].name;
+        status.textContent = "";
+      } else {
+        fileName.textContent = "";
+      }
+    });
 
     form.addEventListener("submit", function (e) {
       if (!fileInput.files || fileInput.files.length === 0) {
@@ -67,6 +81,7 @@
         return;
       }
 
+      // Prevent double submit
       btn.disabled = true;
       btn.textContent = "Importing…";
       status.textContent = "Uploading file, translating in 200×10 batches, saving as pending…";

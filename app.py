@@ -15,13 +15,15 @@ Features:
 - Community file submission (CSV/XLSX) -> BOTH languages required (NO Google calls)
 - Community audio upload + admin approve/reject
 
-UPDATED (Fix request):
+UPDATED (Your final requirement):
 ✅ Removed GitHub env var dependency (WORDLIST_URL removed)
 ✅ Removed broken one-click GitHub import logic (/admin/import_github removed)
-✅ Admin bulk import now supports:
-   - TXT / CSV / XLSX uploads
-   - BOTH languages required for every row (English + Oromo)
-   - NO Google Translate calls
+✅ Admin bulk import (ONE-CLICK) now supports:
+   - TXT / CSV / XLSX uploads (ENGLISH-ONLY list)
+   - Uses Google Translate API (admin-only) to generate Oromo
+   - Max 2000 words, batch size 200, max 10 Google calls
+   - Saves as pending for approval
+✅ Community uploads still require BOTH languages and NO Google calls
 """
 
 import os
@@ -31,6 +33,7 @@ import logging
 from uuid import uuid4
 from difflib import get_close_matches
 
+import requests
 from flask import Flask, render_template, request, redirect, session, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -59,6 +62,14 @@ MAX_AUDIO_MB = 15
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
+
+
+# ------------------ ADMIN IMPORT CONFIG (GOOGLE TRANSLATE LIMITS) ------------------
+# max 2000 words, sent as 10 calls, each call translates up to 200 words
+
+IMPORT_BATCH_SIZE = 200
+IMPORT_MAX_CALLS = 10
+IMPORT_MAX_WORDS = IMPORT_BATCH_SIZE * IMPORT_MAX_CALLS  # 2000
 
 
 # ------------------ STOPWORDS ------------------
@@ -107,7 +118,6 @@ def parse_csv_pairs(file_bytes: bytes):
         if en or om:
             out.append((en, om))
 
-    # dedup by english (keep first)
     seen = set()
     final = []
     for en, om in out:
@@ -135,7 +145,6 @@ def parse_xlsx_pairs(file_bytes: bytes):
         a = (row[0] if len(row) > 0 else "") or ""
         b = (row[1] if len(row) > 1 else "") or ""
 
-        # Skip header-like first row
         if idx == 0 and str(a).strip().lower() in ("english", "en") and str(b).strip().lower() in ("oromo", "om"):
             continue
 
@@ -144,7 +153,6 @@ def parse_xlsx_pairs(file_bytes: bytes):
         if en or om:
             out.append((en, om))
 
-    # dedup by english (keep first)
     seen = set()
     final = []
     for en, om in out:
@@ -154,18 +162,11 @@ def parse_xlsx_pairs(file_bytes: bytes):
     return final
 
 
+# (Legacy) kept only for reference. Not used by admin import anymore.
 def parse_txt_pairs(file_bytes: bytes):
     """
-    TXT format (Admin import):
-    - Each line must contain BOTH English and Oromo.
-    Accepted separators per line:
-      - TAB
-      - semicolon ;
-      - comma ,
-    Example:
-      hello<TAB>akkam
-      water;bishaan
-      good morning,akkam bulte
+    Legacy TXT format (English + Oromo in same line).
+    Not used by admin import now (admin import is English-only + Google Translate).
     """
     text = file_bytes.decode("utf-8", errors="replace")
     pairs = []
@@ -174,7 +175,6 @@ def parse_txt_pairs(file_bytes: bytes):
         if not line:
             continue
 
-        # Try separators in order
         sep = None
         for s in ("\t", ";", ","):
             if s in line:
@@ -182,7 +182,6 @@ def parse_txt_pairs(file_bytes: bytes):
                 break
 
         if not sep:
-            # English-only line not allowed
             pairs.append((normalize_text(line), ""))
             continue
 
@@ -191,7 +190,6 @@ def parse_txt_pairs(file_bytes: bytes):
         om = normalize_text(right)
         pairs.append((en, om))
 
-    # dedup by english
     seen = set()
     final = []
     for en, om in pairs:
@@ -201,10 +199,111 @@ def parse_txt_pairs(file_bytes: bytes):
     return final
 
 
+# ------------------ ADMIN IMPORT PARSERS (ENGLISH-ONLY) ------------------
+
+def parse_txt_english(file_bytes: bytes):
+    """TXT: one English word per line."""
+    text = file_bytes.decode("utf-8", errors="replace")
+    words = []
+    for line in text.splitlines():
+        w = normalize_text(line)
+        if w:
+            words.append(w)
+    return dedup_preserve_order(words)
+
+def parse_csv_english(file_bytes: bytes):
+    """CSV: prefer header 'english' else first column."""
+    text = file_bytes.decode("utf-8", errors="replace")
+    f = StringIO(text)
+    reader = csv.DictReader(f)
+
+    if not reader.fieldnames:
+        return []
+
+    english_key = None
+    for k in reader.fieldnames:
+        if (k or "").strip().lower() == "english":
+            english_key = k
+            break
+
+    first_key = reader.fieldnames[0]
+
+    words = []
+    for row in reader:
+        raw = row.get(english_key, "") if english_key else row.get(first_key, "")
+        w = normalize_text(raw or "")
+        if w:
+            words.append(w)
+
+    return dedup_preserve_order(words)
+
+def parse_xlsx_english(file_bytes: bytes):
+    """XLSX: Column A = English, optional header in first row."""
+    wb = load_workbook(BytesIO(file_bytes))
+    ws = wb.active
+
+    words = []
+    for idx, row in enumerate(ws.iter_rows(values_only=True)):
+        if not row:
+            continue
+        a = (row[0] if len(row) > 0 else "") or ""
+
+        if idx == 0 and str(a).strip().lower() in ("english", "en"):
+            continue
+
+        w = normalize_text(str(a))
+        if w:
+            words.append(w)
+
+    return dedup_preserve_order(words)
+
+
 # ------------------ ADMIN HELPER ------------------
 
 def require_admin() -> bool:
     return "admin" in session
+
+
+# ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
+# Uses env var: GOOGLE_TRANSLATE_API_KEY
+# Only used by /admin/import (admin-only).
+
+def _get_google_key() -> str:
+    return os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+
+def google_translate_batch_v2(texts, target: str, source: str = "en"):
+    """
+    Batch translate: sends q as list to Google Translate v2.
+    Returns list of normalized translations in same order, or [] if failed.
+    """
+    api_key = _get_google_key()
+    if not api_key:
+        app.logger.error("GOOGLE_TRANSLATE_API_KEY is missing at runtime!")
+        return []
+
+    if not texts:
+        return []
+
+    url = "https://translation.googleapis.com/language/translate/v2"
+    payload = {"q": texts, "source": source, "target": target, "format": "text"}
+
+    try:
+        r = requests.post(url, params={"key": api_key}, json=payload, timeout=30)
+        if r.status_code != 200:
+            app.logger.error(f"Google Translate HTTP {r.status_code}: {(r.text or '')[:250]}")
+            return []
+
+        data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            app.logger.error(f"Google Translate JSON error: {data.get('error')}")
+            return []
+
+        translations = data["data"]["translations"]
+        return [normalize_text(t.get("translatedText", "")) for t in translations]
+
+    except Exception as e:
+        app.logger.exception(f"Google Translate exception: {repr(e)}")
+        return []
 
 
 # ------------------ AUDIO HELPERS ------------------
@@ -627,7 +726,6 @@ def submit():
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
-        # Community policy: BOTH required
         if not english or not oromo:
             return "Please provide both English and Oromo. <a href='/submit'>Try again</a>"
 
@@ -652,21 +750,11 @@ def submit():
 
 @app.route("/submit_phrase", methods=["GET", "POST"])
 def submit_phrase():
-    """
-    Community policy:
-    - manual submit requires BOTH english + oromo
-    - file submit requires BOTH english + oromo for EVERY row
-    - NO Google calls here
-    Accepts:
-    - manual form: fields english, oromo
-    - file form: upload CSV/XLSX with both columns
-    """
     msg = None
 
     if request.method == "POST":
         mode = (request.form.get("mode") or "").strip().lower()
 
-        # If file exists OR mode=file -> treat as file upload
         f = request.files.get("file")
         if mode == "file" or (f and f.filename):
             if not f or not f.filename:
@@ -693,7 +781,6 @@ def submit_phrase():
                 msg = "No rows found in the file."
                 return render_template("submit_phrase.html", msg=msg)
 
-            # Enforce: BOTH columns required in EVERY row
             for en, om in pairs:
                 if not en or not om:
                     msg = "Rejected: Every row must include BOTH English and Oromo (no English-only rows)."
@@ -719,7 +806,6 @@ def submit_phrase():
             msg = f"Thanks! Phrase file submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
             return render_template("submit_phrase.html", msg=msg)
 
-        # Otherwise manual submission
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
@@ -750,13 +836,6 @@ def submit_phrase():
 
 @app.route("/submit_file", methods=["GET", "POST"])
 def submit_file():
-    """
-    Community can submit a translated WORD file for approval.
-    Policy:
-    - Only CSV or XLSX
-    - MUST contain BOTH English + Oromo for every row
-    - NO Google translate calls here
-    """
     msg = None
 
     if request.method == "POST":
@@ -928,28 +1007,26 @@ def dashboard():
     )
 
 
-# ------------------ ADMIN IMPORT (UPLOAD TXT/CSV/XLSX, BOTH LANG REQUIRED, NO GOOGLE) ------------------
+# ------------------ ADMIN IMPORT (ENGLISH-ONLY -> GOOGLE -> OROMO) ------------------
 
-def _word_exists_any(conn, english_word: str, oromo_word: str) -> bool:
+def _words_exist(conn, english_word: str) -> bool:
     c = conn.cursor()
-    c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? OR english=? OR oromo=? LIMIT 1",
-              (english_word, english_word, oromo_word, oromo_word))
+    c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (english_word, english_word))
     return c.fetchone() is not None
 
 
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
     """
-    Admin import supports:
-    - Upload TXT / CSV / XLSX with BOTH languages required (English + Oromo)
-    - JSON POST also supported:
-        {"pairs":[{"english":"..","oromo":".."}, ...]}
-        OR {"rows":[["english","oromo"], ...]}
+    Admin one-click import:
+    - Upload ENGLISH-ONLY list (TXT/CSV/XLSX)
+    - Server translates EN->OM using Google Translate API
+    - Saves as 'pending' for approval
 
-    Notes:
-    - No GitHub import
-    - No Google Translate calls
-    - Saves imported rows as 'pending' for admin approval.
+    Limits:
+    - max 2000 words
+    - batch size 200
+    - max 10 Google calls
     """
     if not require_admin():
         return redirect("/admin")
@@ -957,48 +1034,19 @@ def admin_import():
     msg = None
 
     if request.method == "POST":
-        pairs = []
+        words = []
 
-        # -------- JSON mode --------
+        # Optional JSON support: {"words": ["hello", "water", ...]}
         if request.is_json:
             data = request.get_json(silent=True) or {}
-
-            if isinstance(data.get("pairs"), list):
-                for item in data["pairs"]:
-                    if not isinstance(item, dict):
-                        continue
-                    en = normalize_text(item.get("english", ""))
-                    om = normalize_text(item.get("oromo", ""))
-                    if en or om:
-                        pairs.append((en, om))
-
-            elif isinstance(data.get("rows"), list):
-                for row in data["rows"]:
-                    if not isinstance(row, (list, tuple)) or len(row) < 2:
-                        continue
-                    en = normalize_text(str(row[0]))
-                    om = normalize_text(str(row[1]))
-                    if en or om:
-                        pairs.append((en, om))
-
-            # Backward compatibility (but now rejected because English-only is not allowed)
-            elif isinstance(data.get("words"), list):
-                return jsonify({
-                    "error": "English-only import is not allowed anymore. Please send pairs (english+oromo).",
-                    "expected": {"pairs": [{"english": "...", "oromo": "..."}]}
-                }), 400
-
-            else:
-                return jsonify({
-                    "error": "Invalid JSON body.",
-                    "expected": {"pairs": [{"english": "...", "oromo": "..."}]}
-                }), 400
-
-        # -------- FILE mode --------
+            incoming = data.get("words", [])
+            if not isinstance(incoming, list):
+                return jsonify({"error": "JSON must include 'words' as a list"}), 400
+            words = [normalize_text(x) for x in incoming if str(x).strip()]
         else:
             f = request.files.get("file") or request.files.get("txt_file")
             if not f or not f.filename:
-                msg = "Please upload a TXT / CSV / XLSX file."
+                msg = "Please upload a TXT / CSV / XLSX file (English-only list)."
                 return render_template("admin_import.html", msg=msg)
 
             filename = (f.filename or "").lower().strip()
@@ -1006,11 +1054,11 @@ def admin_import():
 
             try:
                 if filename.endswith(".txt"):
-                    pairs = parse_txt_pairs(data)
+                    words = parse_txt_english(data)
                 elif filename.endswith(".csv"):
-                    pairs = parse_csv_pairs(data)
+                    words = parse_csv_english(data)
                 elif filename.endswith(".xlsx"):
-                    pairs = parse_xlsx_pairs(data)
+                    words = parse_xlsx_english(data)
                 else:
                     msg = "Only .txt, .csv, .xlsx files are supported."
                     return render_template("admin_import.html", msg=msg)
@@ -1019,51 +1067,87 @@ def admin_import():
                 msg = "Could not read the file. Please check its format."
                 return render_template("admin_import.html", msg=msg)
 
-        # cleanup
-        pairs = [(en, om) for en, om in pairs if en or om]
+        words = [w for w in words if w]
+        words = dedup_preserve_order(words)
 
-        if not pairs:
+        if not words:
             if request.is_json:
-                return jsonify({"error": "No rows found."}), 400
-            msg = "No rows found."
+                return jsonify({"error": "No words provided"}), 400
+            msg = "No English words found."
             return render_template("admin_import.html", msg=msg)
 
-        # Enforce BOTH required
-        invalid_rows = [(en, om) for en, om in pairs if not en or not om]
-        if invalid_rows:
-            bad_count = len(invalid_rows)
-            if request.is_json:
-                return jsonify({
-                    "error": "Rejected: every row must have BOTH English and Oromo.",
-                    "invalid_rows_count": bad_count,
-                    "hint": "For TXT use: english<TAB>oromo (or english;oromo). For CSV headers: english,oromo. For XLSX: col A English, col B Oromo."
-                }), 400
-            msg = f"Rejected: every row must include BOTH English and Oromo. Invalid rows: {bad_count}"
-            return render_template("admin_import.html", msg=msg)
+        if len(words) > IMPORT_MAX_WORDS:
+            words = words[:IMPORT_MAX_WORDS]
+            msg = f"Only first {IMPORT_MAX_WORDS} words processed (fixed limit)."
+
+        total_chars = sum(len(x) for x in words)
 
         inserted = 0
         skipped = 0
+        failed = 0
+        google_calls = 0
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        for en, om in pairs:
-            if _word_exists_any(conn, en, om):
-                skipped += 1
+        batches = []
+        for i in range(0, len(words), IMPORT_BATCH_SIZE):
+            batches.append(words[i:i + IMPORT_BATCH_SIZE])
+            if len(batches) >= IMPORT_MAX_CALLS:
+                break
+
+        for batch_index, batch in enumerate(batches, start=1):
+            to_translate = []
+            for en in batch:
+                if _words_exist(conn, en):
+                    skipped += 1
+                else:
+                    to_translate.append(en)
+
+            if not to_translate:
                 continue
-            c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
-            inserted += 1
+
+            google_calls += 1
+            oms = google_translate_batch_v2(to_translate, target="om", source="en")
+
+            if not oms or len(oms) != len(to_translate):
+                failed += len(to_translate)
+                continue
+
+            for en, om in zip(to_translate, oms):
+                if not om:
+                    failed += 1
+                    continue
+
+                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (en, om))
+                if c.fetchone():
+                    skipped += 1
+                    continue
+
+                c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+                inserted += 1
 
         conn.commit()
         conn.close()
 
-        msg = f"Import completed. Added: {inserted} | Skipped duplicates: {skipped}. Now approve in Dashboard."
+        msg2 = (
+            f"One-click import done. Imported: {inserted} | Skipped: {skipped} | Failed: {failed} | "
+            f"Google calls used: {google_calls}/{IMPORT_MAX_CALLS}. "
+            f"Processed {len(words)} words ({total_chars} chars). Approve in Dashboard."
+        )
+        msg = (msg + " " + msg2).strip() if msg else msg2
 
         if request.is_json:
             return jsonify({
-                "rows_received": len(pairs),
-                "inserted": inserted,
+                "processed": len(words),
+                "total_chars": total_chars,
+                "imported": inserted,
                 "skipped": skipped,
+                "failed": failed,
+                "google_calls_used": google_calls,
+                "google_calls_max": IMPORT_MAX_CALLS,
+                "batch_size": IMPORT_BATCH_SIZE,
+                "max_words": IMPORT_MAX_WORDS,
                 "message": msg
             })
 
