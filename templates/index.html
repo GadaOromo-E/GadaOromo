@@ -22,7 +22,6 @@
     <a class="nav-link" href="/translate">Translate</a>
     <a class="nav-link" href="/submit">Submit Word</a>
     <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
-    <a class="nav-link" href="/submit_file">Submit File</a>
     <a class="nav-link" href="/admin">Admin</a>
   </nav>
 
@@ -44,7 +43,6 @@
         <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
         <div style="margin-top:6px;"><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
 
-        <!-- Priority: Community audio (real Oromo speakers) -->
         {% if audio and (audio.oromo or audio.english) %}
           <div style="margin-top:14px;">
             <div class="subtle">🎧 Community pronunciation (admin approved)</div>
@@ -69,13 +67,11 @@
           </div>
         {% endif %}
 
-        <!-- Speak buttons (browser TTS fallback) -->
         <div class="small-actions" style="margin-top:12px;">
           <button type="button" class="btn" onclick="speakEnglish()">🔊 Speak English</button>
           <button type="button" class="btn" onclick="speakOromo()">🔊 Speak Oromo</button>
         </div>
 
-        <!-- Upload buttons (only when we have a real approved word id) -->
         {% if result_id %}
           <div class="small-actions" style="margin-top:12px;">
             <a class="btn" href="/upload_audio/word/{{ result_id }}/oromo">🎙 Upload Oromo audio</a>
@@ -119,7 +115,6 @@
       <a class="btn primary" href="/translate">🌍 Translator</a>
       <a class="btn" href="/submit">➕ Add Word</a>
       <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
-      <a class="btn" href="/submit_file">📄 Submit File</a>
     </div>
   </section>
 
@@ -166,7 +161,6 @@ function useSuggestion(text){
   document.getElementById("searchForm").submit();
 }
 
-/* ===== Speech-to-text for Dictionary Search ===== */
 function startVoiceSearch(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition){
@@ -175,7 +169,6 @@ function startVoiceSearch(){
   }
 
   const recognition = new SpeechRecognition();
-  // Most browsers don't support om-ET reliably; use en-US to still capture speech.
   recognition.lang = "en-US";
   recognition.interimResults = false;
 
@@ -192,7 +185,6 @@ function startVoiceSearch(){
   recognition.start();
 }
 
-/* ===== Voice output fallback (Browser TTS) ===== */
 let cachedVoices = [];
 function loadVoices(){
   if(!('speechSynthesis' in window)) return;
@@ -241,6 +233,7 @@ function speakOromo(){
 
 </body>
 </html>
+
 
 
 
