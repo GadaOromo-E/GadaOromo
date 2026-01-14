@@ -6,14 +6,26 @@
   <title>Import Words | Admin</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
+<script>
+  // clear textarea/file input after successful import so it doesn't look stuck
+  (function () {
+    const box = document.querySelector(".result-box");
+    if (box && box.textContent.includes("Imported:")) {
+      const ta = document.querySelector("textarea[name='words']");
+      if (ta) ta.value = "";
+      const fi = document.querySelector("input[type='file'][name='txt_file']");
+      if (fi) fi.value = "";
+    }
+  })();
+</script>
 <body>
 <div class="container">
 
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">📥 Import English → Oromo</h2>
-        <div class="subtle">Paste one English word per line. Uses Google Cloud Translation API.</div>
+        <h2 style="margin:0;">📥 Import English → Oromo (TXT)</h2>
+        <div class="subtle">Upload a .txt file (one English word per line). Fast batch translation with Google API.</div>
       </div>
       <a class="btn danger" href="/dashboard">⬅ Back</a>
     </div>
@@ -24,10 +36,24 @@
   {% endif %}
 
   <div class="card">
-    <form method="POST" autocomplete="off">
-      <textarea name="words" placeholder="water&#10;food&#10;school" style="min-height:220px;" required></textarea>
+    <form method="POST" action="/admin/import" enctype="multipart/form-data" novalidate autocomplete="off">
+      <label style="display:block; margin-bottom:8px;">Choose TXT file</label>
+      <input type="file" name="txt_file" accept=".txt,text/plain" required>
+
       <div style="height:12px;"></div>
-      <button type="submit">Import</button>
+
+      <label style="display:block; margin-bottom:6px;">Max words to process (cost control)</label>
+      <input type="number" name="max_lines" value="2000" min="1" max="50000" style="width:160px;">
+
+      <div style="height:12px;"></div>
+
+      <label style="display:flex; gap:8px; align-items:center;">
+        <input type="checkbox" name="estimate_only" value="1">
+        Estimate only (no import)
+      </label>
+
+      <div style="height:12px;"></div>
+      <button type="submit">Import from TXT</button>
     </form>
 
     <div class="muted" style="margin-top:10px; font-size:14px;">

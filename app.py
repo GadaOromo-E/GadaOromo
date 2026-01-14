@@ -4,83 +4,151 @@ Created on Sun Jan 11 16:32:35 2026
 
 @author: ademo
 """
-from flask import Flask, render_template, request, redirect, session
-import sqlite3
-from werkzeug.security import generate_password_hash, check_password_hash
-from werkzeug.utils import secure_filename
+# -*- coding: utf-8 -*-
+"""
+Full replace version of app.py (Flask + SQLite + Google Translate v2)
+
+Updated:
+- Admin Import now supports TXT file upload + batch translation (fast for thousands)
+- Optional estimate-only mode
+- Keeps your original app features
+"""
+
 import os
 import re
-from difflib import get_close_matches
+import sqlite3
+import logging
 from uuid import uuid4
+from difflib import get_close_matches
+
 import requests
+from flask import Flask, render_template, request, redirect, session
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+
+
+# ------------------ APP SETUP ------------------
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
+logging.basicConfig(level=logging.INFO)
+app.logger.setLevel(logging.INFO)
+
 DB_NAME = "gadaoromo.db"
+
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 ALLOWED_AUDIO = {"mp3", "wav", "m4a"}
-MAX_AUDIO_MB = 15  # adjust if needed
+MAX_AUDIO_MB = 15
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
-# ------------------ STOPWORDS (START SMALL, EXPAND LATER) ------------------
+
+# ------------------ STOPWORDS ------------------
 
 OROMO_STOP = {"fi", "kan", "inni", "isaan", "ani", "ati", "nu", "keessa", "irratti"}
 EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", "with", "it", "this"}
+
 
 # ------------------ TEXT NORMALIZATION ------------------
 
 def normalize_text(text: str) -> str:
     t = (text or "").lower().strip()
-    t = re.sub(r"[^\w\s]", " ", t)      # punctuation clean
-    t = re.sub(r"\s+", " ", t).strip()  # collapse spaces
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
     return t
 
 def normalize_tokens(text: str):
     t = normalize_text(text)
     return t.split() if t else []
 
+
 # ------------------ ADMIN HELPER ------------------
 
 def require_admin() -> bool:
     return "admin" in session
+
 
 # ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
 # Uses env var: GOOGLE_TRANSLATE_API_KEY
 
 def google_translate_v2(text: str, target: str, source: str = "en") -> str:
     api_key = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+    app.logger.info(f"Translate '{text}' {source}->{target}. Key present: {bool(api_key)}")
+
     if not api_key:
-        print("GOOGLE_TRANSLATE_API_KEY is missing")
+        app.logger.error("GOOGLE_TRANSLATE_API_KEY is missing at runtime!")
         return ""
 
     url = "https://translation.googleapis.com/language/translate/v2"
-    payload = {
-        "q": text,
-        "source": source,
-        "target": target,   # Oromo should be "om"
-        "format": "text",
-        "key": api_key
-    }
+    payload = {"q": text, "source": source, "target": target, "format": "text"}
 
     try:
-        r = requests.post(url, data=payload, timeout=20)
+        r = requests.post(url, params={"key": api_key}, json=payload, timeout=20)
+        preview = (r.text or "")[:400]
+        app.logger.info(f"Google Translate status={r.status_code}, body_preview={preview}")
+
         if r.status_code != 200:
-            print("Google Translate API error:", r.status_code, r.text)
             return ""
 
         data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            app.logger.error(f"Google returned JSON error: {data.get('error')}")
+            return ""
+
         out = data["data"]["translations"][0]["translatedText"]
         return normalize_text(out)
 
     except Exception as e:
-        print("Google Translate exception:", repr(e))
+        app.logger.exception(f"Google Translate exception: {repr(e)}")
         return ""
+
+
+def google_translate_batch_v2(texts, target: str, source: str = "en"):
+    """
+    Fast batch translate:
+    Sends q as a list to Google v2 endpoint.
+    Returns list of translated strings (normalized) with same length/order.
+    """
+    api_key = os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+    if not api_key:
+        app.logger.error("GOOGLE_TRANSLATE_API_KEY is missing at runtime!")
+        return []
+
+    if not texts:
+        return []
+
+    url = "https://translation.googleapis.com/language/translate/v2"
+    payload = {
+        "q": texts,          # LIST!
+        "source": source,
+        "target": target,    # Oromo: om
+        "format": "text"
+    }
+
+    try:
+        r = requests.post(url, params={"key": api_key}, json=payload, timeout=30)
+        preview = (r.text or "")[:400]
+        app.logger.info(f"Batch translate count={len(texts)} status={r.status_code} body_preview={preview}")
+
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+        if isinstance(data, dict) and "error" in data:
+            app.logger.error(f"Google returned JSON error: {data.get('error')}")
+            return []
+
+        translations = data["data"]["translations"]
+        return [normalize_text(t.get("translatedText", "")) for t in translations]
+
+    except Exception as e:
+        app.logger.exception(f"Batch translate exception: {repr(e)}")
+        return []
 
 
 # ------------------ AUDIO HELPERS ------------------
@@ -92,10 +160,6 @@ def allowed_audio(filename: str) -> bool:
     return ext in ALLOWED_AUDIO
 
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
-    """
-    Returns {'oromo': 'uploads/x.mp3', 'english': 'uploads/y.mp3'} for approved audio.
-    entry_type: 'word' or 'phrase'
-    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
@@ -113,13 +177,13 @@ def get_approved_audio(entry_type: str, entry_id: int) -> dict:
             out[lang] = path
     return out
 
+
 # ------------------ DATABASE SETUP ------------------
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # Words table
     c.execute("""
         CREATE TABLE IF NOT EXISTS words (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +193,6 @@ def init_db():
         )
     """)
 
-    # Phrases table
     c.execute("""
         CREATE TABLE IF NOT EXISTS phrases (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +202,6 @@ def init_db():
         )
     """)
 
-    # Admin table
     c.execute("""
         CREATE TABLE IF NOT EXISTS admin (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,7 +210,6 @@ def init_db():
         )
     """)
 
-    # Analytics: raw logs (optional but useful)
     c.execute("""
         CREATE TABLE IF NOT EXISTS search_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,7 +221,6 @@ def init_db():
         )
     """)
 
-    # Analytics: aggregated counts (fast trending)
     c.execute("""
         CREATE TABLE IF NOT EXISTS search_counts (
             query TEXT PRIMARY KEY,
@@ -171,15 +231,14 @@ def init_db():
         )
     """)
 
-    # Community audio recordings (admin approved)
     c.execute("""
         CREATE TABLE IF NOT EXISTS audio (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entry_type TEXT,      -- 'word' or 'phrase'
-            entry_id INTEGER,     -- id from words/phrases table
-            lang TEXT,            -- 'oromo' or 'english'
-            file_path TEXT,       -- 'uploads/abc.mp3'
-            status TEXT           -- 'pending' or 'approved'
+            entry_type TEXT,
+            entry_id INTEGER,
+            lang TEXT,
+            file_path TEXT,
+            status TEXT
         )
     """)
 
@@ -187,6 +246,7 @@ def init_db():
     conn.close()
 
 init_db()
+
 
 # ------------------ ANALYTICS HELPERS ------------------
 
@@ -237,7 +297,8 @@ def get_trending(limit=20):
     conn.close()
     return rows
 
-# ------------------ SUGGESTIONS (“DID YOU MEAN…”) ------------------
+
+# ------------------ SUGGESTIONS ------------------
 
 def suggest_terms(term: str, direction: str, limit: int = 8):
     t = normalize_text(term)
@@ -249,7 +310,6 @@ def suggest_terms(term: str, direction: str, limit: int = 8):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # Prefix matches
     c.execute(f"""
         SELECT {col} FROM words
         WHERE status='approved' AND {col} LIKE ?
@@ -257,7 +317,6 @@ def suggest_terms(term: str, direction: str, limit: int = 8):
     """, (t + "%", limit))
     prefix = [r[0] for r in c.fetchall()]
 
-    # Partial matches
     c.execute(f"""
         SELECT {col} FROM words
         WHERE status='approved' AND {col} LIKE ?
@@ -265,7 +324,6 @@ def suggest_terms(term: str, direction: str, limit: int = 8):
     """, ("%" + t + "%", limit))
     partial = [r[0] for r in c.fetchall()]
 
-    # Fuzzy candidates (cap to avoid huge scan)
     c.execute(f"""
         SELECT {col} FROM words
         WHERE status='approved'
@@ -288,7 +346,8 @@ def suggest_terms(term: str, direction: str, limit: int = 8):
 
     return {"closest": dedup(closest), "prefix": dedup(prefix), "partial": dedup(partial)}
 
-# ------------------ AUTO LANGUAGE DETECT (IMPROVED) ------------------
+
+# ------------------ AUTO LANGUAGE DETECT ------------------
 
 def detect_direction_auto(text: str) -> str:
     t = normalize_text(text)
@@ -315,7 +374,6 @@ def detect_direction_auto(text: str) -> str:
         if c.fetchone():
             en_score += 1
 
-    # Phrase exact match bonus
     c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
     if c.fetchone():
         or_score += 4
@@ -332,14 +390,10 @@ def detect_direction_auto(text: str) -> str:
         return "en_om"
     return "en_om"
 
-# ------------------ TRANSLATION LOGIC (PHRASES FIRST, THEN WORDS) ------------------
+
+# ------------------ TRANSLATION LOGIC ------------------
 
 def translate_text(text: str, direction: str = "om_en"):
-    """
-    Returns: (translated_text, is_exact, is_phrase)
-    is_exact: 1 when exact phrase/word found, else 0
-    is_phrase: 1 when exact phrase matched, else 0
-    """
     t = normalize_text(text)
     if not t:
         return "", 0, 0
@@ -347,7 +401,6 @@ def translate_text(text: str, direction: str = "om_en"):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # 1) Phrase exact match
     if direction == "om_en":
         c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo=?", (t,))
         row = c.fetchone()
@@ -361,7 +414,6 @@ def translate_text(text: str, direction: str = "om_en"):
             conn.close()
             return row[1], 1, 1
 
-    # 2) Word exact match (only if input is single token)
     tokens = t.split()
     if len(tokens) == 1:
         if direction == "om_en":
@@ -377,7 +429,6 @@ def translate_text(text: str, direction: str = "om_en"):
                 conn.close()
                 return row[1], 1, 0
 
-    # 3) Word-by-word fallback
     out = []
     for w in tokens:
         if direction == "om_en":
@@ -391,6 +442,7 @@ def translate_text(text: str, direction: str = "om_en"):
 
     conn.close()
     return " ".join(out), 0, 0
+
 
 # ------------------ HOME PAGE ------------------
 
@@ -441,6 +493,7 @@ def home():
         trending=trending
     )
 
+
 # ------------------ TRANSLATOR PAGE ------------------
 
 @app.route("/translate", methods=["GET", "POST"])
@@ -450,7 +503,7 @@ def translate():
     direction = "auto"
     suggestions = None
     audio = None
-    matched = None  # {'type': 'word'|'phrase', 'id': int}
+    matched = None
 
     if request.method == "POST":
         text = request.form.get("text", "")
@@ -506,6 +559,7 @@ def translate():
         audio=audio
     )
 
+
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
@@ -533,6 +587,7 @@ def submit():
 
     return render_template("submit.html")
 
+
 # ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
 
 @app.route("/submit_phrase", methods=["GET", "POST"])
@@ -559,6 +614,7 @@ def submit_phrase():
         return "Thank you! Your phrase is waiting for admin approval. <br><a href='/'>Go back</a>"
 
     return render_template("submit_phrase.html")
+
 
 # ------------------ COMMUNITY AUDIO UPLOAD ------------------
 
@@ -617,6 +673,7 @@ def upload_audio(entry_type, entry_id, lang):
         oromo=row[2]
     )
 
+
 # ------------------ ADMIN LOGIN ------------------
 
 @app.route("/admin", methods=["GET", "POST"])
@@ -638,6 +695,7 @@ def admin_login():
         return "Invalid login"
 
     return render_template("admin_login.html")
+
 
 # ------------------ ADMIN DASHBOARD ------------------
 
@@ -672,7 +730,8 @@ def dashboard():
         pending_audio=pending_audio
     )
 
-# ------------------ ADMIN IMPORT (GOOGLE CLOUD TRANSLATE) ------------------
+
+# ------------------ ADMIN IMPORT (TXT UPLOAD + BATCH TRANSLATE) ------------------
 
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
@@ -682,19 +741,53 @@ def admin_import():
     msg = None
 
     if request.method == "POST":
-        raw = request.form.get("words", "")
-        lines = [normalize_text(x) for x in raw.splitlines()]
+        # TXT upload field name: txt_file (from admin_import.html)
+        f = request.files.get("txt_file")
+        if not f or not f.filename:
+            msg = "Please upload a .txt file (one English word per line)."
+            return render_template("admin_import.html", msg=msg)
+
+        filename = (f.filename or "").lower()
+        if not filename.endswith(".txt"):
+            msg = "Only .txt files are supported."
+            return render_template("admin_import.html", msg=msg)
+
+        # Cost control
+        try:
+            max_lines = int(request.form.get("max_lines", "2000"))
+        except:
+            max_lines = 2000
+        max_lines = max(1, min(max_lines, 50000))
+
+        estimate_only = (request.form.get("estimate_only") == "1")
+
+        try:
+            raw_text = f.read().decode("utf-8", errors="replace")
+        except Exception:
+            msg = "Could not read file. Please ensure it is UTF-8 text."
+            return render_template("admin_import.html", msg=msg)
+
+        lines = [normalize_text(x) for x in raw_text.splitlines()]
         lines = [x for x in lines if x]
 
         if not lines:
-            msg = "No words provided."
+            msg = "No words found in the TXT file."
             return render_template("admin_import.html", msg=msg)
 
-        # Safety limit to control cost
-        MAX_LINES = 200
-        if len(lines) > MAX_LINES:
-            lines = lines[:MAX_LINES]
-            msg = f"Only first {MAX_LINES} lines were processed (cost control)."
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            msg = f"Only first {max_lines} lines processed (cost control)."
+
+        total_chars = sum(len(x) for x in lines)
+        app.logger.info(f"IMPORT estimate: lines={len(lines)} total_chars={total_chars}")
+
+        if estimate_only:
+            msg2 = f"Estimate only: {len(lines)} words, {total_chars} characters. (No import done.)"
+            msg = (msg + " " + msg2).strip() if msg else msg2
+            return render_template("admin_import.html", msg=msg)
+
+        # Batch size: increase if stable, decrease if timeouts
+        BATCH_SIZE = 100
 
         inserted = 0
         skipped = 0
@@ -703,37 +796,56 @@ def admin_import():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        for en in lines:
-            # skip if exists already (approved or pending)
-            c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, en))
-            if c.fetchone():
-                skipped += 1
+        for i in range(0, len(lines), BATCH_SIZE):
+            batch = lines[i:i + BATCH_SIZE]
+
+            # Skip ones that already exist (reduces API calls)
+            to_translate = []
+            for en in batch:
+                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, en))
+                if c.fetchone():
+                    skipped += 1
+                else:
+                    to_translate.append(en)
+
+            if not to_translate:
                 continue
 
-            om = google_translate_v2(en, target="om", source="en")
-            if not om:
-                failed += 1
+            oms = google_translate_batch_v2(to_translate, target="om", source="en")
+
+            if not oms or len(oms) != len(to_translate):
+                app.logger.error(f"Batch failed at index {i}. Marking {len(to_translate)} words as failed.")
+                failed += len(to_translate)
                 continue
 
-            # avoid duplicates after translation
-            c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, om))
-            if c.fetchone():
-                skipped += 1
-                continue
+            for en, om in zip(to_translate, oms):
+                if not om:
+                    failed += 1
+                    app.logger.error(f"FAILED translate (empty): {en}")
+                    continue
 
-            c.execute(
-                "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
-                (en, om)
-            )
-            inserted += 1
+                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (en, om))
+                if c.fetchone():
+                    skipped += 1
+                    continue
+
+                c.execute(
+                    "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+                    (en, om)
+                )
+                inserted += 1
 
         conn.commit()
         conn.close()
 
-        msg2 = f"Imported: {inserted} | Skipped: {skipped} | Failed: {failed}. Approve in Dashboard."
+        msg2 = (
+            f"Imported: {inserted} | Skipped: {skipped} | Failed: {failed}. "
+            f"Processed {len(lines)} words ({total_chars} chars). Approve in Dashboard."
+        )
         msg = (msg + " " + msg2).strip() if msg else msg2
 
     return render_template("admin_import.html", msg=msg)
+
 
 # ------------------ ADMIN MANAGEMENT ------------------
 
@@ -788,6 +900,7 @@ def admin_manage():
 
     return render_template("admin_manage.html", admins=admins, msg=msg)
 
+
 @app.route("/admin/change_password", methods=["GET", "POST"])
 def admin_change_password():
     if not require_admin():
@@ -824,6 +937,7 @@ def admin_change_password():
 
     return render_template("admin_change_password.html", msg=msg)
 
+
 # ------------------ APPROVE / REJECT WORDS ------------------
 
 @app.route("/approve/<int:word_id>")
@@ -849,6 +963,7 @@ def reject(word_id):
     conn.commit()
     conn.close()
     return redirect("/dashboard")
+
 
 # ------------------ APPROVE / REJECT PHRASES ------------------
 
@@ -876,6 +991,7 @@ def reject_phrase(phrase_id):
     conn.close()
     return redirect("/dashboard")
 
+
 # ------------------ APPROVE / REJECT AUDIO ------------------
 
 @app.route("/approve_audio/<int:audio_id>")
@@ -902,6 +1018,7 @@ def reject_audio(audio_id):
     conn.close()
     return redirect("/dashboard")
 
+
 # ------------------ LOGOUT ------------------
 
 @app.route("/logout")
@@ -909,9 +1026,8 @@ def logout():
     session.pop("admin", None)
     return redirect("/")
 
+
 # ------------------ CREATE FIRST ADMIN (RUN ONCE) ------------------
-# IMPORTANT: Protect this route with an environment variable.
-# Set: ENABLE_CREATE_ADMIN=1 only temporarily.
 
 @app.route("/create_admin")
 def create_admin():
@@ -932,8 +1048,10 @@ def create_admin():
     conn.close()
     return "Admin created (or already exists). You can now login."
 
+
 # ------------------ RUN ------------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
