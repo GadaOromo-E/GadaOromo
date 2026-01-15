@@ -11,23 +11,21 @@ Full updated version of app.py (Flask + SQLite)
 Features:
 - Dictionary search + translate pages (DB lookup + word-by-word fallback)
 - Admin login + dashboard + approve/reject
-- Public submission (words + phrases) -> BOTH languages required
-- Community file submission (CSV/XLSX) -> BOTH languages required (NO Google calls)
+- Public submission:
+    ✅ Words: manual + file upload (CSV/XLSX) on /submit (BOTH languages required)
+    ✅ Phrases: manual + file upload (CSV/XLSX) on /submit_phrase (BOTH languages required)
+- (Optional legacy) /submit_file kept for backward compatibility (still works)
 - Admin bulk import (TXT/CSV/XLSX English-only) -> Google Translate -> pending
 - Community audio upload + admin approve/reject
-
-✅ NEW (Your mic/record requirement):
-- Frontend can record in Chrome/Edge using MediaRecorder and POST to:
-    POST /api/submit-audio
-  with multipart/form-data:
-    entry_type = word|phrase
-    entry_id   = int
-    lang       = oromo|english   (you will use oromo for your mic button)
-    audio      = file (webm/ogg/wav/mp3...)
-- Admin approves audio in dashboard
-- Once Oromo audio is approved for an entry, template can hide mic automatically:
+- NEW: In-page mic recording (Chrome/Edge) posts to:
+    POST /api/submit-audio (multipart/form-data)
+- Templates can hide mic automatically once Oromo audio is approved:
     approved_oromo_audio_word_ids
     approved_oromo_audio_phrase_ids
+
+NOTES:
+- Run on HTTPS (or localhost) for mic recording.
+- Allowed audio: mp3, wav, m4a, webm, ogg
 """
 
 import os
@@ -738,8 +736,6 @@ def translate():
 
     trending = get_trending(limit=15)
 
-    # (optional) you can also pass approved_oromo_audio_phrase_ids into translate.html later
-    # if you want mic buttons on the translate page too.
     approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
     approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
 
@@ -757,16 +753,78 @@ def translate():
     )
 
 
-# ------------------ PUBLIC SUBMISSION (WORDS) ------------------
+# ------------------ PUBLIC SUBMISSION (WORDS) - MANUAL + FILE ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
+    """
+    Public submit for WORDS:
+    - Manual input (english + oromo)
+    - File upload (CSV/XLSX) with BOTH columns
+    """
+    msg = None
+
     if request.method == "POST":
+        mode = (request.form.get("mode") or "").strip().lower()
+
+        f = request.files.get("file")
+        if mode == "file" or (f and f.filename):
+            if not f or not f.filename:
+                msg = "Please choose a CSV or XLSX file."
+                return render_template("submit.html", msg=msg)
+
+            filename = (f.filename or "").lower().strip()
+            data = f.read()
+
+            try:
+                if filename.endswith(".csv"):
+                    pairs = parse_csv_pairs(data)
+                elif filename.endswith(".xlsx"):
+                    pairs = parse_xlsx_pairs(data)
+                else:
+                    msg = "Only .csv or .xlsx files are allowed."
+                    return render_template("submit.html", msg=msg)
+            except Exception as e:
+                app.logger.exception(f"submit (words) file parse error: {repr(e)}")
+                msg = "Could not read the file. Please check its format."
+                return render_template("submit.html", msg=msg)
+
+            if not pairs:
+                msg = "No rows found in the file."
+                return render_template("submit.html", msg=msg)
+
+            for en, om in pairs:
+                if not en or not om:
+                    msg = "Rejected: Every row must include BOTH English and Oromo (no English-only rows)."
+                    return render_template("submit.html", msg=msg)
+
+            inserted = 0
+            skipped = 0
+
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+
+            for en, om in pairs:
+                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (en, om))
+                if c.fetchone():
+                    skipped += 1
+                    continue
+                c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+                inserted += 1
+
+            conn.commit()
+            conn.close()
+
+            msg = f"Thanks! File submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
+            return render_template("submit.html", msg=msg)
+
+        # Manual
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
         if not english or not oromo:
-            return "Please provide both English and Oromo. <a href='/submit'>Try again</a>"
+            msg = "Please provide both English and Oromo."
+            return render_template("submit.html", msg=msg)
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -774,15 +832,17 @@ def submit():
         c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (english, oromo))
         if c.fetchone():
             conn.close()
-            return "This word already exists (or is pending). <a href='/submit'>Try another</a>"
+            msg = "This word already exists (or is pending). Try another."
+            return render_template("submit.html", msg=msg)
 
         c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
         conn.commit()
         conn.close()
 
-        return "Thank you! Your word is waiting for admin approval. <br><a href='/'>Go back</a>"
+        msg = "Thank you! Your word is waiting for admin approval."
+        return render_template("submit.html", msg=msg)
 
-    return render_template("submit.html")
+    return render_template("submit.html", msg=msg)
 
 
 # ------------------ PUBLIC SUBMISSION (PHRASES) + FILE UPLOAD ------------------
@@ -871,7 +931,9 @@ def submit_phrase():
     return render_template("submit_phrase.html", msg=msg)
 
 
-# ------------------ COMMUNITY FILE SUBMISSION (WORDS CSV/XLSX ONLY) ------------------
+# ------------------ (LEGACY) COMMUNITY FILE SUBMISSION (WORDS CSV/XLSX ONLY) ------------------
+# Kept for backward compatibility. You can remove later if you want.
+# Consider redirecting it to /submit once you're ready.
 
 @app.route("/submit_file", methods=["GET", "POST"])
 def submit_file():
@@ -931,7 +993,7 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ NEW: API AUDIO SUBMISSION (for in-page mic recording) ------------------
+# ------------------ API AUDIO SUBMISSION (for in-page mic recording) ------------------
 
 @app.route("/api/submit-audio", methods=["POST"])
 def api_submit_audio():
@@ -962,7 +1024,7 @@ def api_submit_audio():
     if not allowed_audio(f.filename):
         return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
 
-    # entry must exist + be approved (public list is approved)
+    # entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if entry_type == "word":
@@ -1098,13 +1160,22 @@ def dashboard():
     """)
     pending_audio = c.fetchall()
 
+    # Optional lookups for admin_dashboard.html (if you used the improved template)
+    c.execute("SELECT id, english, oromo FROM words WHERE status='approved'")
+    words_lookup = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+
+    c.execute("SELECT id, english, oromo FROM phrases WHERE status='approved'")
+    phrases_lookup = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+
     conn.close()
 
     return render_template(
         "admin_dashboard.html",
         pending=pending_words,
         pending_phrases=pending_phrases,
-        pending_audio=pending_audio
+        pending_audio=pending_audio,
+        words_lookup=words_lookup,
+        phrases_lookup=phrases_lookup
     )
 
 
@@ -1371,4 +1442,5 @@ def create_admin():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 

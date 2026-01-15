@@ -1,21 +1,24 @@
+
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Submit File | Gada Oromo Dictionary</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Submit Word | Gada Oromo Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+
 <div class="container">
 
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">📄 Submit a Translated File</h2>
+        <h2 style="margin:0;">➕ Submit a Word</h2>
         <div class="subtle">
-          Community uploads must include <b>both</b> English and Oromo.
-          Your file will be reviewed by admin before it appears publicly.
+          Community submissions must include <b>both</b> English and Oromo.
+          All submissions are reviewed by admin before becoming public.
         </div>
       </div>
       <a class="btn" href="/">⬅ Home</a>
@@ -26,8 +29,42 @@
     <div class="result-box">{{ msg }}</div>
   {% endif %}
 
+  <!-- ===== Manual submission ===== -->
   <div class="card">
-    <form method="POST" enctype="multipart/form-data" autocomplete="off">
+    <h2 style="margin-top:0;">Manual submission</h2>
+    <div class="subtle">Enter both English and Oromo for one word.</div>
+
+    <form method="POST" autocomplete="off" style="margin-top:12px;">
+      <input type="hidden" name="mode" value="manual">
+
+      <label style="display:block; margin-bottom:8px;">English</label>
+      <input type="text" name="english" placeholder="e.g. water" required>
+
+      <div style="height:12px;"></div>
+
+      <label style="display:block; margin-bottom:8px;">Oromo</label>
+      <input type="text" name="oromo" placeholder="e.g. bishaan" required>
+
+      <div style="height:12px;"></div>
+      <button type="submit">Submit Word</button>
+    </form>
+
+    <div class="muted" style="margin-top:12px; font-size:14px;">
+      Tip: Use correct spelling — admin will approve if it looks accurate.
+    </div>
+  </div>
+
+  <!-- ===== File submission ===== -->
+  <div class="card">
+    <h2 style="margin-top:0;">File submission (CSV / XLSX)</h2>
+    <div class="subtle">
+      Upload a translated file with <b>both</b> English and Oromo columns.
+      Duplicates will be skipped automatically.
+    </div>
+
+    <form method="POST" enctype="multipart/form-data" autocomplete="off" style="margin-top:12px;">
+      <input type="hidden" name="mode" value="file">
+
       <label style="display:block; margin-bottom:8px;">Upload CSV or XLSX file</label>
       <input type="file" name="file" accept=".csv,.xlsx" required>
 
@@ -49,9 +86,9 @@
   </div>
 
 </div>
+
 </body>
 </html>
-
 
 
 
