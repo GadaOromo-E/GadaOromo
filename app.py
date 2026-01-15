@@ -1680,6 +1680,44 @@ def create_admin():
     conn.close()
     return "Admin created (or already exists). You can now login."
 
+@app.route("/admin/reset_password", methods=["GET", "POST"])
+def admin_reset_password():
+    if os.environ.get("ENABLE_ADMIN_RESET") != "1":
+        return "Disabled", 403
+
+    token = request.args.get("token", "")
+    if token != os.environ.get("ADMIN_RESET_TOKEN", ""):
+        return "Forbidden", 403
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        new_pw = request.form.get("new_password") or ""
+        if not email or len(new_pw) < 6:
+            return "Email required and password must be 6+ chars", 400
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("SELECT id FROM admin WHERE email=?", (email,))
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return "Admin email not found in this DB", 404
+
+        c.execute("UPDATE admin SET password=? WHERE email=?",
+                  (generate_password_hash(new_pw), email))
+        conn.commit()
+        conn.close()
+        return "Password reset OK. Go to /admin and login."
+
+    return """
+    <form method="POST">
+      <input name="email" placeholder="admin email" required><br><br>
+      <input name="new_password" placeholder="new password (6+)" required><br><br>
+      <button type="submit">Reset</button>
+    </form>
+    """
+
+
 
 # ------------------ RUN ------------------
 
