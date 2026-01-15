@@ -41,7 +41,55 @@
     {% if result %}
       <div class="result-box" style="margin-top:14px;">
         <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
-        <div style="margin-top:6px;"><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
+
+        <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
+
+          {% if result_id %}
+            {% if result_id not in approved_oromo_audio_word_ids %}
+              <!-- Recorder UI for the searched/selected word -->
+              <button
+                type="button"
+                class="btn"
+                style="padding:8px 10px;"
+                data-record-btn
+                data-entry-type="word"
+                data-entry-id="{{ result_id }}"
+                data-lang="oromo"
+                title="Record Oromo pronunciation"
+              >🎙 Record Oromo</button>
+
+              <button
+                type="button"
+                class="btn"
+                style="padding:8px 10px; display:none;"
+                data-stop-btn
+              >⏹ Stop</button>
+
+              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+
+              <div data-trim-box class="trim" style="display:none; margin-top:8px; width:100%;">
+                <div class="subtle" style="margin-bottom:6px;">Optional: trim before submitting</div>
+                <label>Start (sec)
+                  <input data-trim-start type="number" min="0" step="0.1" value="0">
+                </label>
+                <label style="margin-left:8px;">End (sec)
+                  <input data-trim-end type="number" min="0" step="0.1" value="0">
+                </label>
+                <button type="button" class="btn" data-apply-trim>✂️ Apply Trim</button>
+              </div>
+
+              <div style="margin-top:8px;">
+                <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
+                <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
+              </div>
+
+              <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
+            {% else %}
+              <span class="muted" style="font-size:14px;">✅ Oromo audio approved</span>
+            {% endif %}
+          {% endif %}
+        </div>
 
         {% if audio and (audio.oromo or audio.english) %}
           <div style="margin-top:14px;">
@@ -63,7 +111,7 @@
           </div>
         {% else %}
           <div class="muted" style="margin-top:10px;">
-            No approved community audio yet. You can help by uploading pronunciation below.
+            No approved community audio yet. You can help by recording Oromo here.
           </div>
         {% endif %}
 
@@ -73,12 +121,8 @@
         </div>
 
         {% if result_id %}
-          <div class="small-actions" style="margin-top:12px;">
-            <a class="btn" href="/upload_audio/word/{{ result_id }}/oromo">🎙 Upload Oromo audio</a>
-            <a class="btn" href="/upload_audio/word/{{ result_id }}/english">🎙 Upload English audio</a>
-          </div>
           <div class="muted" style="margin-top:8px; font-size:14px;">
-            Audio becomes public after admin approval.
+            Recorded audio becomes public after admin approval.
           </div>
         {% endif %}
       </div>
@@ -135,13 +179,43 @@
 
     {% if words and words|length > 0 %}
       <div class="word-list">
+
         {% for w in words %}
-          <div class="word-row">
-            <span><b>{{ w[0] }}</b></span>
-            <span class="muted">→</span>
-            <span><b>{{ w[1] }}</b></span>
+          {# w = (id, english, oromo) from app.py #}
+          <div class="word-row" style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+              <span><b>{{ w[1] }}</b></span>
+              <span class="muted">→</span>
+
+              <span style="display:flex; align-items:center; gap:8px;">
+                {% if w[0] not in approved_oromo_audio_word_ids %}
+                  <!-- Small inline mic for list rows: record -> auto submit (no trim UI here) -->
+                  <button
+                    type="button"
+                    class="btn"
+                    style="padding:6px 10px;"
+                    data-record-btn
+                    data-entry-type="word"
+                    data-entry-id="{{ w[0] }}"
+                    data-lang="oromo"
+                    title="Record Oromo pronunciation"
+                  >🎙</button>
+                {% endif %}
+
+                <span><b>{{ w[2] }}</b></span>
+              </span>
+
+              <span class="muted" data-status-for="{{ w[0] }}" style="font-size:13px;"></span>
+
+              {% if w[0] in approved_oromo_audio_word_ids %}
+                <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
+              {% endif %}
+            </div>
+
+            <button type="button" class="btn" onclick="useSuggestion('{{ w[1]|e }}')" title="Search this word">Search</button>
           </div>
         {% endfor %}
+
       </div>
     {% else %}
       <p class="muted">No approved words yet. Be the first to submit!</p>
@@ -229,10 +303,351 @@ function speakOromo(){
   const txt=el?el.innerText:"";
   speakText(txt, "om-ET");
 }
+
+/* =========================
+   Inline Oromo Recording + Preview + Trim + Submit
+   - For the big "Record Oromo" button (search result), we show preview + trim + submit
+   - For small mic buttons in the list, we record and submit directly (no trim UI)
+   ========================= */
+
+let activeRecorder = null;
+let activeChunks = [];
+let activeStream = null;
+let activeTarget = null; // {btn, entryType, entryId, lang, mode}
+
+function statusEl(entryId){
+  return document.querySelector(`[data-status-for="${entryId}"]`);
+}
+
+function pickMimeType(){
+  const mimeChoices = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg"
+  ];
+  for (const m of mimeChoices) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return "";
+}
+
+async function startRecording(target){
+  if (!navigator.mediaDevices || !window.MediaRecorder) {
+    alert("Recording not supported. Use Chrome/Edge on PC/Android.");
+    return;
+  }
+
+  // stop any existing recorder
+  if (activeRecorder && activeRecorder.state !== "inactive") {
+    try { activeRecorder.stop(); } catch(e) {}
+  }
+
+  try {
+    activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    alert("Microphone permission denied.");
+    return;
+  }
+
+  const mimeType = pickMimeType();
+  activeChunks = [];
+  activeTarget = target;
+
+  activeRecorder = new MediaRecorder(activeStream, mimeType ? { mimeType } : undefined);
+
+  activeRecorder.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) activeChunks.push(ev.data);
+  };
+
+  activeRecorder.onstop = async () => {
+    // stop tracks
+    if (activeStream) {
+      activeStream.getTracks().forEach(t => t.stop());
+      activeStream = null;
+    }
+
+    const blob = new Blob(activeChunks, { type: activeRecorder.mimeType || "audio/webm" });
+    activeChunks = [];
+
+    // Mode A: "direct" (small mic in list) -> upload immediately
+    if (target.mode === "direct") {
+      const st = statusEl(target.entryId);
+      if (st) st.textContent = "⏳ Uploading...";
+      target.btn.disabled = true;
+
+      const ok = await uploadAudio(target.entryType, target.entryId, target.lang, blob).catch(() => false);
+
+      if (ok) {
+        if (st) st.textContent = "✅ Submitted (pending approval)";
+        // Hide mic after submit (nice UX)
+        target.btn.style.display = "none";
+      } else {
+        if (st) st.textContent = "❌ Upload failed";
+        target.btn.disabled = false;
+      }
+
+      // reset label
+      target.btn.textContent = "🎙";
+      target.btn.classList.remove("danger");
+      return;
+    }
+
+    // Mode B: "editor" (search result) -> show preview + trim UI + submit button
+    setupEditorUI(target, blob);
+  };
+
+  // UI
+  const st = statusEl(target.entryId);
+  if (st) st.textContent = "Recording… speak Oromo clearly";
+
+  if (target.mode === "editor") {
+    const stopBtn = target.container.querySelector("[data-stop-btn]");
+    if (stopBtn) stopBtn.style.display = "";
+    target.btn.style.display = "none";
+  } else {
+    target.btn.textContent = "⏹ Stop";
+    target.btn.classList.add("danger");
+  }
+
+  activeRecorder.start();
+}
+
+function stopRecording(){
+  if (activeRecorder && activeRecorder.state !== "inactive") {
+    activeRecorder.stop();
+  }
+}
+
+/* ---------- Editor UI (preview + trim + submit) ---------- */
+
+function setupEditorUI(target, recordedBlob){
+  const c = target.container;
+  const st = statusEl(target.entryId);
+
+  const stopBtn = c.querySelector("[data-stop-btn]");
+  const preview = c.querySelector("[data-preview-audio]");
+  const trimBox = c.querySelector("[data-trim-box]");
+  const trimStart = c.querySelector("[data-trim-start]");
+  const trimEnd = c.querySelector("[data-trim-end]");
+  const applyTrimBtn = c.querySelector("[data-apply-trim]");
+  const submitBtn = c.querySelector("[data-submit-btn]");
+  const rerecordBtn = c.querySelector("[data-rerecord-btn]");
+
+  let finalBlob = recordedBlob;
+
+  // show preview
+  preview.src = URL.createObjectURL(recordedBlob);
+  preview.style.display = "";
+  preview.onloadedmetadata = () => {
+    const dur = preview.duration || 0;
+    trimStart.value = 0;
+    trimEnd.value = dur.toFixed(2);
+    trimBox.style.display = "";
+    submitBtn.style.display = "";
+    rerecordBtn.style.display = "";
+    if (st) st.textContent = `Recorded ${dur.toFixed(2)}s. Trim if needed, then submit.`;
+  };
+
+  if (stopBtn) stopBtn.style.display = "none";
+
+  rerecordBtn.onclick = () => {
+    // reset UI to record again
+    preview.pause();
+    preview.style.display = "none";
+    trimBox.style.display = "none";
+    submitBtn.style.display = "none";
+    rerecordBtn.style.display = "none";
+    target.btn.style.display = "";
+    if (st) st.textContent = "Ready to re-record.";
+  };
+
+  applyTrimBtn.onclick = async () => {
+    const s = parseFloat(trimStart.value || "0");
+    const e = parseFloat(trimEnd.value || "0");
+    if (!(e > s)) {
+      if (st) st.textContent = "Trim error: End must be greater than Start.";
+      return;
+    }
+
+    if (st) st.textContent = "Applying trim…";
+
+    try {
+      finalBlob = await trimBlobToWav(recordedBlob, s, e);
+      preview.src = URL.createObjectURL(finalBlob);
+      if (st) st.textContent = `Trimmed: ${s.toFixed(2)}s → ${e.toFixed(2)}s. Preview then submit.`;
+    } catch (err) {
+      console.error(err);
+      if (st) st.textContent = "Trim failed. You can still submit without trimming.";
+      finalBlob = recordedBlob;
+    }
+  };
+
+  submitBtn.onclick = async () => {
+    submitBtn.disabled = true;
+    rerecordBtn.disabled = true;
+    if (st) st.textContent = "⏳ Uploading...";
+
+    const ok = await uploadAudio(target.entryType, target.entryId, target.lang, finalBlob).catch(() => false);
+
+    if (ok) {
+      if (st) st.textContent = "✅ Submitted (pending admin approval)";
+      // hide record UI after submit (optional UX)
+      target.btn.style.display = "none";
+      submitBtn.style.display = "none";
+      rerecordBtn.style.display = "none";
+      trimBox.style.display = "none";
+    } else {
+      if (st) st.textContent = "❌ Upload failed";
+      submitBtn.disabled = false;
+      rerecordBtn.disabled = false;
+    }
+  };
+}
+
+async function trimBlobToWav(blob, startSec, endSec){
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioCtx = new AudioCtx();
+  const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const sr = decoded.sampleRate;
+  const startSample = Math.max(0, Math.floor(startSec * sr));
+  const endSample = Math.min(decoded.length, Math.floor(endSec * sr));
+  const frameCount = endSample - startSample;
+  if (frameCount <= 0) throw new Error("Trim selection too small");
+
+  const trimmed = audioCtx.createBuffer(decoded.numberOfChannels, frameCount, sr);
+  for (let ch = 0; ch < decoded.numberOfChannels; ch++) {
+    const slice = decoded.getChannelData(ch).slice(startSample, endSample);
+    trimmed.copyToChannel(slice, ch, 0);
+  }
+
+  return audioBufferToWavBlob(trimmed);
+}
+
+function audioBufferToWavBlob(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = buffer.length * blockAlign;
+  const bufferSize = 44 + dataSize;
+
+  const ab = new ArrayBuffer(bufferSize);
+  const view = new DataView(ab);
+
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, dataSize, true);
+
+  // interleave
+  let offset = 44;
+  const channelData = [];
+  for (let ch = 0; ch < numChannels; ch++) channelData.push(buffer.getChannelData(ch));
+
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      let sample = Math.max(-1, Math.min(1, channelData[ch][i]));
+      sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+      view.setInt16(offset, sample, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([ab], { type: "audio/wav" });
+}
+
+function writeString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+}
+
+/* ---------- Upload to Flask endpoint ---------- */
+
+async function uploadAudio(entryType, entryId, lang, blob){
+  const fd = new FormData();
+
+  // choose extension
+  let ext = "webm";
+  const bt = (blob.type || "").toLowerCase();
+  if (bt.includes("wav")) ext = "wav";
+  else if (bt.includes("ogg")) ext = "ogg";
+
+  fd.append("entry_type", entryType);
+  fd.append("entry_id", String(entryId));
+  fd.append("lang", lang);
+  fd.append("audio", new File([blob], `${lang}_${entryType}_${entryId}.${ext}`, { type: blob.type || "application/octet-stream" }));
+
+  const resp = await fetch(`/api/submit-audio`, {
+    method: "POST",
+    body: fd
+  });
+
+  if (!resp.ok) return false;
+  const data = await resp.json().catch(() => null);
+  return !!(data && data.ok);
+}
+
+/* ---------- Click handling ---------- */
+
+document.addEventListener("click", function(e){
+  // stop button (search-result editor)
+  const stopBtn = e.target && e.target.closest && e.target.closest("[data-stop-btn]");
+  if (stopBtn) {
+    stopRecording();
+    return;
+  }
+
+  // record buttons
+  const btn = e.target && e.target.closest && e.target.closest("[data-record-btn]");
+  if (!btn) return;
+
+  const entryType = btn.getAttribute("data-entry-type") || "word";
+  const entryId = parseInt(btn.getAttribute("data-entry-id") || "0", 10);
+  const lang = btn.getAttribute("data-lang") || "oromo";
+
+  // If this record button is inside the big "result-box", use editor mode
+  const resultBox = btn.closest(".result-box");
+  if (resultBox) {
+    startRecording({
+      btn,
+      entryType,
+      entryId,
+      lang,
+      mode: "editor",
+      container: resultBox
+    });
+  } else {
+    // list mode: direct submit
+    startRecording({
+      btn,
+      entryType,
+      entryId,
+      lang,
+      mode: "direct",
+      container: null
+    });
+  }
+});
 </script>
 
 </body>
 </html>
+
+
 
 
 

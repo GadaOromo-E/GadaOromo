@@ -84,15 +84,40 @@
   <!-- ===== Pending Audio ===== -->
   <div class="card">
     <h2>Pending Audio</h2>
+    <div class="subtle">
+      Tip: Approving Oromo audio will automatically remove the mic icon on the public pages for that entry.
+    </div>
 
     {% if pending_audio and pending_audio|length > 0 %}
       <div class="grid">
         {% for a in pending_audio %}
+          {# a = (id, entry_type, entry_id, lang, file_path) #}
           <div class="card" style="margin-top:0;">
             <div class="subtle">Entry</div>
             <div class="result-box" style="margin-top:8px;">
               <b>{{ a[1] }}</b> #{{ a[2] }} — <b>{{ a[3] }}</b>
             </div>
+
+            {# Optional: show the dictionary text if available #}
+            {% if a[1] == "word" %}
+              {% set _row = (words_lookup[a[2]] if words_lookup is defined and a[2] in words_lookup else None) %}
+              {% if _row %}
+                <div class="subtle" style="margin-top:10px;">Word text</div>
+                <div class="result-box" style="margin-top:8px;">
+                  <b>EN:</b> {{ _row[0] }} <br>
+                  <b>OM:</b> {{ _row[1] }}
+                </div>
+              {% endif %}
+            {% elif a[1] == "phrase" %}
+              {% set _row = (phrases_lookup[a[2]] if phrases_lookup is defined and a[2] in phrases_lookup else None) %}
+              {% if _row %}
+                <div class="subtle" style="margin-top:10px;">Phrase text</div>
+                <div class="result-box" style="margin-top:8px;">
+                  <b>EN:</b> {{ _row[0] }} <br>
+                  <b>OM:</b> {{ _row[1] }}
+                </div>
+              {% endif %}
+            {% endif %}
 
             <audio controls style="width:100%; margin-top:10px;">
               <source src="{{ url_for('static', filename=a[4]) }}">
@@ -114,6 +139,7 @@
 
 </body>
 </html>
+
 
 
 

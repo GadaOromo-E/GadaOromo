@@ -13,17 +13,21 @@ Features:
 - Admin login + dashboard + approve/reject
 - Public submission (words + phrases) -> BOTH languages required
 - Community file submission (CSV/XLSX) -> BOTH languages required (NO Google calls)
+- Admin bulk import (TXT/CSV/XLSX English-only) -> Google Translate -> pending
 - Community audio upload + admin approve/reject
 
-UPDATED (Your final requirement):
-✅ Removed GitHub env var dependency (WORDLIST_URL removed)
-✅ Removed broken one-click GitHub import logic (/admin/import_github removed)
-✅ Admin bulk import (ONE-CLICK) now supports:
-   - TXT / CSV / XLSX uploads (ENGLISH-ONLY list)
-   - Uses Google Translate API (admin-only) to generate Oromo
-   - Max 2000 words, batch size 200, max 10 Google calls
-   - Saves as pending for approval
-✅ Community uploads still require BOTH languages and NO Google calls
+✅ NEW (Your mic/record requirement):
+- Frontend can record in Chrome/Edge using MediaRecorder and POST to:
+    POST /api/submit-audio
+  with multipart/form-data:
+    entry_type = word|phrase
+    entry_id   = int
+    lang       = oromo|english   (you will use oromo for your mic button)
+    audio      = file (webm/ogg/wav/mp3...)
+- Admin approves audio in dashboard
+- Once Oromo audio is approved for an entry, template can hide mic automatically:
+    approved_oromo_audio_word_ids
+    approved_oromo_audio_phrase_ids
 """
 
 import os
@@ -57,9 +61,11 @@ DB_NAME = "gadaoromo.db"
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
-ALLOWED_AUDIO = {"mp3", "wav", "m4a"}
-MAX_AUDIO_MB = 15
 
+# allow Chrome MediaRecorder formats
+ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
+
+MAX_AUDIO_MB = 15
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
@@ -331,6 +337,27 @@ def get_approved_audio(entry_type: str, entry_id: int) -> dict:
         if lang not in out:
             out[lang] = path
     return out
+
+def get_approved_oromo_audio_ids(entry_type: str) -> set:
+    """
+    Returns entry_id set for entries that already have approved Oromo audio.
+    Used by templates to hide mic automatically.
+    """
+    if entry_type not in ("word", "phrase"):
+        return set()
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        SELECT DISTINCT entry_id
+        FROM audio
+        WHERE status='approved'
+          AND entry_type=?
+          AND lang='oromo'
+    """, (entry_type,))
+    ids = {r[0] for r in c.fetchall()}
+    conn.close()
+    return ids
 
 
 # ------------------ DATABASE SETUP ------------------
@@ -635,11 +662,15 @@ def home():
                 "om": suggest_terms(word, "om_en")
             }
 
-    c.execute("SELECT english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
+    # include id for mic buttons per word
+    c.execute("SELECT id, english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
     all_words = c.fetchall()
     conn.close()
 
     trending = get_trending(limit=15)
+
+    # tell template which IDs already have approved Oromo audio (hide mic)
+    approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
 
     return render_template(
         "index.html",
@@ -648,7 +679,8 @@ def home():
         audio=audio,
         words=all_words,
         suggestions=suggestions,
-        trending=trending
+        trending=trending,
+        approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
     )
 
 
@@ -706,6 +738,11 @@ def translate():
 
     trending = get_trending(limit=15)
 
+    # (optional) you can also pass approved_oromo_audio_phrase_ids into translate.html later
+    # if you want mic buttons on the translate page too.
+    approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
+    approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
+
     return render_template(
         "translate.html",
         result=result,
@@ -714,7 +751,9 @@ def translate():
         suggestions=suggestions,
         trending=trending,
         matched=matched,
-        audio=audio
+        audio=audio,
+        approved_oromo_audio_word_ids=approved_oromo_audio_word_ids,
+        approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
 
@@ -892,7 +931,69 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ COMMUNITY AUDIO UPLOAD ------------------
+# ------------------ NEW: API AUDIO SUBMISSION (for in-page mic recording) ------------------
+
+@app.route("/api/submit-audio", methods=["POST"])
+def api_submit_audio():
+    """
+    Receives audio from in-page recorder (MediaRecorder).
+    multipart/form-data:
+      entry_type: word|phrase
+      entry_id: int
+      lang: oromo|english  (your mic will use oromo)
+      audio: file
+    """
+    entry_type = (request.form.get("entry_type") or "").strip().lower()
+    entry_id_raw = (request.form.get("entry_id") or "").strip()
+    lang = (request.form.get("lang") or "oromo").strip().lower()
+
+    if entry_type not in ("word", "phrase"):
+        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
+    if lang not in ("oromo", "english"):
+        return jsonify({"ok": False, "error": "Invalid lang"}), 400
+    if not entry_id_raw.isdigit():
+        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
+
+    entry_id = int(entry_id_raw)
+
+    f = request.files.get("audio")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Missing audio file"}), 400
+    if not allowed_audio(f.filename):
+        return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
+
+    # entry must exist + be approved (public list is approved)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if entry_type == "word":
+        c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
+
+    original = secure_filename(f.filename)
+    ext = original.rsplit(".", 1)[1].lower()
+
+    new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+    save_path = os.path.join(UPLOAD_FOLDER, new_name)
+    f.save(save_path)
+
+    rel_path = f"uploads/{new_name}"
+
+    c.execute("""
+        INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+        VALUES (?, ?, ?, ?, 'pending')
+    """, (entry_type, entry_id, lang, rel_path))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"ok": True, "message": "Audio submitted for admin approval."})
+
+
+# ------------------ COMMUNITY AUDIO UPLOAD (manual file upload page) ------------------
 
 @app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
 def upload_audio(entry_type, entry_id, lang):
@@ -918,7 +1019,7 @@ def upload_audio(entry_type, entry_id, lang):
         if not f or not f.filename:
             return "Please choose an audio file.", 400
         if not allowed_audio(f.filename):
-            return "Allowed audio: mp3, wav, m4a", 400
+            return "Allowed audio: mp3, wav, m4a, webm, ogg", 400
 
         original = secure_filename(f.filename)
         ext = original.rsplit(".", 1)[1].lower()
@@ -938,7 +1039,7 @@ def upload_audio(entry_type, entry_id, lang):
         conn.commit()
         conn.close()
 
-        return "Thanks! Audio submitted for admin approval. <br><a href='/'>Home</a>"
+        return "Thanks! Audio submitted for admin approval."
 
     return render_template(
         "upload_audio.html",
@@ -1096,7 +1197,7 @@ def admin_import():
             if len(batches) >= IMPORT_MAX_CALLS:
                 break
 
-        for batch_index, batch in enumerate(batches, start=1):
+        for batch in batches:
             to_translate = []
             for en in batch:
                 if _words_exist(conn, en):
@@ -1270,3 +1371,4 @@ def create_admin():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+

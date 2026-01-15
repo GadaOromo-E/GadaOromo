@@ -138,6 +138,13 @@ button{
 }
 button:hover{ background: var(--redHover); }
 
+/* Disabled buttons */
+button:disabled,
+.btn[aria-disabled="true"]{
+  opacity: 0.60;
+  cursor: not-allowed;
+}
+
 /* Link-buttons */
 .btn{
   display:inline-block;
@@ -162,6 +169,7 @@ button:hover{ background: var(--redHover); }
 }
 .btn.primary:hover{ background: var(--redHover); color:#fff; }
 
+/* Danger style: keep your original behavior */
 .btn.danger, .danger{
   background: #fff;
   color: var(--black);
@@ -266,7 +274,6 @@ button:hover{ background: var(--redHover); }
 
 /* =======================================================
    NEW: File submission / multi-section forms improvements
-   (Submit File + Submit Phrase file upload)
 ======================================================= */
 
 /* Make section titles (h3) look consistent inside cards */
@@ -306,5 +313,73 @@ code{
   height: 1px;
   background: rgba(0,0,0,0.10);
   margin: 14px 0;
+}
+
+/* =======================================================
+   NEW: Recorder UI (mic / preview / trim)
+======================================================= */
+
+.trim{
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card2);
+}
+
+.trim label{
+  display:inline-flex;
+  align-items:center;
+  gap: 8px;
+  font-weight: 700;
+  margin-right: 10px;
+}
+
+.trim input[type="number"]{
+  width: 110px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+audio{
+  width: 100%;
+  margin-top: 6px;
+}
+
+/* Make tiny mic buttons in list not huge */
+.word-row .btn[style*="padding:6px"]{
+  width: auto;
+}
+
+/* Compact buttons inside mixed rows */
+.word-row button,
+.word-row .btn{
+  width: auto;
+}
+
+/* Status text spacing */
+[data-status-for]{
+  min-height: 18px;
+  display: inline-block;
+}
+
+/* Recording state (we used .danger class in JS) */
+button.danger{
+  border: 1px solid rgba(179,0,0,0.35);
+  background: #fff;
+  color: var(--red);
+}
+button.danger:hover{
+  background: #fff;
+  color: var(--redHover);
+  border-color: rgba(179,0,0,0.55);
+}
+
+/* Responsive: recorder controls stack nicely */
+@media (max-width: 560px){
+  .row{ flex-direction: column; align-items: stretch; }
+  .small-actions > *{ flex: unset; }
+  .trim label{ display:flex; margin-top: 8px; }
+  .trim input[type="number"]{ width: 100%; }
 }
 
