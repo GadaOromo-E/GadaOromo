@@ -23,6 +23,14 @@ Features:
     approved_oromo_audio_word_ids
     approved_oromo_audio_phrase_ids
 
+✅ NEW in this update:
+- /admin/manage (Admin Management):
+    - Keep add/delete admin
+    - Add: Manage approved words (search + inline edit + permanent delete)
+    - Add: Manage approved phrases (search + inline edit + permanent delete)
+    - Deleting a word/phrase also deletes related audio rows and tries to remove audio files from disk.
+- /admin/change_password route (template link support)
+
 NOTES:
 - Run on HTTPS (or localhost) for mic recording.
 - Allowed audio: mp3, wav, m4a, webm, ogg
@@ -53,23 +61,43 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
-DB_NAME = "gadaoromo.db"
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
+
+# On Render: use disk path if it exists
+RENDER_DISK_DB = "/var/data/gadaoromo.db"
+DB_NAME = RENDER_DISK_DB if os.path.isdir("/var/data") else DEFAULT_DB
 
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
-UPLOAD_FOLDER = os.path.join("static", "uploads")
+if os.path.isdir("/var/data"):
+    UPLOAD_FOLDER = "/var/data/uploads"
+else:
+    UPLOAD_FOLDER = os.path.join("static", "uploads")
 
-# allow Chrome MediaRecorder formats
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Make uploaded audio available under /static/uploads on Render
+if os.path.isdir("/var/data"):
+    static_uploads = os.path.join(BASE_DIR, "static", "uploads")
+    try:
+        if os.path.islink(static_uploads) or os.path.exists(static_uploads):
+            # if it's a real folder created before, leave it
+            pass
+        else:
+            os.symlink(UPLOAD_FOLDER, static_uploads)
+    except Exception as e:
+        app.logger.warning(f"Could not create symlink for static/uploads: {e}")
+
+
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
 
 MAX_AUDIO_MB = 15
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 
-# ------------------ ADMIN IMPORT CONFIG (GOOGLE TRANSLATE LIMITS) ------------------
-# max 2000 words, sent as 10 calls, each call translates up to 200 words
+# ------------------ ADMIN IMPORT CONFIG ------------------
 
 IMPORT_BATCH_SIZE = 200
 IMPORT_MAX_CALLS = 10
@@ -130,7 +158,6 @@ def parse_csv_pairs(file_bytes: bytes):
             final.append((en, om))
     return final
 
-
 def parse_xlsx_pairs(file_bytes: bytes):
     """
     XLSX format:
@@ -160,43 +187,6 @@ def parse_xlsx_pairs(file_bytes: bytes):
     seen = set()
     final = []
     for en, om in out:
-        if en and en not in seen:
-            seen.add(en)
-            final.append((en, om))
-    return final
-
-
-# (Legacy) kept only for reference. Not used by admin import anymore.
-def parse_txt_pairs(file_bytes: bytes):
-    """
-    Legacy TXT format (English + Oromo in same line).
-    Not used by admin import now (admin import is English-only + Google Translate).
-    """
-    text = file_bytes.decode("utf-8", errors="replace")
-    pairs = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-
-        sep = None
-        for s in ("\t", ";", ","):
-            if s in line:
-                sep = s
-                break
-
-        if not sep:
-            pairs.append((normalize_text(line), ""))
-            continue
-
-        left, right = line.split(sep, 1)
-        en = normalize_text(left)
-        om = normalize_text(right)
-        pairs.append((en, om))
-
-    seen = set()
-    final = []
-    for en, om in pairs:
         if en and en not in seen:
             seen.add(en)
             final.append((en, om))
@@ -267,19 +257,19 @@ def parse_xlsx_english(file_bytes: bytes):
 def require_admin() -> bool:
     return "admin" in session
 
+def _admin_id() -> int:
+    try:
+        return int(session.get("admin"))
+    except Exception:
+        return 0
+
 
 # ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
-# Uses env var: GOOGLE_TRANSLATE_API_KEY
-# Only used by /admin/import (admin-only).
 
 def _get_google_key() -> str:
     return os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
 
 def google_translate_batch_v2(texts, target: str, source: str = "en"):
-    """
-    Batch translate: sends q as list to Google Translate v2.
-    Returns list of normalized translations in same order, or [] if failed.
-    """
     api_key = _get_google_key()
     if not api_key:
         app.logger.error("GOOGLE_TRANSLATE_API_KEY is missing at runtime!")
@@ -337,10 +327,6 @@ def get_approved_audio(entry_type: str, entry_id: int) -> dict:
     return out
 
 def get_approved_oromo_audio_ids(entry_type: str) -> set:
-    """
-    Returns entry_id set for entries that already have approved Oromo audio.
-    Used by templates to hide mic automatically.
-    """
     if entry_type not in ("word", "phrase"):
         return set()
 
@@ -356,6 +342,41 @@ def get_approved_oromo_audio_ids(entry_type: str) -> set:
     ids = {r[0] for r in c.fetchall()}
     conn.close()
     return ids
+
+def _audio_abs_path(file_path: str) -> str:
+    """
+    file_path is stored like: 'uploads/xyz.webm'
+    If running on Render disk: audio is in /var/data/uploads/xyz.webm
+    Else: audio is in static/uploads/xyz.webm
+    """
+    fp = (file_path or "").replace("\\", "/").strip()
+    if not fp:
+        return ""
+    name = fp.split("/")[-1]  # xyz.webm
+    return os.path.join(UPLOAD_FOLDER, name)
+
+def delete_audio_for_entry(entry_type: str, entry_id: int):
+    """
+    Delete all audio rows for an entry and try to delete files from disk.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
+    rows = c.fetchall()
+
+    # delete db rows first
+    c.execute("DELETE FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
+    conn.commit()
+    conn.close()
+
+    # then delete files best-effort
+    for _aid, fp in rows:
+        abs_path = _audio_abs_path(fp)
+        if abs_path and os.path.isfile(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                app.logger.exception(f"Could not delete audio file: {abs_path}")
 
 
 # ------------------ DATABASE SETUP ------------------
@@ -660,14 +681,11 @@ def home():
                 "om": suggest_terms(word, "om_en")
             }
 
-    # include id for mic buttons per word
     c.execute("SELECT id, english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
     all_words = c.fetchall()
     conn.close()
 
     trending = get_trending(limit=15)
-
-    # tell template which IDs already have approved Oromo audio (hide mic)
     approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
 
     return render_template(
@@ -735,7 +753,6 @@ def translate():
             suggestions = suggest_terms(clean, direction)
 
     trending = get_trending(limit=15)
-
     approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
     approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
 
@@ -757,11 +774,6 @@ def translate():
 
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
-    """
-    Public submit for WORDS:
-    - Manual input (english + oromo)
-    - File upload (CSV/XLSX) with BOTH columns
-    """
     msg = None
 
     if request.method == "POST":
@@ -818,7 +830,6 @@ def submit():
             msg = f"Thanks! File submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
             return render_template("submit.html", msg=msg)
 
-        # Manual
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
@@ -931,9 +942,7 @@ def submit_phrase():
     return render_template("submit_phrase.html", msg=msg)
 
 
-# ------------------ (LEGACY) COMMUNITY FILE SUBMISSION (WORDS CSV/XLSX ONLY) ------------------
-# Kept for backward compatibility. You can remove later if you want.
-# Consider redirecting it to /submit once you're ready.
+# ------------------ (LEGACY) COMMUNITY FILE SUBMISSION ------------------
 
 @app.route("/submit_file", methods=["GET", "POST"])
 def submit_file():
@@ -993,18 +1002,10 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ API AUDIO SUBMISSION (for in-page mic recording) ------------------
+# ------------------ API AUDIO SUBMISSION ------------------
 
 @app.route("/api/submit-audio", methods=["POST"])
 def api_submit_audio():
-    """
-    Receives audio from in-page recorder (MediaRecorder).
-    multipart/form-data:
-      entry_type: word|phrase
-      entry_id: int
-      lang: oromo|english  (your mic will use oromo)
-      audio: file
-    """
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
     lang = (request.form.get("lang") or "oromo").strip().lower()
@@ -1024,7 +1025,6 @@ def api_submit_audio():
     if not allowed_audio(f.filename):
         return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
 
-    # entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if entry_type == "word":
@@ -1055,7 +1055,7 @@ def api_submit_audio():
     return jsonify({"ok": True, "message": "Audio submitted for admin approval."})
 
 
-# ------------------ COMMUNITY AUDIO UPLOAD (manual file upload page) ------------------
+# ------------------ COMMUNITY AUDIO UPLOAD ------------------
 
 @app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
 def upload_audio(entry_type, entry_id, lang):
@@ -1160,7 +1160,6 @@ def dashboard():
     """)
     pending_audio = c.fetchall()
 
-    # Optional lookups for admin_dashboard.html (if you used the improved template)
     c.execute("SELECT id, english, oromo FROM words WHERE status='approved'")
     words_lookup = {row[0]: (row[1], row[2]) for row in c.fetchall()}
 
@@ -1179,6 +1178,252 @@ def dashboard():
     )
 
 
+# ------------------ ADMIN MANAGEMENT: ADMINS + EDIT/DELETE WORDS/PHRASES ------------------
+
+@app.route("/admin/manage", methods=["GET", "POST"])
+def admin_manage():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+
+        # --- Admin actions ---
+        if action == "add_admin":
+            email = (request.form.get("email") or "").strip().lower()
+            password = request.form.get("password") or ""
+            if not email or not password:
+                msg = "Email and password are required."
+            else:
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("SELECT 1 FROM admin WHERE email=?", (email,))
+                if c.fetchone():
+                    msg = "Admin already exists with that email."
+                else:
+                    c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, generate_password_hash(password)))
+                    conn.commit()
+                    msg = "Admin added."
+                conn.close()
+
+        elif action == "delete_admin":
+            admin_id_raw = (request.form.get("admin_id") or "").strip()
+            if not admin_id_raw.isdigit():
+                msg = "Invalid admin id."
+            else:
+                admin_id = int(admin_id_raw)
+                if admin_id == _admin_id():
+                    msg = "You cannot delete your own account."
+                else:
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    c.execute("DELETE FROM admin WHERE id=?", (admin_id,))
+                    conn.commit()
+                    conn.close()
+                    msg = "Admin deleted."
+
+        # --- Words actions ---
+        elif action == "update_word":
+            wid_raw = (request.form.get("word_id") or "").strip()
+            en = normalize_text(request.form.get("english") or "")
+            om = normalize_text(request.form.get("oromo") or "")
+            if not wid_raw.isdigit():
+                msg = "Invalid word id."
+            elif not en or not om:
+                msg = "Both English and Oromo are required."
+            else:
+                wid = int(wid_raw)
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+
+                # must exist and be approved
+                c.execute("SELECT 1 FROM words WHERE id=? AND status='approved'", (wid,))
+                if not c.fetchone():
+                    msg = "Word not found (or not approved)."
+                else:
+                    # avoid duplicates (other rows)
+                    c.execute("""
+                        SELECT 1 FROM words
+                        WHERE id != ? AND (english=? OR oromo=?)
+                        LIMIT 1
+                    """, (wid, en, om))
+                    if c.fetchone():
+                        msg = "Duplicate conflict: another word already uses that English or Oromo."
+                    else:
+                        c.execute("UPDATE words SET english=?, oromo=? WHERE id=?", (en, om, wid))
+                        conn.commit()
+                        msg = "Word updated."
+                conn.close()
+
+        elif action == "delete_word":
+            wid_raw = (request.form.get("word_id") or "").strip()
+            if not wid_raw.isdigit():
+                msg = "Invalid word id."
+            else:
+                wid = int(wid_raw)
+
+                # delete audio first
+                delete_audio_for_entry("word", wid)
+
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("DELETE FROM words WHERE id=? AND status='approved'", (wid,))
+                conn.commit()
+                conn.close()
+                msg = "Word deleted permanently."
+
+        # --- Phrases actions ---
+        elif action == "update_phrase":
+            pid_raw = (request.form.get("phrase_id") or "").strip()
+            en = normalize_text(request.form.get("english") or "")
+            om = normalize_text(request.form.get("oromo") or "")
+            if not pid_raw.isdigit():
+                msg = "Invalid phrase id."
+            elif not en or not om:
+                msg = "Both English and Oromo are required."
+            else:
+                pid = int(pid_raw)
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+
+                c.execute("SELECT 1 FROM phrases WHERE id=? AND status='approved'", (pid,))
+                if not c.fetchone():
+                    msg = "Phrase not found (or not approved)."
+                else:
+                    c.execute("""
+                        SELECT 1 FROM phrases
+                        WHERE id != ? AND (english=? OR oromo=?)
+                        LIMIT 1
+                    """, (pid, en, om))
+                    if c.fetchone():
+                        msg = "Duplicate conflict: another phrase already uses that English or Oromo."
+                    else:
+                        c.execute("UPDATE phrases SET english=?, oromo=? WHERE id=?", (en, om, pid))
+                        conn.commit()
+                        msg = "Phrase updated."
+                conn.close()
+
+        elif action == "delete_phrase":
+            pid_raw = (request.form.get("phrase_id") or "").strip()
+            if not pid_raw.isdigit():
+                msg = "Invalid phrase id."
+            else:
+                pid = int(pid_raw)
+
+                delete_audio_for_entry("phrase", pid)
+
+                conn = sqlite3.connect(DB_NAME)
+                c = conn.cursor()
+                c.execute("DELETE FROM phrases WHERE id=? AND status='approved'", (pid,))
+                conn.commit()
+                conn.close()
+                msg = "Phrase deleted permanently."
+
+        else:
+            msg = "Unknown action."
+
+    # GET (or after POST): load data for admin_manage.html
+    word_q = (request.args.get("word_q") or "").strip()
+    phrase_q = (request.args.get("phrase_q") or "").strip()
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("SELECT id, email FROM admin ORDER BY id ASC")
+    admins = c.fetchall()
+
+    # Approved words (search)
+    if word_q:
+        q = "%" + normalize_text(word_q) + "%"
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND (english LIKE ? OR oromo LIKE ?)
+            ORDER BY english ASC
+            LIMIT 200
+        """, (q, q))
+    else:
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved'
+            ORDER BY id DESC
+            LIMIT 50
+        """)
+    approved_words = c.fetchall()
+
+    # Approved phrases (search)
+    if phrase_q:
+        q = "%" + normalize_text(phrase_q) + "%"
+        c.execute("""
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved' AND (english LIKE ? OR oromo LIKE ?)
+            ORDER BY id DESC
+            LIMIT 200
+        """, (q, q))
+    else:
+        c.execute("""
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved'
+            ORDER BY id DESC
+            LIMIT 50
+        """)
+    approved_phrases = c.fetchall()
+
+    conn.close()
+
+    return render_template(
+        "admin_manage.html",
+        msg=msg,
+        admins=admins,
+        approved_words=approved_words,
+        approved_phrases=approved_phrases,
+        word_q=word_q,
+        phrase_q=phrase_q
+    )
+
+
+# ------------------ CHANGE PASSWORD (MY ACCOUNT) ------------------
+
+@app.route("/admin/change_password", methods=["GET", "POST"])
+def admin_change_password():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        current_pw = request.form.get("current_password") or ""
+        new_pw = request.form.get("new_password") or ""
+        new_pw2 = request.form.get("new_password2") or ""
+
+        if not new_pw or len(new_pw) < 6:
+            msg = "New password must be at least 6 characters."
+        elif new_pw != new_pw2:
+            msg = "New passwords do not match."
+        else:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute("SELECT password FROM admin WHERE id=?", (_admin_id(),))
+            row = c.fetchone()
+            if not row or not check_password_hash(row[0], current_pw):
+                msg = "Current password is incorrect."
+            else:
+                c.execute("UPDATE admin SET password=? WHERE id=?", (generate_password_hash(new_pw), _admin_id()))
+                conn.commit()
+                msg = "Password updated."
+            conn.close()
+
+    # If you already have a change_password template, it will be used.
+    # If not, you can reuse admin_manage.html message area and add a small form there,
+    # but since you said you already have templates, we keep this as-is.
+    return render_template("admin_change_password.html", msg=msg)
+
+
 # ------------------ ADMIN IMPORT (ENGLISH-ONLY -> GOOGLE -> OROMO) ------------------
 
 def _words_exist(conn, english_word: str) -> bool:
@@ -1186,20 +1431,8 @@ def _words_exist(conn, english_word: str) -> bool:
     c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (english_word, english_word))
     return c.fetchone() is not None
 
-
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
-    """
-    Admin one-click import:
-    - Upload ENGLISH-ONLY list (TXT/CSV/XLSX)
-    - Server translates EN->OM using Google Translate API
-    - Saves as 'pending' for approval
-
-    Limits:
-    - max 2000 words
-    - batch size 200
-    - max 10 Google calls
-    """
     if not require_admin():
         return redirect("/admin")
 
@@ -1208,7 +1441,6 @@ def admin_import():
     if request.method == "POST":
         words = []
 
-        # Optional JSON support: {"words": ["hello", "water", ...]}
         if request.is_json:
             data = request.get_json(silent=True) or {}
             incoming = data.get("words", [])
@@ -1401,9 +1633,21 @@ def reject_audio(audio_id):
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # also delete file best-effort
+    c.execute("SELECT file_path FROM audio WHERE id=? AND status='pending'", (audio_id,))
+    row = c.fetchone()
     c.execute("DELETE FROM audio WHERE id=? AND status='pending'", (audio_id,))
     conn.commit()
     conn.close()
+
+    if row and row[0]:
+        abs_path = _audio_abs_path(row[0])
+        if abs_path and os.path.isfile(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                app.logger.exception(f"Could not delete pending audio file: {abs_path}")
+
     return redirect("/dashboard")
 
 

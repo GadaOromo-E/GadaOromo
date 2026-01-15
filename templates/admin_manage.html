@@ -13,7 +13,7 @@
     <div class="title-row">
       <div>
         <h2 style="margin:0;">Admin Management</h2>
-        <div class="subtle">Add admins, remove admins, manage access.</div>
+        <div class="subtle">Add admins, remove admins, manage access, edit/delete words & phrases.</div>
       </div>
       <a class="btn danger" href="/dashboard">⬅ Back</a>
     </div>
@@ -23,6 +23,7 @@
     <div class="result-box">{{ msg }}</div>
   {% endif %}
 
+  <!-- ================= ADMINS ================= -->
   <div class="card">
     <h2>Admins</h2>
 
@@ -75,6 +76,112 @@
     </form>
   </div>
 
+  <!-- ================= MANAGE WORDS ================= -->
+  <div class="card">
+    <h2>Manage Approved Words</h2>
+    <div class="subtle">Search a word, then edit or delete permanently (audio for that word will also be removed).</div>
+
+    <form method="GET" action="/admin/manage" class="row" style="margin-top:12px;">
+      <input type="text" name="word_q" placeholder="Search English or Oromo..." value="{{ word_q or '' }}">
+      <button type="submit">Search</button>
+    </form>
+
+    <div class="muted" style="margin-top:10px; font-size:14px;">
+      Showing {% if word_q %}search results{% else %}latest 50 words{% endif %}. Use search to find a specific word.
+    </div>
+
+    {% if approved_words and approved_words|length > 0 %}
+      <div class="word-list" style="margin-top:12px;">
+        {% for w in approved_words %}
+          <!-- w = (id, english, oromo) -->
+          <div class="word-row" style="gap:12px; align-items:flex-start; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; width:100%; gap:12px; flex-wrap:wrap;">
+              <div class="muted">ID: #{{ w[0] }}</div>
+              <div class="muted">Status: approved</div>
+            </div>
+
+            <form method="POST" style="width:100%;">
+              <input type="hidden" name="action" value="update_word">
+              <input type="hidden" name="word_id" value="{{ w[0] }}">
+
+              <div class="row" style="align-items:stretch;">
+                <input type="text" name="english" value="{{ w[1] }}" required>
+                <input type="text" name="oromo" value="{{ w[2] }}" required>
+              </div>
+
+              <div class="small-actions" style="margin-top:10px;">
+                <button type="submit" class="btn primary">💾 Save</button>
+              </div>
+            </form>
+
+            <form method="POST" style="width:100%; margin-top:8px;">
+              <input type="hidden" name="action" value="delete_word">
+              <input type="hidden" name="word_id" value="{{ w[0] }}">
+              <button type="submit" class="btn danger" onclick="return confirm('PERMANENT DELETE: This will remove the word and all its audio. Continue?');">
+                🗑 Permanently Delete
+              </button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box" style="margin-top:12px;">No approved words found.</div>
+    {% endif %}
+  </div>
+
+  <!-- ================= MANAGE PHRASES ================= -->
+  <div class="card">
+    <h2>Manage Approved Phrases</h2>
+    <div class="subtle">Search a phrase, then edit or delete permanently (audio for that phrase will also be removed).</div>
+
+    <form method="GET" action="/admin/manage" class="row" style="margin-top:12px;">
+      <input type="text" name="phrase_q" placeholder="Search English or Oromo phrase..." value="{{ phrase_q or '' }}">
+      <button type="submit">Search</button>
+    </form>
+
+    <div class="muted" style="margin-top:10px; font-size:14px;">
+      Showing {% if phrase_q %}search results{% else %}latest 50 phrases{% endif %}. Use search to find a specific phrase.
+    </div>
+
+    {% if approved_phrases and approved_phrases|length > 0 %}
+      <div class="word-list" style="margin-top:12px;">
+        {% for p in approved_phrases %}
+          <!-- p = (id, english, oromo) -->
+          <div class="word-row" style="gap:12px; align-items:flex-start; flex-direction:column;">
+            <div style="display:flex; justify-content:space-between; width:100%; gap:12px; flex-wrap:wrap;">
+              <div class="muted">ID: #{{ p[0] }}</div>
+              <div class="muted">Status: approved</div>
+            </div>
+
+            <form method="POST" style="width:100%;">
+              <input type="hidden" name="action" value="update_phrase">
+              <input type="hidden" name="phrase_id" value="{{ p[0] }}">
+
+              <div style="display:flex; gap:10px; flex-direction:column;">
+                <input type="text" name="english" value="{{ p[1] }}" required>
+                <input type="text" name="oromo" value="{{ p[2] }}" required>
+              </div>
+
+              <div class="small-actions" style="margin-top:10px;">
+                <button type="submit" class="btn primary">💾 Save</button>
+              </div>
+            </form>
+
+            <form method="POST" style="width:100%; margin-top:8px;">
+              <input type="hidden" name="action" value="delete_phrase">
+              <input type="hidden" name="phrase_id" value="{{ p[0] }}">
+              <button type="submit" class="btn danger" onclick="return confirm('PERMANENT DELETE: This will remove the phrase and all its audio. Continue?');">
+                🗑 Permanently Delete
+              </button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box" style="margin-top:12px;">No approved phrases found.</div>
+    {% endif %}
+  </div>
+
   <div class="card">
     <h2>Security</h2>
     <div class="small-actions">
@@ -86,3 +193,4 @@
 </div>
 </body>
 </html>
+
