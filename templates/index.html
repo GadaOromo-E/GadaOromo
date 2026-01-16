@@ -15,42 +15,28 @@
       <h1>{{ APP_NAME }}</h1>
       <p class="tagline">Your global Oromo ↔ English community dictionary</p>
 
-      <!-- Quick top actions (good for mobile + app) -->
+      <!-- TOP BIG BUTTONS (as you requested) -->
       <div class="small-actions" style="margin-top:10px;">
         <a class="btn primary" href="/">🏠 Home</a>
         <a class="btn" href="/translate">🌍 Translate</a>
-        <a class="btn" href="/learn">📚 Learn</a>
-        <a class="btn danger" href="/support">❤️ Donate</a>
+        <a class="btn" href="/learn">📚 Learn language</a>
+        <a class="btn danger" href="/support">❤️ Support the project</a>
       </div>
     </div>
   </header>
 
+  <!-- SMALL NAVBAR (as you requested) -->
   <nav class="nav">
     <a class="nav-link" href="/">Home</a>
     <a class="nav-link" href="/translate">Translate</a>
-    <a class="nav-link" href="/learn">Learn</a>
-    <a class="nav-link" href="/support">Donate</a>
     <a class="nav-link" href="/submit">Submit Word</a>
     <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
-    <a class="nav-link" href="/admin">Admin</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/admin">Admin login</a>
   </nav>
 
-  <!-- Optional: a small banner for donations (remove if you don't want it) -->
-  <section class="card" style="margin-top:14px;">
-    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
-      <div>
-        <h2 style="margin-top:0;">❤️ Support the project</h2>
-        <div class="subtle">
-          Donations help pay for hosting and development.
-          Minimum donation: <b>{{ SUPPORT_MIN_NOK }} NOK</b> (donate {{ SUPPORT_MIN_NOK }}, {{ SUPPORT_MIN_NOK * 2 }}, {{ SUPPORT_MIN_NOK * 3 }}… NOK by increasing quantity).
-        </div>
-      </div>
-      <div class="small-actions">
-        <a class="btn danger" href="/support">Donate</a>
-        <a class="btn" href="/learn">Try Learning</a>
-      </div>
-    </div>
-  </section>
+  <!-- NO DONATION BANNER ON HOME (removed) -->
 
   <section class="card">
     <h2>Search Dictionary</h2>
@@ -74,7 +60,6 @@
 
           {% if result_id %}
             {% if result_id not in approved_oromo_audio_word_ids %}
-              <!-- Recorder UI for the searched/selected word -->
               <button
                 type="button"
                 class="btn"
@@ -182,6 +167,7 @@
       </div>
     {% endif %}
 
+    <!-- QUICK ACTIONS (you asked to keep Add Word + Add Phrase) -->
     <div class="quick-actions">
       <a class="btn primary" href="/translate">🌍 Translator</a>
       <a class="btn" href="/learn">📚 Learning</a>
@@ -259,6 +245,7 @@
 
 </body>
 </html>
+
 
 
 

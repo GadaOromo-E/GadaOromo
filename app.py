@@ -24,6 +24,10 @@ Features:
     approved_oromo_audio_phrase_ids
 
 ✅ NEW in this update:
+- /learn (Learning tab - public, no accounts)
+- /support (Donate tab - donation starts from $10)
+- Global template variables:
+    APP_NAME, SUPPORT_MIN_USD, DONATE_URLS, WEBSITE_URL, API_URL
 - /admin/manage (Admin Management):
     - Keep add/delete admin
     - Add: Manage approved words (search + inline edit + permanent delete)
@@ -67,6 +71,61 @@ DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = os.environ.get("DB_PATH", "").strip() or DEFAULT_DB
 app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
+# App name used in templates (navbar + titles)
+APP_NAME = os.environ.get("APP_NAME", "Gada Oromo Dictionary")
+
+# Public URLs (optional but useful for templates + sharing)
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip()  # e.g. https://yourdomain.com
+API_URL = os.environ.get("API_URL", "").strip()          # e.g. https://api.yourdomain.com
+
+# Donation settings (minimum donation in NOK)
+SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
+
+# Stripe Payment Links
+# You only need STRIPE_DONATE_CUSTOM_URL (200 NOK × quantity)
+DONATE_URLS = {
+    "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
+}
+
+def _safe_url(u: str) -> str:
+    # Avoid rendering empty/unsafe href in templates
+    if not u:
+        return ""
+    u = u.strip()
+    if u.startswith("https://") or u.startswith("http://"):
+        return u
+    return ""
+
+DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
+
+@app.context_processor
+def inject_globals():
+    """
+    Available in ALL templates:
+    - APP_NAME
+    - SUPPORT_MIN_NOK
+    - DONATE_URLS
+    - WEBSITE_URL
+    - API_URL
+    """
+    return dict(
+        APP_NAME=APP_NAME,
+        SUPPORT_MIN_NOK=SUPPORT_MIN_NOK,
+        DONATE_URLS=DONATE_URLS,
+        WEBSITE_URL=WEBSITE_URL,
+        API_URL=API_URL,
+    )
+@app.route("/debug-vars")
+def debug_vars():
+    return f"SUPPORT_MIN_NOK={SUPPORT_MIN_NOK}, donate_url_set={bool(DONATE_URLS.get('custom'))}"
+
+
+@app.after_request
+def add_security_headers(resp):
+    # Basic hardening that won't break your JS
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    return resp
 
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
@@ -81,7 +140,7 @@ else:
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
-MAX_AUDIO_MB = 15
+MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 
@@ -352,12 +411,10 @@ def delete_audio_for_entry(entry_type: str, entry_id: int):
     c.execute("SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
     rows = c.fetchall()
 
-    # delete db rows first
     c.execute("DELETE FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
     conn.commit()
     conn.close()
 
-    # then delete files best-effort
     for _aid, fp in rows:
         abs_path = _audio_abs_path(fp)
         if abs_path and os.path.isfile(abs_path):
@@ -634,6 +691,37 @@ def translate_text(text: str, direction: str = "om_en"):
 
     conn.close()
     return " ".join(out), 0, 0
+
+
+# ------------------ NEW: LEARNING PAGE ------------------
+
+@app.route("/learn", methods=["GET"])
+def learn():
+    """
+    Public learning page (no accounts).
+    We'll store favorites/progress client-side (localStorage) in the template JS.
+    """
+    trending = get_trending(limit=15)
+    return render_template("learn.html", trending=trending)
+
+
+# ------------------ SUPPORT / DONATE PAGE ------------------
+
+@app.route("/support", methods=["GET"])
+def support():
+    """
+    Donation page.
+    Minimum donation: 200 NOK.
+    Donations are handled via Stripe Payment Links.
+    Supporters can donate 200, 400, 600... NOK by adjusting quantity.
+
+    This page can be opened from:
+      - website navbar
+      - Android/iOS app (external browser or webview)
+    """
+    trending = get_trending(limit=10)
+    return render_template("support.html", trending=trending)
+
 
 
 # ------------------ HOME PAGE ------------------
@@ -1226,12 +1314,10 @@ def admin_manage():
                 conn = sqlite3.connect(DB_NAME)
                 c = conn.cursor()
 
-                # must exist and be approved
                 c.execute("SELECT 1 FROM words WHERE id=? AND status='approved'", (wid,))
                 if not c.fetchone():
                     msg = "Word not found (or not approved)."
                 else:
-                    # avoid duplicates (other rows)
                     c.execute("""
                         SELECT 1 FROM words
                         WHERE id != ? AND (english=? OR oromo=?)
@@ -1251,8 +1337,6 @@ def admin_manage():
                 msg = "Invalid word id."
             else:
                 wid = int(wid_raw)
-
-                # delete audio first
                 delete_audio_for_entry("word", wid)
 
                 conn = sqlite3.connect(DB_NAME)
@@ -1299,7 +1383,6 @@ def admin_manage():
                 msg = "Invalid phrase id."
             else:
                 pid = int(pid_raw)
-
                 delete_audio_for_entry("phrase", pid)
 
                 conn = sqlite3.connect(DB_NAME)
@@ -1312,7 +1395,6 @@ def admin_manage():
         else:
             msg = "Unknown action."
 
-    # GET (or after POST): load data for admin_manage.html
     word_q = (request.args.get("word_q") or "").strip()
     phrase_q = (request.args.get("phrase_q") or "").strip()
 
@@ -1322,7 +1404,6 @@ def admin_manage():
     c.execute("SELECT id, email FROM admin ORDER BY id ASC")
     admins = c.fetchall()
 
-    # Approved words (search)
     if word_q:
         q = "%" + normalize_text(word_q) + "%"
         c.execute("""
@@ -1342,7 +1423,6 @@ def admin_manage():
         """)
     approved_words = c.fetchall()
 
-    # Approved phrases (search)
     if phrase_q:
         q = "%" + normalize_text(phrase_q) + "%"
         c.execute("""
@@ -1623,7 +1703,6 @@ def reject_audio(audio_id):
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # also delete file best-effort
     c.execute("SELECT file_path FROM audio WHERE id=? AND status='pending'", (audio_id,))
     row = c.fetchone()
     c.execute("DELETE FROM audio WHERE id=? AND status='pending'", (audio_id,))
@@ -1670,62 +1749,9 @@ def create_admin():
     conn.close()
     return "Admin created (or already exists). You can now login."
 
-from flask import abort
-
-@app.route("/admin/reset_password", methods=["GET", "POST"])
-def admin_reset_password():
-    if os.environ.get("ENABLE_ADMIN_RESET") != "1":
-        abort(403)
-
-    token = (request.args.get("token") or "").strip()
-    expected = (os.environ.get("ADMIN_RESET_TOKEN") or "").strip()
-    if not expected or token != expected:
-        abort(403)
-
-    msg = ""
-
-    if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
-        new_pw = request.form.get("new_password") or ""
-
-        if not email:
-            msg = "Email is required."
-        elif len(new_pw) < 6:
-            msg = "New password must be at least 6 characters."
-        else:
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            c.execute("SELECT id FROM admin WHERE email=?", (email,))
-            row = c.fetchone()
-
-            if not row:
-                msg = "Admin email not found in this database."
-                conn.close()
-            else:
-                c.execute(
-                    "UPDATE admin SET password=? WHERE email=?",
-                    (generate_password_hash(new_pw), email),
-                )
-                conn.commit()
-                conn.close()
-                msg = "✅ Password reset OK. Now login at /admin."
-
-    return f"""
-    <h2>Admin Password Reset</h2>
-    <p>{msg}</p>
-    <form method="POST">
-      <input name="email" placeholder="admin email" required><br><br>
-      <input name="new_password" placeholder="new password (6+)" required><br><br>
-      <button type="submit">Reset</button>
-    </form>
-    """
-
-
 
 # ------------------ RUN ------------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-
-
