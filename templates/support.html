@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Donate | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+  <header class="topbar">
+    <div class="title-row">
+      <div class="brand">
+        <h1 style="margin:0;">{{ APP_NAME }}</h1>
+        <p class="tagline">Support the Oromo ↔ English learning community</p>
+
+        <div class="small-actions" style="margin-top:10px;">
+          <a class="btn" href="/">🏠 Home</a>
+          <a class="btn" href="/translate">🌍 Translate</a>
+          <a class="btn" href="/learn">📚 Learn</a>
+          <a class="btn primary" href="/support">❤️ Donate</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+  </nav>
+
+  <section class="card">
+    <h2>❤️ Donate (minimum {{ SUPPORT_MIN_NOK }} NOK)</h2>
+    <div class="subtle">
+      Donations help pay for hosting, development, and future AI learning features.
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>International payments</h3>
+    <div style="margin-top:10px; line-height:1.5;">
+      <p>
+        Supporters can pay in their own currency (USD / EUR / GBP, etc).
+        Stripe automatically converts it, and <b>you receive NOK</b> in your Norwegian bank account
+        (after fees and conversion).
+      </p>
+      <p class="muted" style="margin-top:8px;">
+        Note: On the Stripe checkout page, supporters can increase quantity to donate more
+        (example: 2 × {{ SUPPORT_MIN_NOK }} NOK = {{ SUPPORT_MIN_NOK * 2 }} NOK).
+      </p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>Donate</h3>
+
+    {% if DONATE_URLS and DONATE_URLS.get("custom") %}
+      <div class="quick-actions" style="margin-top:12px;">
+        <a class="btn primary" href="{{ DONATE_URLS.get('custom') }}" target="_blank" rel="noopener">
+          Donate ({{ SUPPORT_MIN_NOK }} NOK+)
+        </a>
+      </div>
+
+      <div class="muted" style="margin-top:10px; font-size:14px;">
+        Payments open in a secure Stripe checkout page.
+      </div>
+    {% else %}
+      <div class="result-box" style="margin-top:12px;">
+        <b>Donation is not connected yet.</b><br>
+        Please set <code>STRIPE_DONATE_CUSTOM_URL</code> in Render Environment Variables.
+      </div>
+
+      <div class="muted" style="margin-top:10px; font-size:14px; line-height:1.5;">
+        Example env vars:
+        <div style="margin-top:8px;">
+          <code>STRIPE_DONATE_CUSTOM_URL</code><br>
+          <code>SUPPORT_MIN_NOK</code>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="divider"></div>
+
+    <h3>What your donation supports</h3>
+    <div style="margin-top:10px; line-height:1.6;">
+      <p>• Hosting (Render), database storage, and domain costs</p>
+      <p>• Better dictionary search and suggestions</p>
+      <p>• Community audio improvements (recording + approval)</p>
+      <p>• Future: AI teacher for Afaan Oromo ↔ English</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>Thank you</h3>
+    <div class="subtle">
+      This is a community project. Every donation helps keep it alive and improving.
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary</p>
+  </footer>
+
+</div>
+
+</body>
+</html>
+
+

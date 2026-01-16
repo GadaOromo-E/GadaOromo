@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Learn | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+  <header class="topbar">
+    <div class="title-row">
+      <div class="brand">
+        <h1 style="margin:0;">{{ APP_NAME }}</h1>
+        <p class="tagline">Learn Afaan Oromo ↔ English</p>
+
+        <div class="small-actions" style="margin-top:10px;">
+          <a class="btn" href="/">🏠 Home</a>
+          <a class="btn" href="/translate">🌍 Translate</a>
+          <a class="btn primary" href="/learn">📚 Learn</a>
+          <a class="btn danger" href="/support">❤️ Donate</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+  </nav>
+
+  <section class="card">
+    <h2>Practice</h2>
+    <div class="subtle">
+      Choose your learning direction, then practice with quick prompts.
+    </div>
+
+    <div class="row" style="margin-top:12px;">
+      <select id="learnDirection">
+        <option value="om_en">Oromo → English</option>
+        <option value="en_om">English → Oromo</option>
+      </select>
+      <button type="button" onclick="openTranslator()">Start Practice</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <h2>Quick Practice Cards</h2>
+    <div class="subtle">
+      Tap a card to open it in the Translator (then you can listen, speak, and record community audio).
+    </div>
+
+    {% if words and words|length > 0 %}
+      <div class="chips" style="margin-top:12px;">
+        {# show a small subset for performance #}
+        {% for w in words[:40] %}
+          <span class="chip" onclick="practiceWord('{{ w[1]|e }}', '{{ w[2]|e }}')">
+            {{ w[1] }} <span class="muted">→</span> {{ w[2] }}
+          </span>
+        {% endfor %}
+      </div>
+
+      <div class="small-actions" style="margin-top:12px;">
+        <button type="button" class="btn" onclick="shuffleTip()">🔀 More Random</button>
+        <a class="btn" href="/translate">Open Translator</a>
+      </div>
+
+      <div id="tip" class="muted" style="margin-top:10px;"></div>
+    {% else %}
+      <p class="muted" style="margin-top:10px;">
+        No approved words yet. Add words from the community submissions page.
+      </p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Learning plan (simple)</h2>
+    <div class="subtle">No accounts needed. Just practice every day.</div>
+
+    <div style="margin-top:10px; line-height:1.5;">
+      <p><b>Day 1–3:</b> Learn 10 common words/day</p>
+      <p><b>Day 4–7:</b> Learn 5 phrases/day + listen to pronunciation</p>
+      <p><b>Week 2:</b> Practice short sentences (use Translator)</p>
+      <p><b>Oromo audio:</b> If you can, record pronunciation to help the community.</p>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary</p>
+  </footer>
+
+</div>
+
+<script>
+function openTranslator(){
+  const dir = document.getElementById("learnDirection").value || "om_en";
+  // Open translator with selected direction (user will type there)
+  window.location.href = "/translate?direction=" + encodeURIComponent(dir);
+}
+
+function practiceWord(en, om){
+  const dir = document.getElementById("learnDirection").value || "om_en";
+  // Put the selected side into translator input
+  const text = (dir === "om_en") ? om : en;
+  const url = "/translate?direction=" + encodeURIComponent(dir) + "&text=" + encodeURIComponent(text);
+  window.location.href = url;
+}
+
+function shuffleTip(){
+  const tip = document.getElementById("tip");
+  tip.textContent = "Tip: Reload the page to see a different set of practice cards.";
+}
+</script>
+
+</body>
+</html>

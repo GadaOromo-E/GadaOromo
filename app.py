@@ -64,16 +64,7 @@ app.logger.setLevel(logging.INFO)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 
-RENDER_DB = "/var/data/gadaoromo.db"
-
-# Safe DB selection (prevents accidental empty DB)
-if os.path.exists(RENDER_DB):
-    DB_NAME = RENDER_DB
-elif os.path.isdir("/var/data"):
-    DB_NAME = RENDER_DB
-else:
-    DB_NAME = DEFAULT_DB
-
+DB_NAME = os.environ.get("DB_PATH", "").strip() or DEFAULT_DB
 app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
 
@@ -1678,6 +1669,57 @@ def create_admin():
 
     conn.close()
     return "Admin created (or already exists). You can now login."
+
+from flask import abort
+
+@app.route("/admin/reset_password", methods=["GET", "POST"])
+def admin_reset_password():
+    if os.environ.get("ENABLE_ADMIN_RESET") != "1":
+        abort(403)
+
+    token = (request.args.get("token") or "").strip()
+    expected = (os.environ.get("ADMIN_RESET_TOKEN") or "").strip()
+    if not expected or token != expected:
+        abort(403)
+
+    msg = ""
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()
+        new_pw = request.form.get("new_password") or ""
+
+        if not email:
+            msg = "Email is required."
+        elif len(new_pw) < 6:
+            msg = "New password must be at least 6 characters."
+        else:
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute("SELECT id FROM admin WHERE email=?", (email,))
+            row = c.fetchone()
+
+            if not row:
+                msg = "Admin email not found in this database."
+                conn.close()
+            else:
+                c.execute(
+                    "UPDATE admin SET password=? WHERE email=?",
+                    (generate_password_hash(new_pw), email),
+                )
+                conn.commit()
+                conn.close()
+                msg = "✅ Password reset OK. Now login at /admin."
+
+    return f"""
+    <h2>Admin Password Reset</h2>
+    <p>{msg}</p>
+    <form method="POST">
+      <input name="email" placeholder="admin email" required><br><br>
+      <input name="new_password" placeholder="new password (6+)" required><br><br>
+      <button type="submit">Reset</button>
+    </form>
+    """
+
 
 
 # ------------------ RUN ------------------

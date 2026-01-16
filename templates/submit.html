@@ -1,11 +1,10 @@
 
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Submit Word | Gada Oromo Dictionary</title>
+  <title>Submit Word | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -13,17 +12,32 @@
 <div class="container">
 
   <div class="topbar">
-    <div class="title-row">
+    <div class="title-row" style="align-items:flex-start;">
       <div>
         <h2 style="margin:0;">➕ Submit a Word</h2>
-        <div class="subtle">
+        <div class="subtle" style="margin-top:6px;">
           Community submissions must include <b>both</b> English and Oromo.
           All submissions are reviewed by admin before becoming public.
         </div>
+
+        <div class="small-actions" style="margin-top:10px;">
+          <a class="btn" href="/">🏠 Home</a>
+          <a class="btn" href="/translate">🌍 Translate</a>
+          <a class="btn" href="/learn">📚 Learn</a>
+          <a class="btn danger" href="/support">❤️ Donate</a>
+        </div>
       </div>
-      <a class="btn" href="/">⬅ Home</a>
     </div>
   </div>
+
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+  </nav>
 
   {% if msg %}
     <div class="result-box">{{ msg }}</div>
@@ -89,6 +103,8 @@
 
 </body>
 </html>
+
+
 
 
 
