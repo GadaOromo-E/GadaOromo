@@ -64,35 +64,32 @@ app.logger.setLevel(logging.INFO)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 
-# On Render: use disk path if it exists
-RENDER_DISK_DB = "/var/data/gadaoromo.db"
-DB_NAME = RENDER_DISK_DB if os.path.isdir("/var/data") else DEFAULT_DB
+RENDER_DB = "/var/data/gadaoromo.db"
+
+# Safe DB selection (prevents accidental empty DB)
+if os.path.exists(RENDER_DB):
+    DB_NAME = RENDER_DB
+elif os.path.isdir("/var/data"):
+    DB_NAME = RENDER_DB
+else:
+    DB_NAME = DEFAULT_DB
+
+app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
+
 
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
-if os.path.isdir("/var/data"):
+IS_RENDER_DISK = os.path.isdir("/var/data")
+
+if IS_RENDER_DISK:
     UPLOAD_FOLDER = "/var/data/uploads"
 else:
-    UPLOAD_FOLDER = os.path.join("static", "uploads")
+    UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Make uploaded audio available under /static/uploads on Render
-if os.path.isdir("/var/data"):
-    static_uploads = os.path.join(BASE_DIR, "static", "uploads")
-    try:
-        if os.path.islink(static_uploads) or os.path.exists(static_uploads):
-            # if it's a real folder created before, leave it
-            pass
-        else:
-            os.symlink(UPLOAD_FOLDER, static_uploads)
-    except Exception as e:
-        app.logger.warning(f"Could not create symlink for static/uploads: {e}")
-
-
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
-
 MAX_AUDIO_MB = 15
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
@@ -1395,32 +1392,34 @@ def admin_change_password():
         return redirect("/admin")
 
     msg = None
+    admin_id = session.get("admin")
 
     if request.method == "POST":
-        current_pw = request.form.get("current_password") or ""
-        new_pw = request.form.get("new_password") or ""
-        new_pw2 = request.form.get("new_password2") or ""
+        current_pw = (request.form.get("current_password") or "").strip()
+        new_pw = (request.form.get("new_password") or "").strip()
+        new_pw2 = (request.form.get("new_password2") or "").strip()
 
-        if not new_pw or len(new_pw) < 6:
+        if len(new_pw) < 6:
             msg = "New password must be at least 6 characters."
         elif new_pw != new_pw2:
             msg = "New passwords do not match."
         else:
             conn = sqlite3.connect(DB_NAME)
             c = conn.cursor()
-            c.execute("SELECT password FROM admin WHERE id=?", (_admin_id(),))
+            c.execute("SELECT password FROM admin WHERE id=?", (admin_id,))
             row = c.fetchone()
+
             if not row or not check_password_hash(row[0], current_pw):
                 msg = "Current password is incorrect."
             else:
-                c.execute("UPDATE admin SET password=? WHERE id=?", (generate_password_hash(new_pw), _admin_id()))
+                c.execute(
+                    "UPDATE admin SET password=? WHERE id=?",
+                    (generate_password_hash(new_pw), admin_id)
+                )
                 conn.commit()
                 msg = "Password updated."
             conn.close()
 
-    # If you already have a change_password template, it will be used.
-    # If not, you can reuse admin_manage.html message area and add a small form there,
-    # but since you said you already have templates, we keep this as-is.
     return render_template("admin_change_password.html", msg=msg)
 
 
@@ -1679,36 +1678,6 @@ def create_admin():
 
     conn.close()
     return "Admin created (or already exists). You can now login."
-
-@app.route("/debug/db_status")
-def debug_db_status():
-    if os.environ.get("ENABLE_DB_DEBUG") != "1":
-        return "Disabled", 403
-
-    folders = ["/var/data", "/opt/render/project/src"]
-    report = ["CURRENT DB: " + DB_NAME, ""]
-
-    for folder in folders:
-        if not os.path.isdir(folder):
-            continue
-        for name in os.listdir(folder):
-            if name.lower().endswith(".db"):
-                full = os.path.join(folder, name)
-                try:
-                    conn = sqlite3.connect(full)
-                    c = conn.cursor()
-                    c.execute("SELECT count(*) FROM words")
-                    w = c.fetchone()[0]
-                    c.execute("SELECT count(*) FROM phrases")
-                    p = c.fetchone()[0]
-                    c.execute("SELECT count(*) FROM admin")
-                    a = c.fetchone()[0]
-                    conn.close()
-                    report.append(f"{full} | words={w} | phrases={p} | admin={a}")
-                except:
-                    report.append(f"{full} | ERROR")
-
-    return "<pre>" + "\n".join(report) + "</pre>"
 
 
 # ------------------ RUN ------------------
