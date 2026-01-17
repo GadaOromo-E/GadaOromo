@@ -4,9 +4,63 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ APP_NAME }}</title>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- ✅ PWA (Android + iPhone) -->
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+
+  <!-- ✅ iPhone / iOS "real app" -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
 </head>
+
 <body>
+
+<!-- OPTIONAL: tiny splash overlay (native feel) -->
+<div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
+  <div style="text-align:center;">
+    <div style="font-size:42px;">📘</div>
+    <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
+    <div class="muted" style="margin-top:6px;">Loading…</div>
+  </div>
+</div>
+<script>
+  window.addEventListener("load", () => {
+    const el = document.getElementById("bootSplash");
+    if (el) el.style.display = "none";
+  });
+</script>
+
+<!-- PWA Update Bar -->
+<div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div>
+      <b>Update available</b>
+      <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn primary" type="button" data-reload>Reload</button>
+      <button class="btn" type="button" data-close>Later</button>
+    </div>
+  </div>
+</div>
+
+<!-- iOS Install Help (only shows on iPhone/iPad Safari when not installed) -->
+<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
+  <b>Install on iPhone</b>
+  <div class="muted" style="margin-top:6px; line-height:1.5;">
+    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
+  <span data-msg></span>
+</div>
 
 <div class="container">
 
@@ -15,17 +69,18 @@
       <h1>{{ APP_NAME }}</h1>
       <p class="tagline">Your global Oromo ↔ English community dictionary</p>
 
-      <!-- TOP BIG BUTTONS (as you requested) -->
-      <div class="small-actions" style="margin-top:10px;">
+      <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
         <a class="btn primary" href="/">🏠 Home</a>
         <a class="btn" href="/translate">🌍 Translate</a>
         <a class="btn" href="/learn">📚 Learn language</a>
         <a class="btn danger" href="/support">❤️ Support the project</a>
+
+        <!-- ✅ Install button (Android/desktop only; iOS shows instructions box above) -->
+        <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
       </div>
     </div>
   </header>
 
-  <!-- SMALL NAVBAR (as you requested) -->
   <nav class="nav">
     <a class="nav-link" href="/">Home</a>
     <a class="nav-link" href="/translate">Translate</a>
@@ -35,8 +90,6 @@
     <a class="nav-link" href="/support">Donate</a>
     <a class="nav-link" href="/admin">Admin login</a>
   </nav>
-
-  <!-- NO DONATION BANNER ON HOME (removed) -->
 
   <section class="card">
     <h2>Search Dictionary</h2>
@@ -110,14 +163,14 @@
             {% if audio.oromo %}
               <div class="subtle" style="margin-top:10px;">Oromo audio</div>
               <audio controls style="width:100%;">
-                <source src="{{ url_for('static', filename=audio.oromo) }}">
+                <source src="{{ audio.oromo }}">
               </audio>
             {% endif %}
 
             {% if audio.english %}
               <div class="subtle" style="margin-top:10px;">English audio</div>
               <audio controls style="width:100%;">
-                <source src="{{ url_for('static', filename=audio.english) }}">
+                <source src="{{ audio.english }}">
               </audio>
             {% endif %}
           </div>
@@ -167,7 +220,6 @@
       </div>
     {% endif %}
 
-    <!-- QUICK ACTIONS (you asked to keep Add Word + Add Phrase) -->
     <div class="quick-actions">
       <a class="btn primary" href="/translate">🌍 Translator</a>
       <a class="btn" href="/learn">📚 Learning</a>
@@ -243,8 +295,12 @@
 /* your existing JS unchanged */
 </script>
 
+<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+
 </body>
 </html>
+
 
 
 

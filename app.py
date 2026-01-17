@@ -4,39 +4,26 @@ Created on Sun Jan 11 16:32:35 2026
 
 @author: ademo
 """
-#-*-coding: utf-8 -*-
 """
-Full updated version of app.py (Flask + SQLite)
+Gada Oromo Dictionary - Flask + SQLite + PWA-ready
 
-Features:
-- Dictionary search + translate pages (DB lookup + word-by-word fallback)
+✅ Includes:
+- Dictionary search + translate pages
 - Admin login + dashboard + approve/reject
-- Public submission:
-    ✅ Words: manual + file upload (CSV/XLSX) on /submit (BOTH languages required)
-    ✅ Phrases: manual + file upload (CSV/XLSX) on /submit_phrase (BOTH languages required)
-- (Optional legacy) /submit_file kept for backward compatibility (still works)
+- Public submission: words + phrases (manual + CSV/XLSX)
+- Legacy /submit_file kept
 - Admin bulk import (TXT/CSV/XLSX English-only) -> Google Translate -> pending
 - Community audio upload + admin approve/reject
-- NEW: In-page mic recording (Chrome/Edge) posts to:
-    POST /api/submit-audio (multipart/form-data)
-- Templates can hide mic automatically once Oromo audio is approved:
-    approved_oromo_audio_word_ids
-    approved_oromo_audio_phrase_ids
-
-✅ NEW in this update:
-- /learn (Learning tab - public, no accounts)
-- /support (Donate tab - donation starts from $10)
-- Global template variables:
-    APP_NAME, SUPPORT_MIN_USD, DONATE_URLS, WEBSITE_URL, API_URL
-- /admin/manage (Admin Management):
-    - Keep add/delete admin
-    - Add: Manage approved words (search + inline edit + permanent delete)
-    - Add: Manage approved phrases (search + inline edit + permanent delete)
-    - Deleting a word/phrase also deletes related audio rows and tries to remove audio files from disk.
-- /admin/change_password route (template link support)
+- In-page mic recording posts to: POST /api/submit-audio
+- NEW: /learn, /support
+- NEW: PWA support:
+    - /manifest.webmanifest
+    - /service-worker.js (root scope)
+    - /offline
+- FIX: audio serving works both on Render disk and local
 
 NOTES:
-- Run on HTTPS (or localhost) for mic recording.
+- Mic recording requires HTTPS (or localhost).
 - Allowed audio: mp3, wav, m4a, webm, ogg
 """
 
@@ -44,16 +31,18 @@ import os
 import re
 import sqlite3
 import logging
+import csv
 from uuid import uuid4
 from difflib import get_close_matches
+from io import StringIO, BytesIO
 
 import requests
-from flask import Flask, render_template, request, redirect, session, jsonify
+from flask import (
+    Flask, render_template, request, redirect, session,
+    jsonify, send_from_directory, abort, make_response
+)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-
-import csv
-from io import StringIO, BytesIO
 from openpyxl import load_workbook
 
 
@@ -71,24 +60,18 @@ DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = os.environ.get("DB_PATH", "").strip() or DEFAULT_DB
 app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
-# App name used in templates (navbar + titles)
 APP_NAME = os.environ.get("APP_NAME", "Gada Oromo Dictionary")
 
-# Public URLs (optional but useful for templates + sharing)
-WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip()  # e.g. https://yourdomain.com
-API_URL = os.environ.get("API_URL", "").strip()          # e.g. https://api.yourdomain.com
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip()
+API_URL = os.environ.get("API_URL", "").strip()
 
-# Donation settings (minimum donation in NOK)
 SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
 
-# Stripe Payment Links
-# You only need STRIPE_DONATE_CUSTOM_URL (200 NOK × quantity)
 DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
 
 def _safe_url(u: str) -> str:
-    # Avoid rendering empty/unsafe href in templates
     if not u:
         return ""
     u = u.strip()
@@ -100,14 +83,6 @@ DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
 
 @app.context_processor
 def inject_globals():
-    """
-    Available in ALL templates:
-    - APP_NAME
-    - SUPPORT_MIN_NOK
-    - DONATE_URLS
-    - WEBSITE_URL
-    - API_URL
-    """
     return dict(
         APP_NAME=APP_NAME,
         SUPPORT_MIN_NOK=SUPPORT_MIN_NOK,
@@ -115,6 +90,7 @@ def inject_globals():
         WEBSITE_URL=WEBSITE_URL,
         API_URL=API_URL,
     )
+
 @app.route("/debug-vars")
 def debug_vars():
     return f"SUPPORT_MIN_NOK={SUPPORT_MIN_NOK}, donate_url_set={bool(DONATE_URLS.get('custom'))}"
@@ -122,7 +98,6 @@ def debug_vars():
 
 @app.after_request
 def add_security_headers(resp):
-    # Basic hardening that won't break your JS
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     return resp
@@ -144,6 +119,40 @@ MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 
+# ------------------ PWA ROUTES (IMPORTANT) ------------------
+# We serve the service worker from ROOT so it can control the whole site.
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    return send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.webmanifest", mimetype="application/manifest+json")
+
+@app.route("/service-worker.js")
+def service_worker():
+    resp = make_response(send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js"))
+    # Allow SW scope to be the entire site (so it works on /, /translate, etc.)
+    resp.headers["Content-Type"] = "application/javascript"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    # Don't cache SW too aggressively
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
+
+
+# ------------------ PUBLIC UPLOADS ROUTE (AUDIO) ------------------
+# Works for both Render disk and local static/uploads.
+
+@app.route("/uploads/<path:filename>")
+def uploads(filename):
+    safe_name = os.path.basename(filename)
+    full_path = os.path.join(UPLOAD_FOLDER, safe_name)
+    if not os.path.isfile(full_path):
+        abort(404)
+    return send_from_directory(UPLOAD_FOLDER, safe_name)
+
+
 # ------------------ ADMIN IMPORT CONFIG ------------------
 
 IMPORT_BATCH_SIZE = 200
@@ -161,8 +170,8 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 
 def normalize_text(text: str) -> str:
     t = (text or "").lower().strip()
-    t = re.sub(r"[^\w\s]", " ", t)      # remove punctuation
-    t = re.sub(r"\s+", " ", t).strip()  # collapse spaces
+    t = re.sub(r"[^\w\s]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
     return t
 
 def normalize_tokens(text: str):
@@ -182,10 +191,6 @@ def dedup_preserve_order(items):
 # ------------------ COMMUNITY FILE PARSERS (NO GOOGLE) ------------------
 
 def parse_csv_pairs(file_bytes: bytes):
-    """
-    CSV must include headers: english,oromo (case-insensitive).
-    Every row must contain BOTH values.
-    """
     text = file_bytes.decode("utf-8", errors="replace")
     f = StringIO(text)
     reader = csv.DictReader(f)
@@ -206,12 +211,6 @@ def parse_csv_pairs(file_bytes: bytes):
     return final
 
 def parse_xlsx_pairs(file_bytes: bytes):
-    """
-    XLSX format:
-      Column A = English
-      Column B = Oromo
-    First row can be headers.
-    """
     wb = load_workbook(BytesIO(file_bytes))
     ws = wb.active
 
@@ -243,7 +242,6 @@ def parse_xlsx_pairs(file_bytes: bytes):
 # ------------------ ADMIN IMPORT PARSERS (ENGLISH-ONLY) ------------------
 
 def parse_txt_english(file_bytes: bytes):
-    """TXT: one English word per line."""
     text = file_bytes.decode("utf-8", errors="replace")
     words = []
     for line in text.splitlines():
@@ -253,7 +251,6 @@ def parse_txt_english(file_bytes: bytes):
     return dedup_preserve_order(words)
 
 def parse_csv_english(file_bytes: bytes):
-    """CSV: prefer header 'english' else first column."""
     text = file_bytes.decode("utf-8", errors="replace")
     f = StringIO(text)
     reader = csv.DictReader(f)
@@ -279,7 +276,6 @@ def parse_csv_english(file_bytes: bytes):
     return dedup_preserve_order(words)
 
 def parse_xlsx_english(file_bytes: bytes):
-    """XLSX: Column A = English, optional header in first row."""
     wb = load_workbook(BytesIO(file_bytes))
     ws = wb.active
 
@@ -355,6 +351,21 @@ def allowed_audio(filename: str) -> bool:
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in ALLOWED_AUDIO
 
+def _public_audio_url(file_path: str) -> str:
+    """
+    DB stores file_path like: 'uploads/xyz.webm'
+    This returns a usable URL: '/uploads/xyz.webm'
+    """
+    fp = (file_path or "").replace("\\", "/").strip()
+    if not fp:
+        return ""
+    if fp.startswith("uploads/"):
+        return "/" + fp
+    if fp.startswith("/uploads/"):
+        return fp
+    # fallback (shouldn't happen)
+    return "/uploads/" + os.path.basename(fp)
+
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -370,7 +381,7 @@ def get_approved_audio(entry_type: str, entry_id: int) -> dict:
     out = {}
     for lang, path in rows:
         if lang not in out:
-            out[lang] = path
+            out[lang] = _public_audio_url(path)
     return out
 
 def get_approved_oromo_audio_ids(entry_type: str) -> set:
@@ -391,21 +402,13 @@ def get_approved_oromo_audio_ids(entry_type: str) -> set:
     return ids
 
 def _audio_abs_path(file_path: str) -> str:
-    """
-    file_path is stored like: 'uploads/xyz.webm'
-    If running on Render disk: audio is in /var/data/uploads/xyz.webm
-    Else: audio is in static/uploads/xyz.webm
-    """
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
         return ""
-    name = fp.split("/")[-1]  # xyz.webm
+    name = fp.split("/")[-1]
     return os.path.join(UPLOAD_FOLDER, name)
 
 def delete_audio_for_entry(entry_type: str, entry_id: int):
-    """
-    Delete all audio rows for an entry and try to delete files from disk.
-    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
@@ -693,38 +696,23 @@ def translate_text(text: str, direction: str = "om_en"):
     return " ".join(out), 0, 0
 
 
-# ------------------ NEW: LEARNING PAGE ------------------
+# ------------------ LEARN ------------------
 
 @app.route("/learn", methods=["GET"])
 def learn():
-    """
-    Public learning page (no accounts).
-    We'll store favorites/progress client-side (localStorage) in the template JS.
-    """
     trending = get_trending(limit=15)
     return render_template("learn.html", trending=trending)
 
 
-# ------------------ SUPPORT / DONATE PAGE ------------------
+# ------------------ SUPPORT ------------------
 
 @app.route("/support", methods=["GET"])
 def support():
-    """
-    Donation page.
-    Minimum donation: 200 NOK.
-    Donations are handled via Stripe Payment Links.
-    Supporters can donate 200, 400, 600... NOK by adjusting quantity.
-
-    This page can be opened from:
-      - website navbar
-      - Android/iOS app (external browser or webview)
-    """
     trending = get_trending(limit=10)
     return render_template("support.html", trending=trending)
 
 
-
-# ------------------ HOME PAGE ------------------
+# ------------------ HOME ------------------
 
 @app.route("/", methods=["GET", "POST"])
 def home():
@@ -776,7 +764,7 @@ def home():
     )
 
 
-# ------------------ TRANSLATOR PAGE ------------------
+# ------------------ TRANSLATE ------------------
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
@@ -846,7 +834,7 @@ def translate():
     )
 
 
-# ------------------ PUBLIC SUBMISSION (WORDS) - MANUAL + FILE ------------------
+# ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
 def submit():
@@ -883,7 +871,7 @@ def submit():
 
             for en, om in pairs:
                 if not en or not om:
-                    msg = "Rejected: Every row must include BOTH English and Oromo (no English-only rows)."
+                    msg = "Rejected: Every row must include BOTH English and Oromo."
                     return render_template("submit.html", msg=msg)
 
             inserted = 0
@@ -932,7 +920,7 @@ def submit():
     return render_template("submit.html", msg=msg)
 
 
-# ------------------ PUBLIC SUBMISSION (PHRASES) + FILE UPLOAD ------------------
+# ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
 
 @app.route("/submit_phrase", methods=["GET", "POST"])
 def submit_phrase():
@@ -969,7 +957,7 @@ def submit_phrase():
 
             for en, om in pairs:
                 if not en or not om:
-                    msg = "Rejected: Every row must include BOTH English and Oromo (no English-only rows)."
+                    msg = "Rejected: Every row must include BOTH English and Oromo."
                     return render_template("submit_phrase.html", msg=msg)
 
             inserted = 0
@@ -1018,7 +1006,7 @@ def submit_phrase():
     return render_template("submit_phrase.html", msg=msg)
 
 
-# ------------------ (LEGACY) COMMUNITY FILE SUBMISSION ------------------
+# ------------------ LEGACY: COMMUNITY FILE SUBMISSION ------------------
 
 @app.route("/submit_file", methods=["GET", "POST"])
 def submit_file():
@@ -1052,7 +1040,7 @@ def submit_file():
 
         for en, om in pairs:
             if not en or not om:
-                msg = "Rejected: Every row must include BOTH English and Oromo (community cannot submit English-only)."
+                msg = "Rejected: Every row must include BOTH English and Oromo."
                 return render_template("submit_file.html", msg=msg)
 
         inserted = 0
@@ -1254,7 +1242,7 @@ def dashboard():
     )
 
 
-# ------------------ ADMIN MANAGEMENT: ADMINS + EDIT/DELETE WORDS/PHRASES ------------------
+# ------------------ ADMIN MANAGEMENT ------------------
 
 @app.route("/admin/manage", methods=["GET", "POST"])
 def admin_manage():
@@ -1266,7 +1254,6 @@ def admin_manage():
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
 
-        # --- Admin actions ---
         if action == "add_admin":
             email = (request.form.get("email") or "").strip().lower()
             password = request.form.get("password") or ""
@@ -1300,7 +1287,6 @@ def admin_manage():
                     conn.close()
                     msg = "Admin deleted."
 
-        # --- Words actions ---
         elif action == "update_word":
             wid_raw = (request.form.get("word_id") or "").strip()
             en = normalize_text(request.form.get("english") or "")
@@ -1346,7 +1332,6 @@ def admin_manage():
                 conn.close()
                 msg = "Word deleted permanently."
 
-        # --- Phrases actions ---
         elif action == "update_phrase":
             pid_raw = (request.form.get("phrase_id") or "").strip()
             en = normalize_text(request.form.get("english") or "")
@@ -1455,7 +1440,7 @@ def admin_manage():
     )
 
 
-# ------------------ CHANGE PASSWORD (MY ACCOUNT) ------------------
+# ------------------ CHANGE PASSWORD ------------------
 
 @app.route("/admin/change_password", methods=["GET", "POST"])
 def admin_change_password():
@@ -1494,7 +1479,7 @@ def admin_change_password():
     return render_template("admin_change_password.html", msg=msg)
 
 
-# ------------------ ADMIN IMPORT (ENGLISH-ONLY -> GOOGLE -> OROMO) ------------------
+# ------------------ ADMIN IMPORT (ENGLISH-ONLY -> GOOGLE) ------------------
 
 def _words_exist(conn, english_word: str) -> bool:
     c = conn.cursor()

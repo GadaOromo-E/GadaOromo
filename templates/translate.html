@@ -1,12 +1,64 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Translator | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- ✅ PWA -->
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+
+  <!-- ✅ iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
 </head>
 <body>
+
+<!-- OPTIONAL: tiny splash overlay (native feel) -->
+<div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
+  <div style="text-align:center;">
+    <div style="font-size:42px;">📘</div>
+    <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
+    <div class="muted" style="margin-top:6px;">Loading…</div>
+  </div>
+</div>
+<script>
+  window.addEventListener("load", () => {
+    const el = document.getElementById("bootSplash");
+    if (el) el.style.display = "none";
+  });
+</script>
+
+<!-- PWA Update Bar -->
+<div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div>
+      <b>Update available</b>
+      <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn primary" type="button" data-reload>Reload</button>
+      <button class="btn" type="button" data-close>Later</button>
+    </div>
+  </div>
+</div>
+
+<!-- iOS Install Help -->
+<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
+  <b>Install on iPhone</b>
+  <div class="muted" style="margin-top:6px; line-height:1.5;">
+    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
+  <span data-msg></span>
+</div>
 
 <div class="container">
 
@@ -21,32 +73,18 @@
           {% else %}Detected/Selected: Auto{% endif %}
         </div>
 
-        <!-- Simple nav (works on web + inside apps) -->
-        <div class="small-actions" style="margin-top:10px;">
+        <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
           <a class="btn" href="/">🏠 Home</a>
           <a class="btn primary" href="/translate">🔁 Translate</a>
           <a class="btn" href="/learn">📚 Learn</a>
-          <a class="btn danger" href="/support">❤️ Donate</a>
+          <a class="btn danger" href="/support">❤️ Support</a>
+
+          <!-- ✅ Install button -->
+          <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
         </div>
       </div>
     </div>
   </div>
-
-  <!-- ===== Donation info banner (NOK) ===== -->
-  <section class="card" style="margin-top:14px;">
-    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
-      <div>
-        <h2 style="margin-top:0;">❤️ Support this free translator</h2>
-        <div class="subtle">
-          Minimum donation: <b>{{ SUPPORT_MIN_NOK }} NOK</b>.
-          Supporters can donate <b>{{ SUPPORT_MIN_NOK }}, {{ SUPPORT_MIN_NOK * 2 }}, {{ SUPPORT_MIN_NOK * 3 }}… NOK</b> by increasing quantity in Stripe.
-        </div>
-      </div>
-      <div class="small-actions">
-        <a class="btn danger" href="/support">Donate</a>
-      </div>
-    </div>
-  </section>
 
   <div class="card">
     <form method="POST" id="translateForm">
@@ -89,27 +127,28 @@
     {% endif %}
 
     <!-- ===== Community Audio (approved) ===== -->
-    {% if audio %}
+    {% if audio and (audio.oromo or audio.english) %}
       <div style="margin-top:14px;">
         <h2>🎧 Community Pronunciation</h2>
 
         {% if audio.oromo %}
           <div class="subtle">Oromo audio</div>
-          <audio controls>
-            <source src="{{ url_for('static', filename=audio.oromo) }}">
+          <audio controls style="width:100%;">
+            <source src="{{ audio.oromo }}">
           </audio>
         {% endif %}
 
         {% if audio.english %}
           <div class="subtle" style="margin-top:10px;">English audio</div>
-          <audio controls>
-            <source src="{{ url_for('static', filename=audio.english) }}">
+          <audio controls style="width:100%;">
+            <source src="{{ audio.english }}">
           </audio>
         {% endif %}
-
-        {% if not audio.oromo and not audio.english %}
-          <div class="muted">No approved audio yet.</div>
-        {% endif %}
+      </div>
+    {% elif audio %}
+      <div style="margin-top:14px;">
+        <h2>🎧 Community Pronunciation</h2>
+        <div class="muted">No approved audio yet.</div>
       </div>
     {% endif %}
 
@@ -121,7 +160,6 @@
           Record Oromo pronunciation here. It becomes public after admin approval.
         </div>
 
-        {# Hide mic if Oromo audio already approved for this matched entry #}
         {% set is_word = (matched.type == "word") %}
         {% set is_phrase = (matched.type == "phrase") %}
 
@@ -307,12 +345,15 @@ function startVoice(){
   recognition.onerror=function(e){ alert("Voice input error: " + e.error); };
   recognition.start();
 }
-
-/* (rest of your original JS continues unchanged...) */
 </script>
+
+<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
 
 </body>
 </html>
+
+
 
 
 

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Offline | {{ APP_NAME }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <style>
+    .offline-box {
+      text-align: center;
+      padding: 30px 20px;
+    }
+    .offline-icon {
+      font-size: 64px;
+      margin-bottom: 15px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <section class="card offline-box">
+    <div class="offline-icon">📡</div>
+    <h2>You are offline</h2>
+
+    <p class="subtle">
+      No internet connection detected.
+    </p>
+
+    <p class="muted" style="margin-top:10px;">
+      You can still use parts of the app that were opened before.
+      Once you reconnect, everything will sync automatically.
+    </p>
+
+    <div class="small-actions" style="margin-top:20px;">
+      <a href="/" class="btn primary">🏠 Go Home</a>
+      <button class="btn" onclick="location.reload()">🔄 Try again</button>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary</p>
+  </footer>
+</div>
+
+</body>
+</html>

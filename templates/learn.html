@@ -4,9 +4,64 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Learn | {{ APP_NAME }}</title>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- ✅ PWA -->
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+
+  <!-- ✅ iOS -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+
+  <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
 </head>
 <body>
+
+<!-- OPTIONAL: tiny splash overlay (native feel) -->
+<div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
+  <div style="text-align:center;">
+    <div style="font-size:42px;">📘</div>
+    <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
+    <div class="muted" style="margin-top:6px;">Loading…</div>
+  </div>
+</div>
+<script>
+  window.addEventListener("load", () => {
+    const el = document.getElementById("bootSplash");
+    if (el) el.style.display = "none";
+  });
+</script>
+
+<!-- PWA Update Bar -->
+<div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div>
+      <b>Update available</b>
+      <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn primary" type="button" data-reload>Reload</button>
+      <button class="btn" type="button" data-close>Later</button>
+    </div>
+  </div>
+</div>
+
+<!-- iOS Install Help -->
+<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
+  <b>Install on iPhone</b>
+  <div class="muted" style="margin-top:6px; line-height:1.5;">
+    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
+  <span data-msg></span>
+</div>
 
 <div class="container">
 
@@ -16,11 +71,14 @@
         <h1 style="margin:0;">{{ APP_NAME }}</h1>
         <p class="tagline">Learn Afaan Oromo ↔ English</p>
 
-        <div class="small-actions" style="margin-top:10px;">
+        <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
           <a class="btn" href="/">🏠 Home</a>
           <a class="btn" href="/translate">🌍 Translate</a>
           <a class="btn primary" href="/learn">📚 Learn</a>
           <a class="btn danger" href="/support">❤️ Donate</a>
+
+          <!-- ✅ Install button -->
+          <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
         </div>
       </div>
     </div>
@@ -53,12 +111,11 @@
 
     <h2>Quick Practice Cards</h2>
     <div class="subtle">
-      Tap a card to open it in the Translator (then you can listen, speak, and record community audio).
+      Tap a card to open it in the Translator.
     </div>
 
     {% if words and words|length > 0 %}
       <div class="chips" style="margin-top:12px;">
-        {# show a small subset for performance #}
         {% for w in words[:40] %}
           <span class="chip" onclick="practiceWord('{{ w[1]|e }}', '{{ w[2]|e }}')">
             {{ w[1] }} <span class="muted">→</span> {{ w[2] }}
@@ -74,8 +131,12 @@
       <div id="tip" class="muted" style="margin-top:10px;"></div>
     {% else %}
       <p class="muted" style="margin-top:10px;">
-        No approved words yet. Add words from the community submissions page.
+        No approved words loaded here yet. (Optional) Update /learn route to pass words to this page.
       </p>
+      <div class="small-actions" style="margin-top:10px;">
+        <a class="btn" href="/translate">Open Translator</a>
+        <a class="btn" href="/submit">Submit Word</a>
+      </div>
     {% endif %}
   </section>
 
@@ -91,6 +152,18 @@
     </div>
   </section>
 
+  {% if trending %}
+    <section class="card">
+      <h2>🔥 Trending searches</h2>
+      <div class="chips" style="margin-top:10px;">
+        {% for row in trending %}
+          <span class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</span>
+        {% endfor %}
+      </div>
+      <div class="subtle" style="margin-top:8px;">Tap a word to practice it in Translator.</div>
+    </section>
+  {% endif %}
+
   <footer class="footer">
     <p>© 2026 GadaOromo — Open community dictionary</p>
   </footer>
@@ -100,23 +173,30 @@
 <script>
 function openTranslator(){
   const dir = document.getElementById("learnDirection").value || "om_en";
-  // Open translator with selected direction (user will type there)
   window.location.href = "/translate?direction=" + encodeURIComponent(dir);
 }
-
+function openTranslatorWithText(text){
+  const dir = document.getElementById("learnDirection").value || "om_en";
+  const url = "/translate?direction=" + encodeURIComponent(dir) + "&text=" + encodeURIComponent(text);
+  window.location.href = url;
+}
 function practiceWord(en, om){
   const dir = document.getElementById("learnDirection").value || "om_en";
-  // Put the selected side into translator input
   const text = (dir === "om_en") ? om : en;
   const url = "/translate?direction=" + encodeURIComponent(dir) + "&text=" + encodeURIComponent(text);
   window.location.href = url;
 }
-
 function shuffleTip(){
   const tip = document.getElementById("tip");
   tip.textContent = "Tip: Reload the page to see a different set of practice cards.";
 }
 </script>
 
+<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+
 </body>
 </html>
+
+
+
