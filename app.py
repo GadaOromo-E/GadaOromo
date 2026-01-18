@@ -15,16 +15,16 @@ Gada Oromo Dictionary - Flask + SQLite + PWA-ready
 - Admin bulk import (TXT/CSV/XLSX English-only) -> Google Translate -> pending
 - Community audio upload + admin approve/reject
 - In-page mic recording posts to: POST /api/submit-audio
-- NEW: /learn, /support
-- NEW: PWA support:
+- /learn, /support
+- PWA support:
     - /manifest.webmanifest
     - /service-worker.js (root scope)
     - /offline
-- FIX: audio serving works both on Render disk and local
-
-NOTES:
-- Mic recording requires HTTPS (or localhost).
-- Allowed audio: mp3, wav, m4a, webm, ogg
+- SEO / Google:
+    - /robots.txt
+    - /sitemap.xml
+    - ProxyFix for Render (correct https URLs)
+    - google verification file route
 """
 
 import os
@@ -35,6 +35,7 @@ import csv
 from uuid import uuid4
 from difflib import get_close_matches
 from io import StringIO, BytesIO
+from datetime import datetime
 
 import requests
 from flask import (
@@ -43,6 +44,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 from openpyxl import load_workbook
 
 
@@ -50,6 +52,10 @@ from openpyxl import load_workbook
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
+
+# ✅ IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
+# (needed for correct absolute URLs, sitemap, redirects, etc.)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
@@ -62,7 +68,9 @@ app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
 APP_NAME = os.environ.get("APP_NAME", "Gada Oromo Dictionary")
 
-WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip()
+# If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
+# If not set, we auto-detect from request.url_root.
+WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 API_URL = os.environ.get("API_URL", "").strip()
 
 SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
@@ -70,6 +78,7 @@ SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
 DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
+
 
 def _safe_url(u: str) -> str:
     if not u:
@@ -79,7 +88,24 @@ def _safe_url(u: str) -> str:
         return u
     return ""
 
+
 DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
+
+
+def _site_base_url() -> str:
+    """
+    Base URL for sitemap/SEO. Priority:
+    1) WEBSITE_URL env var (recommended)
+    2) request.url_root (auto from current request; ProxyFix ensures correct https on Render)
+    """
+    if WEBSITE_URL:
+        return WEBSITE_URL.rstrip("/")
+    try:
+        root = (request.url_root or "").rstrip("/")
+        return root
+    except Exception:
+        return "https://gadaoromo.onrender.com"
+
 
 @app.context_processor
 def inject_globals():
@@ -91,6 +117,7 @@ def inject_globals():
         API_URL=API_URL,
     )
 
+
 @app.route("/debug-vars")
 def debug_vars():
     return f"SUPPORT_MIN_NOK={SUPPORT_MIN_NOK}, donate_url_set={bool(DONATE_URLS.get('custom'))}"
@@ -100,6 +127,68 @@ def debug_vars():
 def add_security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    # Helpful default cache policy for HTML
+    if resp.mimetype == "text/html":
+        resp.headers.setdefault("Cache-Control", "no-cache")
+    return resp
+
+
+# ------------------ SEO: ROBOTS + SITEMAP ------------------
+
+@app.route("/robots.txt")
+def robots_txt():
+    """
+    Allow indexing. Also points Google to sitemap.
+    """
+    base = _site_base_url()
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "",
+        f"Sitemap: {base}/sitemap.xml",
+        "",
+    ]
+    resp = make_response("\n".join(lines))
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    """
+    Basic sitemap for main pages.
+    If later you add word pages, we can expand it.
+    """
+    base = _site_base_url()
+    urls = [
+        ("/", "daily", "1.0"),
+        ("/translate", "daily", "0.9"),
+        ("/learn", "weekly", "0.6"),
+        ("/support", "monthly", "0.3"),
+        ("/submit", "weekly", "0.5"),
+        ("/submit_phrase", "weekly", "0.5"),
+    ]
+
+    now = datetime.utcnow().strftime("%Y-%m-%d")
+
+    xml_parts = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    for path, freq, prio in urls:
+        loc = f"{base}{path}"
+        xml_parts.append("<url>")
+        xml_parts.append(f"<loc>{loc}</loc>")
+        xml_parts.append(f"<lastmod>{now}</lastmod>")
+        xml_parts.append(f"<changefreq>{freq}</changefreq>")
+        xml_parts.append(f"<priority>{prio}</priority>")
+        xml_parts.append("</url>")
+    xml_parts.append("</urlset>")
+
+    resp = make_response("\n".join(xml_parts))
+    resp.headers["Content-Type"] = "application/xml; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
 
@@ -124,21 +213,39 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 @app.route("/manifest.webmanifest")
 def manifest():
-    return send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.webmanifest", mimetype="application/manifest+json")
+    resp = make_response(
+        send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.webmanifest")
+    )
+    resp.headers["Content-Type"] = "application/manifest+json"
+    # OK to cache a bit (manifest rarely changes), but not forever
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
+
 
 @app.route("/service-worker.js")
 def service_worker():
     resp = make_response(send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js"))
-    # Allow SW scope to be the entire site (so it works on /, /translate, etc.)
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
-    # Don't cache SW too aggressively
+    # IMPORTANT: SW updates should not be cached
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
 
 @app.route("/offline")
 def offline():
     return render_template("offline.html")
+
+
+# ------------------ GOOGLE VERIFICATION ------------------
+# You verified using HTML file method. Keep this route forever.
+
+@app.route("/googledba38dd4b1b65cfb.html")
+def google_verification():
+    resp = make_response("google-site-verification: googledba38dd4b1b65cfb.html")
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=3600"
+    return resp
 
 
 # ------------------ PUBLIC UPLOADS ROUTE (AUDIO) ------------------
@@ -174,9 +281,11 @@ def normalize_text(text: str) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
+
 def normalize_tokens(text: str):
     t = normalize_text(text)
     return t.split() if t else []
+
 
 def dedup_preserve_order(items):
     seen = set()
@@ -209,6 +318,7 @@ def parse_csv_pairs(file_bytes: bytes):
             seen.add(en)
             final.append((en, om))
     return final
+
 
 def parse_xlsx_pairs(file_bytes: bytes):
     wb = load_workbook(BytesIO(file_bytes))
@@ -250,6 +360,7 @@ def parse_txt_english(file_bytes: bytes):
             words.append(w)
     return dedup_preserve_order(words)
 
+
 def parse_csv_english(file_bytes: bytes):
     text = file_bytes.decode("utf-8", errors="replace")
     f = StringIO(text)
@@ -274,6 +385,7 @@ def parse_csv_english(file_bytes: bytes):
             words.append(w)
 
     return dedup_preserve_order(words)
+
 
 def parse_xlsx_english(file_bytes: bytes):
     wb = load_workbook(BytesIO(file_bytes))
@@ -300,6 +412,7 @@ def parse_xlsx_english(file_bytes: bytes):
 def require_admin() -> bool:
     return "admin" in session
 
+
 def _admin_id() -> int:
     try:
         return int(session.get("admin"))
@@ -311,6 +424,7 @@ def _admin_id() -> int:
 
 def _get_google_key() -> str:
     return os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+
 
 def google_translate_batch_v2(texts, target: str, source: str = "en"):
     api_key = _get_google_key()
@@ -351,6 +465,7 @@ def allowed_audio(filename: str) -> bool:
     ext = filename.rsplit(".", 1)[1].lower()
     return ext in ALLOWED_AUDIO
 
+
 def _public_audio_url(file_path: str) -> str:
     """
     DB stores file_path like: 'uploads/xyz.webm'
@@ -363,8 +478,8 @@ def _public_audio_url(file_path: str) -> str:
         return "/" + fp
     if fp.startswith("/uploads/"):
         return fp
-    # fallback (shouldn't happen)
     return "/uploads/" + os.path.basename(fp)
+
 
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
     conn = sqlite3.connect(DB_NAME)
@@ -384,6 +499,7 @@ def get_approved_audio(entry_type: str, entry_id: int) -> dict:
             out[lang] = _public_audio_url(path)
     return out
 
+
 def get_approved_oromo_audio_ids(entry_type: str) -> set:
     if entry_type not in ("word", "phrase"):
         return set()
@@ -401,12 +517,14 @@ def get_approved_oromo_audio_ids(entry_type: str) -> set:
     conn.close()
     return ids
 
+
 def _audio_abs_path(file_path: str) -> str:
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
         return ""
     name = fp.split("/")[-1]
     return os.path.join(UPLOAD_FOLDER, name)
+
 
 def delete_audio_for_entry(entry_type: str, entry_id: int):
     conn = sqlite3.connect(DB_NAME)
@@ -494,6 +612,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 init_db()
 
 
@@ -532,6 +651,7 @@ def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int)
 
     conn.commit()
     conn.close()
+
 
 def get_trending(limit=20):
     conn = sqlite3.connect(DB_NAME)
@@ -710,11 +830,6 @@ def learn():
 def support():
     trending = get_trending(limit=10)
     return render_template("support.html", trending=trending)
-
-@app.route("/googledba38dd4b1b65cfb.html")
-def google_verification():
-    return "google-site-verification: googledba38dd4b1b65cfb.html"
-
 
 
 # ------------------ HOME ------------------
@@ -1491,6 +1606,7 @@ def _words_exist(conn, english_word: str) -> bool:
     c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (english_word, english_word))
     return c.fetchone() is not None
 
+
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
     if not require_admin():
@@ -1632,6 +1748,7 @@ def approve(word_id):
     conn.close()
     return redirect("/dashboard")
 
+
 @app.route("/reject/<int:word_id>")
 def reject(word_id):
     if not require_admin():
@@ -1659,6 +1776,7 @@ def approve_phrase(phrase_id):
     conn.close()
     return redirect("/dashboard")
 
+
 @app.route("/reject_phrase/<int:phrase_id>")
 def reject_phrase(phrase_id):
     if not require_admin():
@@ -1685,6 +1803,7 @@ def approve_audio(audio_id):
     conn.commit()
     conn.close()
     return redirect("/dashboard")
+
 
 @app.route("/reject_audio/<int:audio_id>")
 def reject_audio(audio_id):
