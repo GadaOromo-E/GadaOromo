@@ -711,6 +711,11 @@ def support():
     trending = get_trending(limit=10)
     return render_template("support.html", trending=trending)
 
+@app.route("/googledba38dd4b1b65cfb.html")
+def google_verification():
+    return "google-site-verification: googledba38dd4b1b65cfb.html"
+
+
 
 # ------------------ HOME ------------------
 
