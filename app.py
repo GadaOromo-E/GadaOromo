@@ -285,10 +285,18 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 # ------------------ TEXT NORMALIZATION ------------------
 
 def normalize_text(text: str) -> str:
-    t = (text or "").lower().strip()
-    t = re.sub(r"[^\w\s]", " ", t)   # ❌ removes apostrophes
+    t = (text or "").strip().lower()
+
+    # Convert curly apostrophes to normal apostrophe
+    t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
+
+    # Keep letters/numbers/underscore/space + apostrophe
+    t = re.sub(r"[^\w\s']+", " ", t)
+
+    # Clean extra spaces but DO NOT break apostrophe words
     t = re.sub(r"\s+", " ", t).strip()
     return t
+
 
 
 def normalize_tokens(text: str):
