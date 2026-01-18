@@ -1,0 +1,82 @@
+/* static/pwa-ui.css */
+
+/* Smooth native-like page transitions */
+html { scroll-behavior: smooth; }
+body {
+  opacity: 1;
+  transition: opacity 140ms ease;
+}
+body.page-fade-out { opacity: 0; }
+
+/* Toast (haptic-style) */
+.pwa-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: min(92vw, 520px);
+  background: rgba(20, 20, 20, 0.92);
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35);
+  font-size: 14px;
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  backdrop-filter: blur(8px);
+}
+.pwa-toast button {
+  border: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.pwa-toast .primary { font-weight: 600; }
+
+/* Small install chip/button (you can place it anywhere) */
+.pwa-install-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Splash overlay for fast "native" feel (only when launched as PWA) */
+.pwa-splash {
+  position: fixed;
+  inset: 0;
+  background: #0b5cff;
+  z-index: 99998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pwa-splash-inner {
+  text-align: center;
+  color: #fff;
+}
+.pwa-splash-logo {
+  width: 84px;
+  height: 84px;
+  border-radius: 22px;
+  background: rgba(255,255,255,0.16);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.pwa-splash-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+.pwa-splash-sub {
+  opacity: 0.9;
+  font-size: 13px;
+  margin-top: 6px;
+}
