@@ -236,6 +236,15 @@ def service_worker():
 def offline():
     return render_template("offline.html")
 
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(
+        os.path.join(app.root_path, "static", "icons"),
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon"
+    )
+
+
 
 # ------------------ GOOGLE VERIFICATION ------------------
 # You verified using HTML file method. Keep this route forever.
