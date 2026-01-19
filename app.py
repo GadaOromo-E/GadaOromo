@@ -1204,47 +1204,79 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ API AUDIO SUBMISSION ------------------
+# ------------------ API AUDIO SUBMISSION (OROMO ONLY) ------------------
 
 @app.route("/api/submit-audio", methods=["POST"])
 def api_submit_audio():
+    """
+    Receives audio from in-page recorder (MediaRecorder).
+    multipart/form-data:
+      entry_type: word|phrase
+      entry_id: int
+      lang: oromo   (ONLY oromo allowed)
+      audio: file
+    """
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
     lang = (request.form.get("lang") or "oromo").strip().lower()
 
+    # Validate basics
     if entry_type not in ("word", "phrase"):
         return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
-    if lang not in ("oromo", "english"):
-        return jsonify({"ok": False, "error": "Invalid lang"}), 400
     if not entry_id_raw.isdigit():
         return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
 
+    # ✅ Oromo ONLY
+    if lang != "oromo":
+        return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
+
     entry_id = int(entry_id_raw)
 
+    # Validate file
     f = request.files.get("audio")
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "Missing audio file"}), 400
-    if not allowed_audio(f.filename):
+
+    # Ensure extension exists
+    original = secure_filename(f.filename)
+    if "." not in original:
+        return jsonify({"ok": False, "error": "Audio file must have an extension (webm/mp3/wav/m4a/ogg)."}), 400
+
+    if not allowed_audio(original):
         return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
 
+    ext = original.rsplit(".", 1)[1].lower()
+
+    # Entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+
     if entry_type == "word":
         c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
         c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+
     row = c.fetchone()
     if not row:
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    original = secure_filename(f.filename)
-    ext = original.rsplit(".", 1)[1].lower()
+    # ✅ Prevent duplicate pending/approved submissions (same entry/lang)
+    c.execute("""
+        SELECT 1 FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ('pending','approved')
+        LIMIT 1
+    """, (entry_type, entry_id, lang))
+    if c.fetchone():
+        conn.close()
+        return jsonify({"ok": False, "error": "Audio already submitted (pending or approved)."}), 409
 
+    # Save file
     new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_name)
     f.save(save_path)
 
+    # Store relative path for static serving (your app expects this)
     rel_path = f"uploads/{new_name}"
 
     c.execute("""
@@ -1254,38 +1286,65 @@ def api_submit_audio():
     conn.commit()
     conn.close()
 
-    return jsonify({"ok": True, "message": "Audio submitted for admin approval."})
+    return jsonify({"ok": True, "message": "Oromo audio submitted for admin approval."})
 
 
-# ------------------ COMMUNITY AUDIO UPLOAD ------------------
+# ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
 
 @app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
 def upload_audio(entry_type, entry_id, lang):
+    """
+    Manual file upload page.
+    ✅ Oromo ONLY (English audio not accepted)
+    """
+    entry_type = (entry_type or "").strip().lower()
+    lang = (lang or "").strip().lower()
+
     if entry_type not in ("word", "phrase"):
         return "Invalid entry type", 400
-    if lang not in ("oromo", "english"):
-        return "Invalid language", 400
 
+    # ✅ Oromo ONLY
+    if lang != "oromo":
+        return "Only Oromo audio is allowed.", 400
+
+    # Entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+
     if entry_type == "word":
         c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
         c.execute("SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+
     row = c.fetchone()
+    if not row:
+        conn.close()
+        return "Entry not found or not approved.", 404
+
+    # ✅ Prevent duplicate pending/approved submissions
+    c.execute("""
+        SELECT 1 FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ('pending','approved')
+        LIMIT 1
+    """, (entry_type, entry_id, lang))
+    already_exists = c.fetchone() is not None
     conn.close()
 
-    if not row:
-        return "Entry not found or not approved.", 404
+    if already_exists:
+        return "Audio already submitted (pending or approved).", 409
 
     if request.method == "POST":
         f = request.files.get("audio")
         if not f or not f.filename:
             return "Please choose an audio file.", 400
-        if not allowed_audio(f.filename):
-            return "Allowed audio: mp3, wav, m4a, webm, ogg", 400
 
         original = secure_filename(f.filename)
+        if "." not in original:
+            return "Audio file must have an extension (webm/mp3/wav/m4a/ogg).", 400
+
+        if not allowed_audio(original):
+            return "Allowed audio: mp3, wav, m4a, webm, ogg", 400
+
         ext = original.rsplit(".", 1)[1].lower()
 
         new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
@@ -1303,7 +1362,7 @@ def upload_audio(entry_type, entry_id, lang):
         conn.commit()
         conn.close()
 
-        return "Thanks! Audio submitted for admin approval."
+        return "Thanks! Oromo audio submitted for admin approval."
 
     return render_template(
         "upload_audio.html",
@@ -1313,6 +1372,7 @@ def upload_audio(entry_type, entry_id, lang):
         english=row[1],
         oromo=row[2]
     )
+
 
 
 # ------------------ ADMIN LOGIN ------------------

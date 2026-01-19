@@ -3,17 +3,16 @@
    - Audio record (🎙) records + previews + uploads to POST /api/submit-audio
    - Oromo ONLY (record/upload)
    - Works on BOTH index.html and translate.html
+   - SAFE: only records when the full recorder UI exists near the clicked button
 */
 
 (function () {
-  // ========= Status helpers =========
+  // ---------- Status helpers ----------
   function findStatusEl(ctx) {
-    // translate.html uses: data-status-for="word_12" or "phrase_99"
     const key1 = `${ctx.entryType}_${ctx.entryId}`;
     let el = document.querySelector(`[data-status-for="${key1}"]`);
     if (el) return el;
 
-    // index.html list uses: data-status-for="{{ w[0] }}" (numeric id)
     el = document.querySelector(`[data-status-for="${ctx.entryId}"]`);
     if (el) return el;
 
@@ -25,7 +24,7 @@
     if (el) el.textContent = msg || "";
   }
 
-  // ========= Voice Search (home only) =========
+  // ---------- Voice Search (home only) ----------
   window.startVoiceSearch = function startVoiceSearch() {
     const input = document.getElementById("searchWord");
     if (!input) return alert("Search input not found.");
@@ -60,27 +59,11 @@
     }
   };
 
-  // ========= Audio Recording (Oromo only) =========
+  // ---------- Audio Recording (Oromo only) ----------
   let stream = null;
   let recorder = null;
   let chunks = [];
   let currentCtx = null;
-
-  function stopActiveRecordingSilently() {
-    try {
-      if (recorder && recorder.state !== "inactive") recorder.stop();
-    } catch (_) {}
-
-    try {
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
-        stream = null;
-      }
-    } catch (_) {}
-
-    recorder = null;
-    chunks = [];
-  }
 
   function pickMimeType() {
     if (!window.MediaRecorder) return { mime: "", ext: "webm" };
@@ -93,25 +76,12 @@
     return { mime: "", ext: "webm" };
   }
 
-  function isSecureContextForMic() {
-    // mic generally requires https or localhost
-    return window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
-  }
-
   async function startRecording(ctx) {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone not supported in this browser.");
     }
-    if (!window.MediaRecorder) {
-      throw new Error("Recording not supported (MediaRecorder missing). Try Chrome/Edge.");
-    }
-    if (!isSecureContextForMic()) {
-      throw new Error("Microphone requires HTTPS (or localhost).");
-    }
 
-    // stop any previous recording safely
-    stopActiveRecordingSilently();
-
+    // https (or localhost) required in most browsers
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
     const { mime, ext } = pickMimeType();
@@ -125,7 +95,7 @@
     };
 
     recorder.onstop = () => {
-      const type = recorder?.mimeType || (ctx.ext === "ogg" ? "audio/ogg" : "audio/webm");
+      const type = recorder.mimeType || (ctx.ext === "ogg" ? "audio/ogg" : "audio/webm");
       const blob = new Blob(chunks, { type });
       ctx.blob = blob;
 
@@ -143,7 +113,7 @@
     recorder.start(200);
   }
 
-  function stopRecording(ctx) {
+  function stopRecording() {
     try {
       if (recorder && recorder.state !== "inactive") recorder.stop();
     } catch (_) {}
@@ -154,12 +124,6 @@
         stream = null;
       }
     } catch (_) {}
-
-    // UI after stop
-    if (ctx) {
-      ctx.stopBtn.style.display = "none";
-      ctx.recordBtn.style.display = "inline-block";
-    }
   }
 
   async function upload(ctx) {
@@ -168,7 +132,6 @@
       return;
     }
 
-    // Oromo ONLY
     if ((ctx.lang || "").toLowerCase() !== "oromo") {
       setStatus(ctx, "❌ Only Oromo audio is allowed.");
       return;
@@ -205,49 +168,33 @@
     ctx.submitBtn.style.display = "none";
   }
 
-  // ========= IMPORTANT FIX: scope UI to the clicked record button =========
-  function getScopedRoot(btn) {
-    // try nearest block that contains the whole recording UI
-    return (
-      btn.closest(".result-box") ||
-      btn.closest(".word-row") ||
-      btn.closest(".card") ||
-      btn.parentElement ||
-      document
-    );
-  }
-
+  // IMPORTANT FIX:
+  // Only enable recording if the clicked button has the FULL recorder UI in the same "recording block".
+  // We mark those blocks with data-audio-ui="1" in templates.
   function buildCtxFromRecordBtn(btn) {
     const entryType = (btn.getAttribute("data-entry-type") || "").trim();
     const entryId = Number(btn.getAttribute("data-entry-id"));
     const lang = (btn.getAttribute("data-lang") || "oromo").trim().toLowerCase();
 
-    if (!entryType || !entryId) {
-      alert("Recording button is missing entry info.");
-      return null;
-    }
-
-    // Oromo ONLY
     if (lang !== "oromo") {
       alert("Only Oromo audio is allowed.");
       return null;
     }
 
-    const root = getScopedRoot(btn);
+    const block = btn.closest('[data-audio-ui="1"]');
+    if (!block) {
+      // This is the Approved Words list mic (no UI available). Tell user what to do.
+      alert("To record Oromo audio, first click Search for this word (so the recorder appears), then record from there.");
+      return null;
+    }
 
-    // find elements ONLY near this button (not first one on page)
-    const stopBtn = root.querySelector(":scope [data-stop-btn]");
-    const submitBtn = root.querySelector(":scope [data-submit-btn]");
-    const rerecordBtn = root.querySelector(":scope [data-rerecord-btn]");
-    const previewAudio = root.querySelector(":scope [data-preview-audio]");
+    const stopBtn = block.querySelector("[data-stop-btn]");
+    const submitBtn = block.querySelector("[data-submit-btn]");
+    const rerecordBtn = block.querySelector("[data-rerecord-btn]");
+    const previewAudio = block.querySelector("[data-preview-audio]");
 
-    // Some places (word list) only have mic button + status. That’s OK.
-    // If UI elements are missing, we show a clear error.
     if (!stopBtn || !submitBtn || !rerecordBtn || !previewAudio) {
-      alert(
-        "Recording UI elements not found near this mic button.\n\n" +
-        "Fix: ensure each mic button has its Stop + Preview + Submit + Re-record elements in the same block."
-      );
+      alert("Recorder UI is incomplete. Please refresh the page.");
       return null;
     }
 
@@ -266,19 +213,10 @@
   }
 
   function wire() {
-    // Record
     document.querySelectorAll("[data-record-btn]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const ctx = buildCtxFromRecordBtn(btn);
         if (!ctx) return;
-
-        // close previous session UI if any
-        if (currentCtx && currentCtx !== ctx) {
-          try {
-            currentCtx.stopBtn.style.display = "none";
-            currentCtx.recordBtn.style.display = "inline-block";
-          } catch (_) {}
-        }
 
         currentCtx = ctx;
 
@@ -287,46 +225,39 @@
         ctx.submitBtn.style.display = "none";
         ctx.rerecordBtn.style.display = "none";
         ctx.previewAudio.style.display = "none";
-        setStatus(ctx, "🎙 Recording… allow microphone permission");
+
+        setStatus(ctx, "🎙 Recording… (allow microphone permission)");
 
         try {
           await startRecording(ctx);
         } catch (err) {
           console.error(err);
-          const msg = err?.message || "Recording failed";
-          setStatus(ctx, "❌ " + msg);
-
+          setStatus(ctx, "❌ " + (err?.message || "Recording failed"));
           ctx.recordBtn.style.display = "inline-block";
           ctx.stopBtn.style.display = "none";
-          stopActiveRecordingSilently();
         }
       });
     });
 
-    // Stop
     document.querySelectorAll("[data-stop-btn]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (!currentCtx) return;
-        stopRecording(currentCtx);
+        btn.style.display = "none";
+        stopRecording();
+        if (currentCtx?.recordBtn) currentCtx.recordBtn.style.display = "inline-block";
       });
     });
 
-    // Re-record
     document.querySelectorAll("[data-rerecord-btn]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (!currentCtx?.recordBtn) return;
-
         currentCtx.blob = null;
         currentCtx.previewAudio.style.display = "none";
         currentCtx.submitBtn.style.display = "none";
         currentCtx.rerecordBtn.style.display = "none";
-
-        // start again
         currentCtx.recordBtn.click();
       });
     });
 
-    // Submit
     document.querySelectorAll("[data-submit-btn]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!currentCtx) return;
