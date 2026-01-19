@@ -383,3 +383,33 @@ button.danger:hover{
   .trim input[type="number"]{ width: 100%; }
 }
 
+/* =======================================================
+   iPhone set_up additions: native-like transitions + reduce motion
+======================================================= */
+
+a, button, .chip {
+  transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+}
+
+a:active, button:active, .chip:active {
+  transform: scale(0.98);
+  opacity: 0.92;
+}
+
+.card {
+  animation: fadeUp 180ms ease;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+  a, button, .chip, .card {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
