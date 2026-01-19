@@ -66,7 +66,8 @@ DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = os.environ.get("DB_PATH", "").strip() or DEFAULT_DB
 app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
-APP_NAME = os.environ.get("APP_NAME", "Gada Oromo Dictionary")
+APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
+
 
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
 # If not set, we auto-detect from request.url_root.

@@ -17,7 +17,7 @@
     } catch (_) {}
   }
 
-  // ---------- Ensure Toast exists (so no HTML break) ----------
+  // ---------- Ensure Toast exists ----------
   function ensureToastEl() {
     let toast = document.getElementById("pwaToast");
     if (toast) return toast;
@@ -62,8 +62,7 @@
     }, durationMs);
   }
 
-  // ---------- Splash overlay (Android-like) ----------
-  // Only show when installed (standalone) so it feels like a real app.
+  // ---------- Splash overlay ----------
   function showSplashIfStandalone() {
     if (!isStandalone) return;
 
@@ -76,6 +75,8 @@
     splash.style.alignItems = "center";
     splash.style.justifyContent = "center";
 
+    const title = (document.title || "").trim() || "Gadaa Dictionary";
+
     splash.innerHTML = `
       <div style="text-align:center; color:#fff; padding:18px;">
         <div style="
@@ -86,7 +87,7 @@
         ">
           <span style="font-size:34px;">📘</span>
         </div>
-        <div style="font-size:20px; font-weight:700;">${document.title || "Gada"}</div>
+        <div style="font-size:20px; font-weight:700;">${title}</div>
         <div style="opacity:.9; font-size:13px; margin-top:6px;">Loading…</div>
       </div>
     `;
@@ -102,9 +103,7 @@
   }
 
   // ---------- Native-like transitions ----------
-  // Adds a small fade-out on internal navigation
   function enableTransitions() {
-    // ensure body has transition style (safe even if you already set in CSS)
     document.body.style.transition = document.body.style.transition || "opacity 140ms ease";
 
     window.addEventListener("pageshow", () => {
@@ -121,9 +120,8 @@
         const href = a.getAttribute("href") || "";
         if (!href || href.startsWith("#")) return;
         if (a.target === "_blank") return;
-        if (href.startsWith("http")) return; // external
+        if (href.startsWith("http")) return;
 
-        // Same-origin internal
         if (href.startsWith("/")) {
           e.preventDefault();
           vibrate(10);
@@ -136,7 +134,7 @@
     );
   }
 
-  // ---------- Install button (Android/Desktop) ----------
+  // ---------- Install button ----------
   const installBtn = document.getElementById("installBtn");
   let deferredPrompt = null;
 
@@ -144,7 +142,6 @@
     e.preventDefault();
     deferredPrompt = e;
 
-    // show install button if exists + show a toast prompt
     if (installBtn) installBtn.style.display = "inline-block";
     showToast("Install this app for faster access.", 10, 3500);
   });
@@ -169,13 +166,12 @@
     });
   }
 
-  // ---------- iOS install helper (uses your existing element if present) ----------
+  // ---------- iOS install helper ----------
   const iosHelp = document.getElementById("iosInstallHelp");
   if (iosHelp && isIOS && isSafari && !isStandalone) {
     iosHelp.style.display = "block";
   } else if (isIOS && !isStandalone) {
-    // If you don't have iosHelp element, show once as toast (safe)
-    const key = "gada_ios_a2hs_seen";
+    const key = "gadaa_ios_a2hs_seen";
     if (!localStorage.getItem(key)) {
       setTimeout(() => {
         showToast("On iPhone: Share → Add to Home Screen to install.", 0, 6500);
@@ -189,7 +185,6 @@
 
   function showUpdateBar(reg) {
     if (!updateBar) {
-      // fallback toast if update bar not present in HTML
       showToast("Update available — reload to get latest version.", 10, 5000);
       return;
     }
@@ -212,7 +207,6 @@
     if (closeBtn) closeBtn.onclick = () => (updateBar.style.display = "none");
   }
 
-  // IMPORTANT: your app.py serves SW at /service-worker.js (root)
   const SW_URL = "/service-worker.js";
 
   if ("serviceWorker" in navigator) {
@@ -243,10 +237,6 @@
     });
   }
 
-  // ---------- Background sync (optional) ----------
-  // NOTE (important): true offline re-upload of AUDIO FILES is hard because storing blobs
-  // reliably needs IndexedDB + bigger code. This version only notifies user.
-  // If you want full offline audio queue, tell me and I’ll add IndexedDB-based queue.
   window.addEventListener("offline", () => {
     showToast("You are offline. Some uploads may fail.", 10, 3500);
   });
@@ -254,7 +244,6 @@
     showToast("Back online ✅", 10, 2500);
   });
 
-  // ---------- Haptic “native tap” ----------
   document.addEventListener(
     "click",
     (e) => {
@@ -267,7 +256,6 @@
     { passive: true }
   );
 
-  // Boot
   showSplashIfStandalone();
   enableTransitions();
 })();
