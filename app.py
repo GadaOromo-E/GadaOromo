@@ -1296,6 +1296,8 @@ def upload_audio(entry_type, entry_id, lang):
     """
     Manual file upload page.
     ✅ Oromo ONLY (English audio not accepted)
+    ✅ Allow unlimited pending submissions
+    ✅ Block only if an APPROVED Oromo audio already exists for this entry
     """
     entry_type = (entry_type or "").strip().lower()
     lang = (lang or "").strip().lower()
@@ -1307,10 +1309,10 @@ def upload_audio(entry_type, entry_id, lang):
     if lang != "oromo":
         return "Only Oromo audio is allowed.", 400
 
-    # Entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
+    # ✅ Entry must exist + be approved
     if entry_type == "word":
         c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
@@ -1321,49 +1323,54 @@ def upload_audio(entry_type, entry_id, lang):
         conn.close()
         return "Entry not found or not approved.", 404
 
-    # ✅ Prevent duplicate pending/approved submissions
+    # ✅ Block only if APPROVED already exists (pending should NOT block)
     c.execute("""
         SELECT 1 FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ('pending','approved')
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
         LIMIT 1
     """, (entry_type, entry_id, lang))
-    already_exists = c.fetchone() is not None
-    conn.close()
 
-    if already_exists:
-        return "Audio already submitted (pending or approved).", 409
+    already_approved = c.fetchone() is not None
+    if already_approved:
+        conn.close()
+        return "Audio already approved for this entry.", 409
 
+    # ✅ POST: upload as PENDING (allow many)
     if request.method == "POST":
         f = request.files.get("audio")
         if not f or not f.filename:
+            conn.close()
             return "Please choose an audio file.", 400
 
         original = secure_filename(f.filename)
         if "." not in original:
+            conn.close()
             return "Audio file must have an extension (webm/mp3/wav/m4a/ogg).", 400
 
         if not allowed_audio(original):
+            conn.close()
             return "Allowed audio: mp3, wav, m4a, webm, ogg", 400
 
         ext = original.rsplit(".", 1)[1].lower()
-
         new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+
         save_path = os.path.join(UPLOAD_FOLDER, new_name)
         f.save(save_path)
 
         rel_path = f"uploads/{new_name}"
 
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
         c.execute("""
             INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
             VALUES (?, ?, ?, ?, 'pending')
         """, (entry_type, entry_id, lang, rel_path))
+
         conn.commit()
         conn.close()
 
         return "Thanks! Oromo audio submitted for admin approval."
 
+    # ✅ GET: show page
+    conn.close()
     return render_template(
         "upload_audio.html",
         entry_type=entry_type,
