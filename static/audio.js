@@ -1,21 +1,19 @@
 /* static/audio.js
    - Voice search (🎤) fills #searchWord (home page)
    - Audio record (🎙) records + previews + uploads to POST /api/submit-audio
+   - Oromo ONLY (record/upload)
    - Works on BOTH index.html and translate.html
-
-   FIXES:
-   - translate.html: recorder UI not in same div => robust UI lookup
-   - index.html list: 🎙 buttons had no UI => this file injects ONE global recorder UI and uses it
 */
 
 (function () {
+  // ========= Status helpers =========
   function findStatusEl(ctx) {
-    // translate.html uses "type_id"
+    // translate.html uses: data-status-for="word_12" or "phrase_99"
     const key1 = `${ctx.entryType}_${ctx.entryId}`;
     let el = document.querySelector(`[data-status-for="${key1}"]`);
     if (el) return el;
 
-    // index.html often uses just numeric id
+    // index.html list uses: data-status-for="{{ w[0] }}" (numeric id)
     el = document.querySelector(`[data-status-for="${ctx.entryId}"]`);
     if (el) return el;
 
@@ -27,7 +25,7 @@
     if (el) el.textContent = msg || "";
   }
 
-  /* ========== Voice Search (SpeechRecognition) for Home Search ========== */
+  // ========= Voice Search (home only) =========
   window.startVoiceSearch = function startVoiceSearch() {
     const input = document.getElementById("searchWord");
     if (!input) return alert("Search input not found.");
@@ -62,53 +60,72 @@
     }
   };
 
-  /* ========== Audio Recording (MediaRecorder) ========== */
+  // ========= Audio Recording (Oromo only) =========
   let stream = null;
   let recorder = null;
   let chunks = [];
   let currentCtx = null;
 
-  function pickMimeType() {
-    if (!window.MediaRecorder) return "";
-    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return "audio/webm;codecs=opus";
-    if (MediaRecorder.isTypeSupported("audio/webm")) return "audio/webm";
-    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return "audio/ogg;codecs=opus";
-    if (MediaRecorder.isTypeSupported("audio/ogg")) return "audio/ogg";
-    return "";
-  }
+  function stopActiveRecordingSilently() {
+    try {
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+    } catch (_) {}
 
-  function stopStream() {
     try {
       if (stream) {
         stream.getTracks().forEach((t) => t.stop());
         stream = null;
       }
     } catch (_) {}
+
+    recorder = null;
+    chunks = [];
+  }
+
+  function pickMimeType() {
+    if (!window.MediaRecorder) return { mime: "", ext: "webm" };
+
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return { mime: "audio/webm;codecs=opus", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/webm")) return { mime: "audio/webm", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return { mime: "audio/ogg;codecs=opus", ext: "ogg" };
+    if (MediaRecorder.isTypeSupported("audio/ogg")) return { mime: "audio/ogg", ext: "ogg" };
+
+    return { mime: "", ext: "webm" };
+  }
+
+  function isSecureContextForMic() {
+    // mic generally requires https or localhost
+    return window.isSecureContext || location.hostname === "localhost" || location.hostname === "127.0.0.1";
   }
 
   async function startRecording(ctx) {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error("Microphone not supported in this browser.");
     }
+    if (!window.MediaRecorder) {
+      throw new Error("Recording not supported (MediaRecorder missing). Try Chrome/Edge.");
+    }
+    if (!isSecureContextForMic()) {
+      throw new Error("Microphone requires HTTPS (or localhost).");
+    }
+
+    // stop any previous recording safely
+    stopActiveRecordingSilently();
 
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-    const mimeType = pickMimeType();
+    const { mime, ext } = pickMimeType();
+    ctx.ext = ext;
+
     chunks = [];
-    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
 
     recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) chunks.push(e.data);
     };
 
-    recorder.onerror = (e) => {
-      console.error("Recorder error:", e);
-      setStatus(ctx, "❌ Recording error.");
-      stopRecording();
-    };
-
     recorder.onstop = () => {
-      const type = recorder.mimeType || "audio/webm";
+      const type = recorder?.mimeType || (ctx.ext === "ogg" ? "audio/ogg" : "audio/webm");
       const blob = new Blob(chunks, { type });
       ctx.blob = blob;
 
@@ -123,15 +140,26 @@
       setStatus(ctx, "✅ Recording ready. Submit when you want.");
     };
 
-    recorder.start();
+    recorder.start(200);
   }
 
-  function stopRecording() {
+  function stopRecording(ctx) {
     try {
       if (recorder && recorder.state !== "inactive") recorder.stop();
     } catch (_) {}
 
-    stopStream();
+    try {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+    } catch (_) {}
+
+    // UI after stop
+    if (ctx) {
+      ctx.stopBtn.style.display = "none";
+      ctx.recordBtn.style.display = "inline-block";
+    }
   }
 
   async function upload(ctx) {
@@ -140,29 +168,31 @@
       return;
     }
 
+    // Oromo ONLY
+    if ((ctx.lang || "").toLowerCase() !== "oromo") {
+      setStatus(ctx, "❌ Only Oromo audio is allowed.");
+      return;
+    }
+
     setStatus(ctx, "⏳ Uploading…");
 
     const fd = new FormData();
     fd.append("entry_type", ctx.entryType);
     fd.append("entry_id", String(ctx.entryId));
-    fd.append("lang", ctx.lang);
+    fd.append("lang", "oromo");
 
-    // backend needs a filename with extension
-    fd.append("audio", ctx.blob, "recording.webm");
+    const filename = `recording.${ctx.ext || "webm"}`;
+    fd.append("audio", ctx.blob, filename);
 
-    let res;
+    let res, data;
     try {
       res = await fetch("/api/submit-audio", { method: "POST", body: fd });
+      try { data = await res.json(); } catch (_) { data = null; }
     } catch (err) {
-      console.error("Fetch error:", err);
+      console.error(err);
       setStatus(ctx, "❌ Network error uploading audio.");
       return;
     }
-
-    let data = null;
-    try {
-      data = await res.json();
-    } catch (_) {}
 
     if (!res.ok || !data || !data.ok) {
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
@@ -175,198 +205,128 @@
     ctx.submitBtn.style.display = "none";
   }
 
-  /* ========== UI FINDER + GLOBAL UI INJECTION (for index.html list) ========== */
-
-  function ensureGlobalRecorderUI() {
-    // If there is already a global recorder UI, do nothing
-    if (document.getElementById("globalRecorderUI")) return;
-
-    // Only create if there are mic buttons on page
-    if (!document.querySelector("[data-record-btn]")) return;
-
-    const box = document.createElement("div");
-    box.id = "globalRecorderUI";
-    box.className = "card";
-    box.style.marginTop = "12px";
-    box.style.display = "none"; // shown only when user clicks a mic button
-
-    box.innerHTML = `
-      <h2 style="margin-top:0;">🎙 Record Oromo</h2>
-      <div class="muted" style="margin-top:6px;">
-        Recording will be submitted for admin approval.
-      </div>
-
-      <div class="small-actions" style="margin-top:10px;">
-        <button type="button" class="btn" data-stop-btn style="display:none;">⏹ Stop</button>
-      </div>
-
-      <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
-
-      <div class="small-actions" style="margin-top:10px;">
-        <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
-        <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
-        <button type="button" class="btn danger" data-cancel-btn style="display:none;">✖ Close</button>
-      </div>
-    `;
-
-    // Insert near bottom of container so it’s not annoying
-    const container = document.querySelector(".container");
-    if (container) container.appendChild(box);
-
-    // Close button handler
-    const cancelBtn = box.querySelector("[data-cancel-btn]");
-    cancelBtn.addEventListener("click", () => {
-      // reset UI
-      box.style.display = "none";
-      const stopBtn = box.querySelector("[data-stop-btn]");
-      const submitBtn = box.querySelector("[data-submit-btn]");
-      const rerecordBtn = box.querySelector("[data-rerecord-btn]");
-      const previewAudio = box.querySelector("[data-preview-audio]");
-      stopBtn.style.display = "none";
-      submitBtn.style.display = "none";
-      rerecordBtn.style.display = "none";
-      cancelBtn.style.display = "none";
-      previewAudio.style.display = "none";
-      if (previewAudio) previewAudio.src = "";
-      stopRecording();
-    });
+  // ========= IMPORTANT FIX: scope UI to the clicked record button =========
+  function getScopedRoot(btn) {
+    // try nearest block that contains the whole recording UI
+    return (
+      btn.closest(".result-box") ||
+      btn.closest(".word-row") ||
+      btn.closest(".card") ||
+      btn.parentElement ||
+      document
+    );
   }
 
-  // Find the best UI near a button; if none exists, use global injected UI
-  function findRecorderUI(btn) {
-    // (1) Prefer local UI within the same section/card (search result block)
-    const card = btn.closest(".result-box") || btn.closest(".card") || btn.closest("section");
-    if (card) {
-      const stopBtn = card.querySelector("[data-stop-btn]");
-      const submitBtn = card.querySelector("[data-submit-btn]");
-      const rerecordBtn = card.querySelector("[data-rerecord-btn]");
-      const previewAudio = card.querySelector("[data-preview-audio]");
-      if (stopBtn && submitBtn && rerecordBtn && previewAudio) {
-        return { stopBtn, submitBtn, rerecordBtn, previewAudio, host: card };
-      }
+  function buildCtxFromRecordBtn(btn) {
+    const entryType = (btn.getAttribute("data-entry-type") || "").trim();
+    const entryId = Number(btn.getAttribute("data-entry-id"));
+    const lang = (btn.getAttribute("data-lang") || "oromo").trim().toLowerCase();
+
+    if (!entryType || !entryId) {
+      alert("Recording button is missing entry info.");
+      return null;
     }
 
-    // (2) translate.html has a single UI (global in that page)
-    const stopBtn = document.querySelector("[data-stop-btn]");
-    const submitBtn = document.querySelector("[data-submit-btn]");
-    const rerecordBtn = document.querySelector("[data-rerecord-btn]");
-    const previewAudio = document.querySelector("[data-preview-audio]");
-    if (stopBtn && submitBtn && rerecordBtn && previewAudio) {
-      return { stopBtn, submitBtn, rerecordBtn, previewAudio, host: document.body };
+    // Oromo ONLY
+    if (lang !== "oromo") {
+      alert("Only Oromo audio is allowed.");
+      return null;
     }
 
-    // (3) index.html Approved Words list: use injected global recorder UI
-    const global = document.getElementById("globalRecorderUI");
-    if (global) {
-      const stopBtn2 = global.querySelector("[data-stop-btn]");
-      const submitBtn2 = global.querySelector("[data-submit-btn]");
-      const rerecordBtn2 = global.querySelector("[data-rerecord-btn]");
-      const previewAudio2 = global.querySelector("[data-preview-audio]");
-      const cancelBtn2 = global.querySelector("[data-cancel-btn]");
-      if (stopBtn2 && submitBtn2 && rerecordBtn2 && previewAudio2) {
-        return { stopBtn: stopBtn2, submitBtn: submitBtn2, rerecordBtn: rerecordBtn2, previewAudio: previewAudio2, host: global, cancelBtn: cancelBtn2 };
-      }
+    const root = getScopedRoot(btn);
+
+    // find elements ONLY near this button (not first one on page)
+    const stopBtn = root.querySelector(":scope [data-stop-btn]");
+    const submitBtn = root.querySelector(":scope [data-submit-btn]");
+    const rerecordBtn = root.querySelector(":scope [data-rerecord-btn]");
+    const previewAudio = root.querySelector(":scope [data-preview-audio]");
+
+    // Some places (word list) only have mic button + status. That’s OK.
+    // If UI elements are missing, we show a clear error.
+    if (!stopBtn || !submitBtn || !rerecordBtn || !previewAudio) {
+      alert(
+        "Recording UI elements not found near this mic button.\n\n" +
+        "Fix: ensure each mic button has its Stop + Preview + Submit + Re-record elements in the same block."
+      );
+      return null;
     }
 
-    return null;
-  }
-
-  function showGlobalUIIfUsed(ui) {
-    if (!ui || !ui.host) return;
-    if (ui.host.id === "globalRecorderUI") {
-      ui.host.style.display = "block";
-      if (ui.cancelBtn) ui.cancelBtn.style.display = "inline-block";
-      // scroll to it so user sees controls
-      try { ui.host.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (_) {}
-    }
+    return {
+      entryType,
+      entryId,
+      lang: "oromo",
+      recordBtn: btn,
+      stopBtn,
+      submitBtn,
+      rerecordBtn,
+      previewAudio,
+      blob: null,
+      ext: "webm",
+    };
   }
 
   function wire() {
-    ensureGlobalRecorderUI();
-
+    // Record
     document.querySelectorAll("[data-record-btn]").forEach((btn) => {
       btn.addEventListener("click", async () => {
-        const entryType = (btn.getAttribute("data-entry-type") || "").trim();
-        const entryIdRaw = (btn.getAttribute("data-entry-id") || "").trim();
-        const entryId = Number(entryIdRaw);
-        const lang = (btn.getAttribute("data-lang") || "oromo").trim();
+        const ctx = buildCtxFromRecordBtn(btn);
+        if (!ctx) return;
 
-        if (!entryType || !entryIdRaw || Number.isNaN(entryId)) {
-          alert("Missing entry_type or entry_id on record button.");
-          return;
+        // close previous session UI if any
+        if (currentCtx && currentCtx !== ctx) {
+          try {
+            currentCtx.stopBtn.style.display = "none";
+            currentCtx.recordBtn.style.display = "inline-block";
+          } catch (_) {}
         }
 
-        const ui = findRecorderUI(btn);
-        if (!ui) {
-          alert("Recording UI elements not found on the page.");
-          return;
-        }
-
-        showGlobalUIIfUsed(ui);
-
-        const { stopBtn, submitBtn, rerecordBtn, previewAudio } = ui;
-
-        const ctx = {
-          entryType,
-          entryId,
-          lang,
-          recordBtn: btn,
-          stopBtn,
-          submitBtn,
-          rerecordBtn,
-          previewAudio,
-          blob: null,
-        };
         currentCtx = ctx;
 
-        // Reset UI for new recording
-        // IMPORTANT: for tiny 🎙 buttons we do NOT hide them (so list doesn’t jump)
-        if (btn.textContent && btn.textContent.includes("Record")) {
-          btn.style.display = "none";
-        }
-
-        stopBtn.style.display = "inline-block";
-        submitBtn.style.display = "none";
-        rerecordBtn.style.display = "none";
-        previewAudio.style.display = "none";
-        setStatus(ctx, "🎙 Recording…");
+        ctx.recordBtn.style.display = "none";
+        ctx.stopBtn.style.display = "inline-block";
+        ctx.submitBtn.style.display = "none";
+        ctx.rerecordBtn.style.display = "none";
+        ctx.previewAudio.style.display = "none";
+        setStatus(ctx, "🎙 Recording… allow microphone permission");
 
         try {
           await startRecording(ctx);
         } catch (err) {
           console.error(err);
-          setStatus(ctx, "❌ " + (err?.message || "Recording failed"));
-          if (btn.textContent && btn.textContent.includes("Record")) {
-            btn.style.display = "inline-block";
-          }
-          stopBtn.style.display = "none";
-          stopStream();
+          const msg = err?.message || "Recording failed";
+          setStatus(ctx, "❌ " + msg);
+
+          ctx.recordBtn.style.display = "inline-block";
+          ctx.stopBtn.style.display = "none";
+          stopActiveRecordingSilently();
         }
       });
     });
 
+    // Stop
     document.querySelectorAll("[data-stop-btn]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        btn.style.display = "none";
-        stopRecording();
-        // Only show big "Record Oromo" button again (not tiny icon buttons)
-        if (currentCtx?.recordBtn && currentCtx.recordBtn.textContent.includes("Record")) {
-          currentCtx.recordBtn.style.display = "inline-block";
-        }
+        if (!currentCtx) return;
+        stopRecording(currentCtx);
       });
     });
 
+    // Re-record
     document.querySelectorAll("[data-rerecord-btn]").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (!currentCtx?.recordBtn) return;
+
         currentCtx.blob = null;
         currentCtx.previewAudio.style.display = "none";
         currentCtx.submitBtn.style.display = "none";
         currentCtx.rerecordBtn.style.display = "none";
+
+        // start again
         currentCtx.recordBtn.click();
       });
     });
 
+    // Submit
     document.querySelectorAll("[data-submit-btn]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         if (!currentCtx) return;
@@ -377,5 +337,6 @@
 
   document.addEventListener("DOMContentLoaded", wire);
 })();
+
 
 

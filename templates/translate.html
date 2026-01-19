@@ -16,10 +16,10 @@
   <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
 
-<link rel="icon" href="/static/icons/favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
-<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 </head>
 <body>
 
@@ -139,14 +139,14 @@
         {% if audio.oromo %}
           <div class="subtle">Oromo audio</div>
           <audio controls style="width:100%;">
-            <source src="{{ audio.oromo }}">
+            <source src="{{ url_for('static', filename=audio.oromo) }}">
           </audio>
         {% endif %}
 
         {% if audio.english %}
           <div class="subtle" style="margin-top:10px;">English audio</div>
           <audio controls style="width:100%;">
-            <source src="{{ audio.english }}">
+            <source src="{{ url_for('static', filename=audio.english) }}">
           </audio>
         {% endif %}
       </div>
@@ -194,17 +194,6 @@
           </div>
 
           <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
-
-          <div data-trim-box class="trim" style="display:none; margin-top:10px;">
-            <div class="subtle" style="margin-bottom:6px;">Optional: trim before submitting</div>
-            <label>Start (sec)
-              <input data-trim-start type="number" min="0" step="0.1" value="0">
-            </label>
-            <label style="margin-left:8px;">End (sec)
-              <input data-trim-end type="number" min="0" step="0.1" value="0">
-            </label>
-            <button type="button" class="btn" data-apply-trim>✂️ Apply Trim</button>
-          </div>
 
           <div class="small-actions" style="margin-top:10px;">
             <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
@@ -358,6 +347,7 @@ function startVoice(){
 
 </body>
 </html>
+
 
 
 
