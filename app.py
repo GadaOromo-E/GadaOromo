@@ -1261,10 +1261,10 @@ def api_submit_audio():
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    # ✅ Prevent duplicate pending/approved submissions (same entry/lang)
+    # ✅ Block ONLY if an APPROVED already exists (pending does not NOT block)
     c.execute("""
         SELECT 1 FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ('pending','approved')
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status = 'approved'
         LIMIT 1
     """, (entry_type, entry_id, lang))
     if c.fetchone():
