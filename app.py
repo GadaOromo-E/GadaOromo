@@ -1877,34 +1877,65 @@ def reject_phrase(phrase_id):
 
 # ------------------ APPROVE / REJECT AUDIO ------------------
 
-@app.route("/approve_audio/<int:audio_id>")
+@app.route("/approve_audio/<int:audio_id>", methods=["POST"])
 def approve_audio(audio_id):
     if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+
+    # Get target row (must exist)
+    c.execute("SELECT entry_type, entry_id, lang, status FROM audio WHERE id=?", (audio_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return redirect("/dashboard")
+
+    entry_type, entry_id, lang, status = row
+
+    # Approve this one
     c.execute("UPDATE audio SET status='approved' WHERE id=?", (audio_id,))
+
+    # Optional but recommended: ensure only ONE approved audio per entry/lang
+    # Any other approved becomes archived (or you can set to rejected/delete)
+    c.execute("""
+        UPDATE audio
+        SET status='archived'
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved' AND id<>?
+    """, (entry_type, entry_id, lang, audio_id))
+
     conn.commit()
     conn.close()
     return redirect("/dashboard")
 
 
-@app.route("/reject_audio/<int:audio_id>")
+@app.route("/reject_audio/<int:audio_id>", methods=["POST"])
 def reject_audio(audio_id):
     if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT file_path FROM audio WHERE id=? AND status='pending'", (audio_id,))
+
+    # Get file path (any status, but we only delete DB row if pending)
+    c.execute("SELECT file_path, status FROM audio WHERE id=?", (audio_id,))
     row = c.fetchone()
-    c.execute("DELETE FROM audio WHERE id=? AND status='pending'", (audio_id,))
-    conn.commit()
+    if not row:
+        conn.close()
+        return redirect("/dashboard")
+
+    file_path, status = row
+
+    # Only delete row if it is pending (don’t delete approved history by mistake)
+    if status == "pending":
+        c.execute("DELETE FROM audio WHERE id=?", (audio_id,))
+        conn.commit()
     conn.close()
 
-    if row and row[0]:
-        abs_path = _audio_abs_path(row[0])
+    # Delete the physical file only if it was pending
+    if status == "pending" and file_path:
+        abs_path = _audio_abs_path(file_path)
         if abs_path and os.path.isfile(abs_path):
             try:
                 os.remove(abs_path)

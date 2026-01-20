@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard | Gada Oromo Dictionary</title>
+  <title>Admin Dashboard | Gadaa Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -85,7 +85,8 @@
   <div class="card">
     <h2>Pending Audio</h2>
     <div class="subtle">
-      Tip: Approving Oromo audio will automatically remove the mic icon on the public pages for that entry.
+      Admin must listen first, then approve or reject.
+      <br>Note: Users should be able to submit multiple recordings (pending). Only <b>approved</b> should block new mic submissions.
     </div>
 
     {% if pending_audio and pending_audio|length > 0 %}
@@ -93,6 +94,7 @@
         {% for a in pending_audio %}
           {# a = (id, entry_type, entry_id, lang, file_path) #}
           <div class="card" style="margin-top:0;">
+
             <div class="subtle">Entry</div>
             <div class="result-box" style="margin-top:8px;">
               <b>{{ a[1] }}</b> #{{ a[2] }} — <b>{{ a[3] }}</b>
@@ -119,14 +121,28 @@
               {% endif %}
             {% endif %}
 
-            <audio controls style="width:100%; margin-top:10px;">
+            <!-- ✅ Admin can play BEFORE approve/reject -->
+            <div class="subtle" style="margin-top:10px;">Audio preview</div>
+            <audio controls preload="none" style="width:100%; margin-top:8px;">
               <source src="{{ url_for('static', filename=a[4]) }}">
+              Your browser does not support audio playback.
             </audio>
 
-            <div class="small-actions">
-              <a class="btn primary" href="/approve_audio/{{ a[0] }}">✅ Approve</a>
-              <a class="btn danger" href="/reject_audio/{{ a[0] }}" onclick="return confirm('Reject this audio?');">❌ Reject</a>
+            <!-- ✅ Use POST to avoid accidental approve/reject -->
+            <div class="small-actions" style="margin-top:10px;">
+              <form method="POST" action="/approve_audio/{{ a[0] }}" style="margin:0;">
+                <button class="btn primary" type="submit">✅ Approve</button>
+              </form>
+
+              <form method="POST" action="/reject_audio/{{ a[0] }}" style="margin:0;">
+                <button class="btn danger" type="submit" onclick="return confirm('Reject this audio and delete the file?');">❌ Reject</button>
+              </form>
             </div>
+
+            <div class="muted" style="margin-top:8px; font-size:14px;">
+              Tip: Approve only the best recording. Reject removes the pending audio file.
+            </div>
+
           </div>
         {% endfor %}
       </div>

@@ -23,7 +23,6 @@
 </head>
 <body>
 
-<!-- OPTIONAL: tiny splash overlay (native feel) -->
 <div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
   <div style="text-align:center;">
     <div style="font-size:42px;">📘</div>
@@ -38,7 +37,6 @@
   });
 </script>
 
-<!-- PWA Update Bar -->
 <div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
   <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
     <div>
@@ -52,7 +50,6 @@
   </div>
 </div>
 
-<!-- iOS Install Help -->
 <div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
   <b>Install on iPhone</b>
   <div class="muted" style="margin-top:6px; line-height:1.5;">
@@ -60,14 +57,12 @@
   </div>
 </div>
 
-<!-- Toast -->
 <div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
   <span data-msg></span>
 </div>
 
 <div class="container">
 
-  <!-- ===== Top Bar / Navigation ===== -->
   <div class="topbar">
     <div class="title-row" style="align-items:flex-start;">
       <div>
@@ -83,8 +78,6 @@
           <a class="btn primary" href="/translate">🔁 Translate</a>
           <a class="btn" href="/learn">📚 Learn</a>
           <a class="btn danger" href="/support">❤️ Support</a>
-
-          <!-- ✅ Install button -->
           <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
         </div>
       </div>
@@ -139,14 +132,14 @@
         {% if audio.oromo %}
           <div class="subtle">Oromo audio</div>
           <audio controls style="width:100%;">
-            <source src="{{ url_for('static', filename=audio.oromo) }}">
+            <source src="{{ audio.oromo }}">
           </audio>
         {% endif %}
 
         {% if audio.english %}
           <div class="subtle" style="margin-top:10px;">English audio</div>
           <audio controls style="width:100%;">
-            <source src="{{ url_for('static', filename=audio.english) }}">
+            <source src="{{ audio.english }}">
           </audio>
         {% endif %}
       </div>
@@ -200,14 +193,15 @@
             <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
           </div>
 
-          <div class="muted" data-status-for="{{ matched.type }}_{{ matched.id }}" style="margin-top:8px;"></div>
+          <!-- ✅ FIX: status element compatible with audio.js -->
+          <div class="muted" data-status style="margin-top:8px;"></div>
         {% else %}
           <div class="muted" style="margin-top:10px;">✅ Oromo audio already approved for this {{ matched.type }}.</div>
         {% endif %}
 
         <div class="small-actions" style="margin-top:10px;">
           <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo">Upload Oromo audio (file)</a>
-          <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/english">Upload English audio (file)</a>
+          <!-- English upload removed because backend blocks non-oromo -->
         </div>
       </div>
     {% endif %}
@@ -260,7 +254,6 @@
 </div>
 
 <script>
-/* YOUR ORIGINAL JS BLOCK (unchanged) */
 function autoGrow(el){ el.style.height="auto"; el.style.height=(el.scrollHeight)+"px"; }
 window.addEventListener("load", ()=>{ const ta=document.getElementById("textInput"); if(ta) autoGrow(ta); });
 
@@ -279,7 +272,6 @@ function copyResult(){
   navigator.clipboard.writeText(txt).then(()=>alert("Copied!")).catch(()=>alert("Copy failed."));
 }
 
-/* Voice output */
 let cachedVoices = [];
 function loadVoices(){ cachedVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }
 if ('speechSynthesis' in window) {
@@ -322,7 +314,6 @@ function speakResult(){
   speakText(txt, lang);
 }
 
-/* Speech-to-text */
 function startVoice(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition) return alert("Voice input not supported. Use Chrome on PC/Android.");
@@ -341,13 +332,11 @@ function startVoice(){
 }
 </script>
 
-<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
 <script src="{{ url_for('static', filename='audio.js') }}"></script>
 
 </body>
 </html>
-
 
 
 
