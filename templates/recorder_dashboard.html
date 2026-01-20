@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Recorder Dashboard | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">🎙 Recorder Dashboard</h2>
+        <div class="subtle">Search and record pronunciation</div>
+      </div>
+      <a class="btn danger" href="/recorder/logout">Logout</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <form method="GET">
+      <input type="text" name="q" placeholder="Search word or phrase..." value="{{ q }}">
+      <button class="btn primary" type="submit">Search</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3>Words</h3>
+
+    {% if words %}
+      <div class="grid">
+        {% for w in words %}
+          <div class="card">
+            <div><b>EN:</b> {{ w[1] }}</div>
+            <div><b>OM:</b> {{ w[2] }}</div>
+
+            {% if w[0] in approved_word_ids %}
+              <div class="muted" style="margin-top:6px;">✅ Already has Oromo audio</div>
+            {% endif %}
+
+            <div style="margin-top:8px;">
+              <a class="btn primary" href="/recorder/entry/word/{{ w[0] }}">Record / Replace</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No words found</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Phrases</h3>
+
+    {% if phrases %}
+      <div class="grid">
+        {% for p in phrases %}
+          <div class="card">
+            <div><b>EN:</b> {{ p[1] }}</div>
+            <div><b>OM:</b> {{ p[2] }}</div>
+
+            {% if p[0] in approved_phrase_ids %}
+              <div class="muted" style="margin-top:6px;">✅ Already has Oromo audio</div>
+            {% endif %}
+
+            <div style="margin-top:8px;">
+              <a class="btn primary" href="/recorder/entry/phrase/{{ p[0] }}">Record / Replace</a>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="result-box">No phrases found</div>
+    {% endif %}
+  </div>
+
+</div>
+
+</body>
+</html>

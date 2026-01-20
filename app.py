@@ -25,6 +25,12 @@ Gada Oromo Dictionary - Flask + SQLite + PWA-ready
     - /sitemap.xml
     - ProxyFix for Render (correct https URLs)
     - google verification file route
+
+✅ NEW (adds, does NOT break public):
+- Recorder password login (/recorder)
+- Recorder dashboard (/recorder/dashboard) to quickly record unlimited words/phrases
+- Recorder recordings are AUTO-APPROVED and can REPLACE existing approved audio
+- Public recording stays the same: pending + admin approval
 """
 
 import os
@@ -54,7 +60,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
 # ✅ IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
-# (needed for correct absolute URLs, sitemap, redirects, etc.)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 logging.basicConfig(level=logging.INFO)
@@ -68,9 +73,7 @@ app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 
-
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
-# If not set, we auto-detect from request.url_root.
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 API_URL = os.environ.get("API_URL", "").strip()
 
@@ -128,7 +131,6 @@ def debug_vars():
 def add_security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
-    # Helpful default cache policy for HTML
     if resp.mimetype == "text/html":
         resp.headers.setdefault("Cache-Control", "no-cache")
     return resp
@@ -138,9 +140,6 @@ def add_security_headers(resp):
 
 @app.route("/robots.txt")
 def robots_txt():
-    """
-    Allow indexing. Also points Google to sitemap.
-    """
     base = _site_base_url()
     lines = [
         "User-agent: *",
@@ -157,10 +156,6 @@ def robots_txt():
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
-    """
-    Basic sitemap for main pages.
-    If later you add word pages, we can expand it.
-    """
     base = _site_base_url()
     urls = [
         ("/", "daily", "1.0"),
@@ -209,8 +204,7 @@ MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
 
 
-# ------------------ PWA ROUTES (IMPORTANT) ------------------
-# We serve the service worker from ROOT so it can control the whole site.
+# ------------------ PWA ROUTES ------------------
 
 @app.route("/manifest.webmanifest")
 def manifest():
@@ -218,7 +212,6 @@ def manifest():
         send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.webmanifest")
     )
     resp.headers["Content-Type"] = "application/manifest+json"
-    # OK to cache a bit (manifest rarely changes), but not forever
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
@@ -228,7 +221,6 @@ def service_worker():
     resp = make_response(send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js"))
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
-    # IMPORTANT: SW updates should not be cached
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
@@ -236,6 +228,7 @@ def service_worker():
 @app.route("/offline")
 def offline():
     return render_template("offline.html")
+
 
 @app.route("/favicon.ico")
 def favicon():
@@ -246,9 +239,7 @@ def favicon():
     )
 
 
-
 # ------------------ GOOGLE VERIFICATION ------------------
-# You verified using HTML file method. Keep this route forever.
 
 @app.route("/googledba38dd4b1b65cfb.html")
 def google_verification():
@@ -259,7 +250,6 @@ def google_verification():
 
 
 # ------------------ PUBLIC UPLOADS ROUTE (AUDIO) ------------------
-# Works for both Render disk and local static/uploads.
 
 @app.route("/uploads/<path:filename>")
 def uploads(filename):
@@ -287,17 +277,10 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 
 def normalize_text(text: str) -> str:
     t = (text or "").strip().lower()
-
-    # Convert curly apostrophes to normal apostrophe
     t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
-
-    # Keep letters/numbers/underscore/space + apostrophe
     t = re.sub(r"[^\w\s']+", " ", t)
-
-    # Clean extra spaces but DO NOT break apostrophe words
     t = re.sub(r"\s+", " ", t).strip()
     return t
-
 
 
 def normalize_tokens(text: str):
@@ -425,7 +408,7 @@ def parse_xlsx_english(file_bytes: bytes):
     return dedup_preserve_order(words)
 
 
-# ------------------ ADMIN HELPER ------------------
+# ------------------ ADMIN + RECORDER HELPERS ------------------
 
 def require_admin() -> bool:
     return "admin" in session
@@ -436,6 +419,11 @@ def _admin_id() -> int:
         return int(session.get("admin"))
     except Exception:
         return 0
+
+
+# ✅ NEW: recorder session (password-based)
+def require_recorder() -> bool:
+    return bool(session.get("recorder") == 1)
 
 
 # ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
@@ -487,7 +475,7 @@ def allowed_audio(filename: str) -> bool:
 def _public_audio_url(file_path: str) -> str:
     """
     DB stores file_path like: 'uploads/xyz.webm'
-    This returns a usable URL: '/uploads/xyz.webm'
+    Returns URL: '/uploads/xyz.webm'
     """
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
@@ -788,7 +776,6 @@ def translate_text(text: str, direction: str = "om_en"):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # Phrase exact match
     if direction == "om_en":
         c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo=?", (t,))
         row = c.fetchone()
@@ -804,7 +791,6 @@ def translate_text(text: str, direction: str = "om_en"):
 
     tokens = t.split()
     if len(tokens) == 1:
-        # Word exact match
         if direction == "om_en":
             c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo=?", (t,))
             row = c.fetchone()
@@ -818,7 +804,6 @@ def translate_text(text: str, direction: str = "om_en"):
                 conn.close()
                 return row[1], 1, 0
 
-    # Word-by-word fallback
     out = []
     for w in tokens:
         if direction == "om_en":
@@ -1204,7 +1189,126 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ API AUDIO SUBMISSION (OROMO ONLY) ------------------
+# ------------------ NEW: RECORDER LOGIN + DASHBOARD ------------------
+# Requires env var: RECORDER_PASSWORD
+
+@app.route("/recorder", methods=["GET", "POST"])
+def recorder_login():
+    msg = None
+    if request.method == "POST":
+        pw = (request.form.get("password") or "").strip()
+        correct = os.environ.get("RECORDER_PASSWORD", "").strip()
+        if correct and pw == correct:
+            session["recorder"] = 1
+            return redirect("/recorder/dashboard")
+        msg = "Invalid recorder password."
+    return render_template("recorder_login.html", msg=msg)
+
+
+@app.route("/recorder/logout")
+def recorder_logout():
+    session.pop("recorder", None)
+    return redirect("/")
+
+
+@app.route("/recorder/dashboard")
+def recorder_dashboard():
+    if not require_recorder():
+        return redirect("/recorder")
+
+    q = normalize_text(request.args.get("q", "") or "")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if q:
+        like = "%" + q + "%"
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND (english LIKE ? OR oromo LIKE ?)
+            ORDER BY english ASC
+            LIMIT 200
+        """, (like, like))
+        words = c.fetchall()
+
+        c.execute("""
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved' AND (english LIKE ? OR oromo LIKE ?)
+            ORDER BY id DESC
+            LIMIT 200
+        """, (like, like))
+        phrases = c.fetchall()
+    else:
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved'
+            ORDER BY english ASC
+            LIMIT 100
+        """)
+        words = c.fetchall()
+
+        c.execute("""
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved'
+            ORDER BY id DESC
+            LIMIT 100
+        """)
+        phrases = c.fetchall()
+
+    conn.close()
+
+    approved_word_ids = get_approved_oromo_audio_ids("word")
+    approved_phrase_ids = get_approved_oromo_audio_ids("phrase")
+
+    return render_template(
+        "recorder_dashboard.html",
+        q=q,
+        words=words,
+        phrases=phrases,
+        approved_word_ids=approved_word_ids,
+        approved_phrase_ids=approved_phrase_ids
+    )
+
+
+@app.route("/recorder/entry/<entry_type>/<int:entry_id>")
+def recorder_entry(entry_type, entry_id):
+    if not require_recorder():
+        return redirect("/recorder")
+
+    entry_type = (entry_type or "").strip().lower()
+    if entry_type not in ("word", "phrase"):
+        abort(400)
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if entry_type == "word":
+        c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+
+    row = c.fetchone()
+    conn.close()
+
+    if not row:
+        abort(404)
+
+    audio = get_approved_audio(entry_type, entry_id)
+    return render_template(
+        "recorder_entry.html",
+        entry_type=entry_type,
+        entry_id=entry_id,
+        english=row[1],
+        oromo=row[2],
+        audio=audio
+    )
+
+
+# ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
 
 @app.route("/api/submit-audio", methods=["POST"])
 def api_submit_audio():
@@ -1215,29 +1319,33 @@ def api_submit_audio():
       entry_id: int
       lang: oromo   (ONLY oromo allowed)
       audio: file
+
+    ✅ Public users:
+      - saves as PENDING
+      - blocks if an APPROVED already exists
+
+    ✅ Recorder users (session["recorder"]==1):
+      - saves as APPROVED immediately
+      - can REPLACE existing approved audio for that entry/lang
     """
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
     lang = (request.form.get("lang") or "oromo").strip().lower()
 
-    # Validate basics
     if entry_type not in ("word", "phrase"):
         return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
     if not entry_id_raw.isdigit():
         return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
 
-    # ✅ Oromo ONLY
     if lang != "oromo":
         return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
 
     entry_id = int(entry_id_raw)
 
-    # Validate file
     f = request.files.get("audio")
     if not f or not f.filename:
         return jsonify({"ok": False, "error": "Missing audio file"}), 400
 
-    # Ensure extension exists
     original = secure_filename(f.filename)
     if "." not in original:
         return jsonify({"ok": False, "error": "Audio file must have an extension (webm/mp3/wav/m4a/ogg)."}), 400
@@ -1247,10 +1355,10 @@ def api_submit_audio():
 
     ext = original.rsplit(".", 1)[1].lower()
 
-    # Entry must exist + be approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
+    # Entry must exist + be approved
     if entry_type == "word":
         c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
@@ -1261,32 +1369,67 @@ def api_submit_audio():
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    # ✅ Block ONLY if an APPROVED already exists (pending does not NOT block)
-    c.execute("""
-        SELECT 1 FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status = 'approved'
-        LIMIT 1
-    """, (entry_type, entry_id, lang))
-    if c.fetchone():
-        conn.close()
-        return jsonify({"ok": False, "error": "Audio already submitted (pending or approved)."}), 409
+    is_rec = require_recorder()
+
+    if is_rec:
+        # Recorder can replace approved audio
+        c.execute("""
+            SELECT id, file_path
+            FROM audio
+            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+        """, (entry_type, entry_id, lang))
+        old_rows = c.fetchall()
+
+        c.execute("""
+            DELETE FROM audio
+            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+        """, (entry_type, entry_id, lang))
+        conn.commit()
+
+        # delete old files
+        for _aid, fp in old_rows:
+            abs_path = _audio_abs_path(fp)
+            if abs_path and os.path.isfile(abs_path):
+                try:
+                    os.remove(abs_path)
+                except Exception:
+                    app.logger.exception(f"Could not delete old approved audio file: {abs_path}")
+
+    else:
+        # Public users: block if approved exists
+        c.execute("""
+            SELECT 1
+            FROM audio
+            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+            LIMIT 1
+        """, (entry_type, entry_id, lang))
+        if c.fetchone():
+            conn.close()
+            return jsonify({"ok": False, "error": "This entry already has approved audio."}), 409
 
     # Save file
     new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_name)
     f.save(save_path)
 
-    # Store relative path for static serving (your app expects this)
     rel_path = f"uploads/{new_name}"
+
+    status = "approved" if is_rec else "pending"
 
     c.execute("""
         INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
-        VALUES (?, ?, ?, ?, 'pending')
-    """, (entry_type, entry_id, lang, rel_path))
+        VALUES (?, ?, ?, ?, ?)
+    """, (entry_type, entry_id, lang, rel_path, status))
+
     conn.commit()
     conn.close()
 
-    return jsonify({"ok": True, "message": "Oromo audio submitted for admin approval."})
+    return jsonify({
+        "ok": True,
+        "message": ("Audio saved (auto-approved)." if is_rec else "Oromo audio submitted for admin approval."),
+        "status": status,
+        "url": _public_audio_url(rel_path)
+    })
 
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
@@ -1294,8 +1437,8 @@ def api_submit_audio():
 @app.route("/upload_audio/<entry_type>/<int:entry_id>/<lang>", methods=["GET", "POST"])
 def upload_audio(entry_type, entry_id, lang):
     """
-    Manual file upload page.
-    ✅ Oromo ONLY (English audio not accepted)
+    Manual file upload page (public).
+    ✅ Oromo ONLY
     ✅ Allow unlimited pending submissions
     ✅ Block only if an APPROVED Oromo audio already exists for this entry
     """
@@ -1305,14 +1448,12 @@ def upload_audio(entry_type, entry_id, lang):
     if entry_type not in ("word", "phrase"):
         return "Invalid entry type", 400
 
-    # ✅ Oromo ONLY
     if lang != "oromo":
         return "Only Oromo audio is allowed.", 400
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # ✅ Entry must exist + be approved
     if entry_type == "word":
         c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
@@ -1323,7 +1464,6 @@ def upload_audio(entry_type, entry_id, lang):
         conn.close()
         return "Entry not found or not approved.", 404
 
-    # ✅ Block only if APPROVED already exists (pending should NOT block)
     c.execute("""
         SELECT 1 FROM audio
         WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
@@ -1335,7 +1475,6 @@ def upload_audio(entry_type, entry_id, lang):
         conn.close()
         return "Audio already approved for this entry.", 409
 
-    # ✅ POST: upload as PENDING (allow many)
     if request.method == "POST":
         f = request.files.get("audio")
         if not f or not f.filename:
@@ -1369,7 +1508,6 @@ def upload_audio(entry_type, entry_id, lang):
 
         return "Thanks! Oromo audio submitted for admin approval."
 
-    # ✅ GET: show page
     conn.close()
     return render_template(
         "upload_audio.html",
@@ -1379,7 +1517,6 @@ def upload_audio(entry_type, entry_id, lang):
         english=row[1],
         oromo=row[2]
     )
-
 
 
 # ------------------ ADMIN LOGIN ------------------
@@ -1448,6 +1585,7 @@ def dashboard():
 
 
 # ------------------ ADMIN MANAGEMENT ------------------
+# (unchanged from your file)
 
 @app.route("/admin/manage", methods=["GET", "POST"])
 def admin_manage():
@@ -1876,66 +2014,36 @@ def reject_phrase(phrase_id):
 
 
 # ------------------ APPROVE / REJECT AUDIO ------------------
+# ✅ Keep GET methods so your current admin_dashboard.html (href links) works.
 
-@app.route("/approve_audio/<int:audio_id>", methods=["POST"])
+@app.route("/approve_audio/<int:audio_id>")
 def approve_audio(audio_id):
     if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-
-    # Get target row (must exist)
-    c.execute("SELECT entry_type, entry_id, lang, status FROM audio WHERE id=?", (audio_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return redirect("/dashboard")
-
-    entry_type, entry_id, lang, status = row
-
-    # Approve this one
     c.execute("UPDATE audio SET status='approved' WHERE id=?", (audio_id,))
-
-    # Optional but recommended: ensure only ONE approved audio per entry/lang
-    # Any other approved becomes archived (or you can set to rejected/delete)
-    c.execute("""
-        UPDATE audio
-        SET status='archived'
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved' AND id<>?
-    """, (entry_type, entry_id, lang, audio_id))
-
     conn.commit()
     conn.close()
     return redirect("/dashboard")
 
 
-@app.route("/reject_audio/<int:audio_id>", methods=["POST"])
+@app.route("/reject_audio/<int:audio_id>")
 def reject_audio(audio_id):
     if not require_admin():
         return redirect("/admin")
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-
-    # Get file path (any status, but we only delete DB row if pending)
-    c.execute("SELECT file_path, status FROM audio WHERE id=?", (audio_id,))
+    c.execute("SELECT file_path FROM audio WHERE id=? AND status='pending'", (audio_id,))
     row = c.fetchone()
-    if not row:
-        conn.close()
-        return redirect("/dashboard")
-
-    file_path, status = row
-
-    # Only delete row if it is pending (don’t delete approved history by mistake)
-    if status == "pending":
-        c.execute("DELETE FROM audio WHERE id=?", (audio_id,))
-        conn.commit()
+    c.execute("DELETE FROM audio WHERE id=? AND status='pending'", (audio_id,))
+    conn.commit()
     conn.close()
 
-    # Delete the physical file only if it was pending
-    if status == "pending" and file_path:
-        abs_path = _audio_abs_path(file_path)
+    if row and row[0]:
+        abs_path = _audio_abs_path(row[0])
         if abs_path and os.path.isfile(abs_path):
             try:
                 os.remove(abs_path)

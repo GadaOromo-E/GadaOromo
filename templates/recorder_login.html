@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Recorder Login | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+  <div class="card">
+    <h2>🎙 Recorder Access</h2>
+    <div class="subtle">Authorized people only</div>
+
+    {% if msg %}
+      <div class="result-box">{{ msg }}</div>
+    {% endif %}
+
+    <form method="POST">
+      <label>Password</label>
+      <input type="password" name="password" required>
+
+      <div style="margin-top:10px;">
+        <button type="submit" class="btn primary">Login</button>
+        <a href="/" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+</body>
+</html>
