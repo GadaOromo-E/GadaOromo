@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Upload Audio | Gadaa Dictionary</title>
+  <title>Upload Audio | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -13,16 +13,19 @@
   <header class="topbar">
     <div class="title-row">
       <div class="brand">
-        <h1 style="margin:0;">Upload Audio</h1>
+        <h1 style="margin:0;">Upload Oromo Audio</h1>
         <p class="tagline">Community pronunciation • Admin approved</p>
       </div>
-      <a class="btn" href="/">⬅ Home</a>
+      <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn" href="/">⬅ Home</a>
+        <a class="btn" href="/translate">🌍 Translate</a>
+      </div>
     </div>
   </header>
 
   <div class="card">
     <h2 style="margin-top:0;">
-      {{ entry_type|capitalize }} #{{ entry_id }} — {{ lang|capitalize }} audio
+      {{ entry_type|capitalize }} #{{ entry_id }}
     </h2>
 
     <div class="result-box">
@@ -30,20 +33,27 @@
       <b>Oromo:</b> {{ oromo }}
     </div>
 
-    <p class="muted" style="margin-top:10px;">
-      Upload an audio file. It will be reviewed by admin before becoming public.
-      <br><span class="subtle">Allowed: mp3, wav, m4a, webm, ogg</span>
-    </p>
+    {% if lang != "oromo" %}
+      <!-- UI safety: backend already blocks, but keep the page consistent -->
+      <div class="result-box" style="margin-top:12px;">
+        ❌ Only Oromo audio uploads are allowed.
+      </div>
+    {% else %}
+      <p class="muted" style="margin-top:10px;">
+        Upload an Oromo pronunciation audio file. It will be reviewed by admin before becoming public.
+        <br><span class="subtle">Allowed: mp3, wav, m4a, webm, ogg</span>
+      </p>
 
-    <form method="POST" enctype="multipart/form-data" style="margin-top:12px;">
-      <input type="file" name="audio" accept=".mp3,.wav,.m4a,.webm,.ogg" required>
-      <div style="height:12px;"></div>
-      <button type="submit">Submit Audio</button>
-    </form>
+      <form method="POST" enctype="multipart/form-data" style="margin-top:12px;">
+        <input type="file" name="audio" accept=".mp3,.wav,.m4a,.webm,.ogg" required>
+        <div style="height:12px;"></div>
+        <button type="submit">Submit Audio</button>
+      </form>
 
-    <div class="muted" style="margin-top:10px; font-size:14px;">
-      Tip: If you’re on Chrome/Edge, you can also record directly on the word/phrase page using the 🎙 mic button.
-    </div>
+      <div class="muted" style="margin-top:10px; font-size:14px;">
+        Tip: You can also record directly from search results using the 🎙 mic button.
+      </div>
+    {% endif %}
   </div>
 
 </div>

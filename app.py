@@ -26,10 +26,11 @@ Gadaa Dictionary - Flask + SQLite + PWA-ready
     - ProxyFix for Render (correct https URLs)
     - google verification file route
 
-✅ NEW (adds, does NOT break public):
+✅ Recorder mode (password protected):
 - Recorder password login (/recorder)
 - Recorder dashboard (/recorder/dashboard) to quickly record unlimited words/phrases
 - Recorder recordings are AUTO-APPROVED and can REPLACE existing approved audio
+- Recorder can DELETE approved Oromo audio (no admin approval)
 - Public recording stays the same: pending + admin approval
 """
 
@@ -164,6 +165,7 @@ def sitemap_xml():
         ("/support", "monthly", "0.3"),
         ("/submit", "weekly", "0.5"),
         ("/submit_phrase", "weekly", "0.5"),
+        ("/recorder", "monthly", "0.2"),
     ]
 
     now = datetime.utcnow().strftime("%Y-%m-%d")
@@ -421,7 +423,7 @@ def _admin_id() -> int:
         return 0
 
 
-# ✅ NEW: recorder session (password-based)
+# ✅ recorder session (password-based)
 def require_recorder() -> bool:
     return bool(session.get("recorder") == 1)
 
@@ -487,6 +489,14 @@ def _public_audio_url(file_path: str) -> str:
     return "/uploads/" + os.path.basename(fp)
 
 
+def _audio_abs_path(file_path: str) -> str:
+    fp = (file_path or "").replace("\\", "/").strip()
+    if not fp:
+        return ""
+    name = fp.split("/")[-1]
+    return os.path.join(UPLOAD_FOLDER, name)
+
+
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -524,15 +534,10 @@ def get_approved_oromo_audio_ids(entry_type: str) -> set:
     return ids
 
 
-def _audio_abs_path(file_path: str) -> str:
-    fp = (file_path or "").replace("\\", "/").strip()
-    if not fp:
-        return ""
-    name = fp.split("/")[-1]
-    return os.path.join(UPLOAD_FOLDER, name)
-
-
 def delete_audio_for_entry(entry_type: str, entry_id: int):
+    """
+    Admin helper: deletes ALL audio rows + files for an entry.
+    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
@@ -549,6 +554,44 @@ def delete_audio_for_entry(entry_type: str, entry_id: int):
                 os.remove(abs_path)
             except Exception:
                 app.logger.exception(f"Could not delete audio file: {abs_path}")
+
+
+def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statuses=("approved",)):
+    """
+    Recorder helper: delete audio for a given entry/lang/statuses and remove files.
+    Returns number of deleted rows.
+    """
+    lang = (lang or "").strip().lower()
+    statuses = tuple(statuses or ("approved",))
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    q_marks = ",".join(["?"] * len(statuses))
+    c.execute(f"""
+        SELECT id, file_path
+        FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
+    """, (entry_type, entry_id, lang, *statuses))
+    rows = c.fetchall()
+
+    c.execute(f"""
+        DELETE FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
+    """, (entry_type, entry_id, lang, *statuses))
+
+    conn.commit()
+    conn.close()
+
+    for _aid, fp in rows:
+        abs_path = _audio_abs_path(fp)
+        if abs_path and os.path.isfile(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                app.logger.exception(f"Could not delete audio file: {abs_path}")
+
+    return len(rows)
 
 
 # ------------------ DATABASE SETUP ------------------
@@ -1189,7 +1232,7 @@ def submit_file():
     return render_template("submit_file.html", msg=msg)
 
 
-# ------------------ NEW: RECORDER LOGIN + DASHBOARD ------------------
+# ------------------ RECORDER LOGIN + DASHBOARD ------------------
 # Requires env var: RECORDER_PASSWORD
 
 @app.route("/recorder", methods=["GET", "POST"])
@@ -1308,25 +1351,65 @@ def recorder_entry(entry_type, entry_id):
     )
 
 
+# ------------------ RECORDER API: GET CURRENT AUDIO + DELETE ------------------
+
+@app.route("/recorder/api/audio", methods=["GET"])
+def recorder_api_audio_get():
+    """
+    Recorder-only:
+    GET /recorder/api/audio?entry_type=word&entry_id=123
+    Returns approved audio urls for that entry (dict)
+    """
+    if not require_recorder():
+        return jsonify({"ok": False, "error": "Recorder login required"}), 401
+
+    entry_type = (request.args.get("entry_type") or "").strip().lower()
+    entry_id_raw = (request.args.get("entry_id") or "").strip()
+
+    if entry_type not in ("word", "phrase"):
+        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
+    if not entry_id_raw.isdigit():
+        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
+
+    entry_id = int(entry_id_raw)
+    audio = get_approved_audio(entry_type, entry_id)
+    return jsonify({"ok": True, "audio": audio})
+
+
+@app.route("/recorder/api/delete-audio", methods=["POST"])
+def recorder_api_delete_audio():
+    """
+    Recorder-only:
+    POST { entry_type, entry_id, lang='oromo' }
+    Deletes APPROVED Oromo audio (and file) for that entry.
+    """
+    if not require_recorder():
+        return jsonify({"ok": False, "error": "Recorder login required"}), 401
+
+    entry_type = (request.form.get("entry_type") or "").strip().lower()
+    entry_id_raw = (request.form.get("entry_id") or "").strip()
+    lang = (request.form.get("lang") or "oromo").strip().lower()
+
+    if entry_type not in ("word", "phrase"):
+        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
+    if not entry_id_raw.isdigit():
+        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
+    if lang != "oromo":
+        return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
+
+    entry_id = int(entry_id_raw)
+
+    deleted = delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved",))
+    return jsonify({"ok": True, "deleted": deleted})
+
+
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
 
-@app.route("/api/submit-audio", methods=["POST"])
-def api_submit_audio():
+def _handle_audio_submission(is_recorder: bool):
     """
-    Receives audio from in-page recorder (MediaRecorder).
-    multipart/form-data:
-      entry_type: word|phrase
-      entry_id: int
-      lang: oromo   (ONLY oromo allowed)
-      audio: file
-
-    ✅ Public users:
-      - saves as PENDING
-      - blocks if an APPROVED already exists
-
-    ✅ Recorder users (session["recorder"]==1):
-      - saves as APPROVED immediately
-      - can REPLACE existing approved audio for that entry/lang
+    Shared handler for audio submission.
+    - Public: pending, blocked if approved exists
+    - Recorder: approved immediately, replaces old approved (and removes pending duplicates)
     """
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
@@ -1336,7 +1419,6 @@ def api_submit_audio():
         return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
     if not entry_id_raw.isdigit():
         return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
-
     if lang != "oromo":
         return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
 
@@ -1349,7 +1431,6 @@ def api_submit_audio():
     original = secure_filename(f.filename)
     if "." not in original:
         return jsonify({"ok": False, "error": "Audio file must have an extension (webm/mp3/wav/m4a/ogg)."}), 400
-
     if not allowed_audio(original):
         return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
 
@@ -1363,38 +1444,19 @@ def api_submit_audio():
         c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
     else:
         c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
-
     row = c.fetchone()
     if not row:
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    is_rec = require_recorder()
-
-    if is_rec:
-        # Recorder can replace approved audio
-        c.execute("""
-            SELECT id, file_path
-            FROM audio
-            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
-        """, (entry_type, entry_id, lang))
-        old_rows = c.fetchall()
-
-        c.execute("""
-            DELETE FROM audio
-            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
-        """, (entry_type, entry_id, lang))
-        conn.commit()
-
-        # delete old files
-        for _aid, fp in old_rows:
-            abs_path = _audio_abs_path(fp)
-            if abs_path and os.path.isfile(abs_path):
-                try:
-                    os.remove(abs_path)
-                except Exception:
-                    app.logger.exception(f"Could not delete old approved audio file: {abs_path}")
-
+    if is_recorder:
+        # Recorder replaces old approved AND removes any pending for same entry/lang (clean DB)
+        # Delete old approved + pending rows/files
+        conn.close()
+        delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
+        # reopen to insert
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
     else:
         # Public users: block if approved exists
         c.execute("""
@@ -1413,8 +1475,7 @@ def api_submit_audio():
     f.save(save_path)
 
     rel_path = f"uploads/{new_name}"
-
-    status = "approved" if is_rec else "pending"
+    status = "approved" if is_recorder else "pending"
 
     c.execute("""
         INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
@@ -1426,106 +1487,25 @@ def api_submit_audio():
 
     return jsonify({
         "ok": True,
-        "message": ("Audio saved (auto-approved)." if is_rec else "Oromo audio submitted for admin approval."),
+        "message": ("Saved ✅ Published now." if is_recorder else "Oromo audio submitted for admin approval."),
         "status": status,
         "url": _public_audio_url(rel_path)
     })
 
+
+@app.route("/api/submit-audio", methods=["POST"])
+def api_submit_audio():
+    # Public + recorder (auto-detect via session)
+    return _handle_audio_submission(is_recorder=require_recorder())
+
+
 @app.route("/recorder/api/submit-audio", methods=["POST"])
 def recorder_api_submit_audio():
-    """
-    Recorder-only endpoint:
-    - Requires recorder session
-    - Saves audio as APPROVED immediately
-    - Replaces old approved Oromo audio for that entry
-    """
+    # Recorder-only (kept for compatibility with your current JS)
     if not require_recorder():
         return jsonify({"ok": False, "error": "Recorder login required"}), 401
+    return _handle_audio_submission(is_recorder=True)
 
-    entry_type = (request.form.get("entry_type") or "").strip().lower()
-    entry_id_raw = (request.form.get("entry_id") or "").strip()
-    lang = (request.form.get("lang") or "oromo").strip().lower()
-
-    if entry_type not in ("word", "phrase"):
-        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
-    if not entry_id_raw.isdigit():
-        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
-    if lang != "oromo":
-        return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
-
-    entry_id = int(entry_id_raw)
-
-    f = request.files.get("audio")
-    if not f or not f.filename:
-        return jsonify({"ok": False, "error": "Missing audio file"}), 400
-
-    original = secure_filename(f.filename)
-    if "." not in original:
-        return jsonify({"ok": False, "error": "Audio file must have an extension (webm/mp3/wav/m4a/ogg)."}), 400
-    if not allowed_audio(original):
-        return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
-
-    ext = original.rsplit(".", 1)[1].lower()
-
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    # Entry must exist + approved
-    if entry_type == "word":
-        c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
-    else:
-        c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
-
-    # Delete old approved Oromo audio for this entry (replace)
-    c.execute("""
-        SELECT id, file_path
-        FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
-    """, (entry_type, entry_id, lang))
-    old_rows = c.fetchall()
-
-    c.execute("""
-        DELETE FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
-    """, (entry_type, entry_id, lang))
-
-    conn.commit()
-
-    for _aid, fp in old_rows:
-        abs_path = _audio_abs_path(fp)
-        if abs_path and os.path.isfile(abs_path):
-            try:
-                os.remove(abs_path)
-            except Exception:
-                app.logger.exception(f"Could not delete old approved audio file: {abs_path}")
-
-    # Save new file
-    new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
-    save_path = os.path.join(UPLOAD_FOLDER, new_name)
-    f.save(save_path)
-
-    rel_path = f"uploads/{new_name}"
-
-    c.execute("""
-        INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
-        VALUES (?, ?, ?, ?, 'approved')
-    """, (entry_type, entry_id, lang, rel_path))
-
-    conn.commit()
-    conn.close()
-
-    return jsonify({
-        "ok": True,
-        "message": "Saved ✅ Published now.",
-        "status": "approved",
-        "url": _public_audio_url(rel_path)
-    })
-
-   
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
 
@@ -1680,7 +1660,6 @@ def dashboard():
 
 
 # ------------------ ADMIN MANAGEMENT ------------------
-# (unchanged from your file)
 
 @app.route("/admin/manage", methods=["GET", "POST"])
 def admin_manage():
@@ -2109,7 +2088,6 @@ def reject_phrase(phrase_id):
 
 
 # ------------------ APPROVE / REJECT AUDIO ------------------
-# ✅ Keep GET methods so your current admin_dashboard.html (href links) works.
 
 @app.route("/approve_audio/<int:audio_id>")
 def approve_audio(audio_id):

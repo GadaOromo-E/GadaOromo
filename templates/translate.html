@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -150,7 +151,7 @@
       </div>
     {% endif %}
 
-    <!-- ===== Inline Recording (only when exact match exists) ===== -->
+    <!-- ===== Inline Recording (public, ONLY when exact match exists) ===== -->
     {% if matched %}
       <div style="margin-top:14px;">
         <h2>🎙 Help the community</h2>
@@ -167,41 +168,67 @@
         %}
 
         {% if not has_approved_oromo %}
-          <div class="small-actions" style="margin-top:10px;">
-            <button
-              type="button"
-              class="btn primary"
-              data-record-btn
-              data-entry-type="{{ matched.type }}"
-              data-entry-id="{{ matched.id }}"
-              data-lang="oromo"
-              title="Record Oromo pronunciation"
-            >🎙 Record Oromo</button>
+          <!-- ✅ Put entry info on the widget container so audio.js always works -->
+          <div class="card" style="margin-top:10px;"
+               data-entry-type="{{ matched.type }}"
+               data-entry-id="{{ matched.id }}"
+               data-lang="oromo">
 
-            <button
-              type="button"
-              class="btn"
-              data-stop-btn
-              style="display:none;"
-            >⏹ Stop</button>
+            <div class="small-actions" style="margin-top:6px;">
+              <button
+                type="button"
+                class="btn primary"
+                data-record-btn
+                data-entry-type="{{ matched.type }}"
+                data-entry-id="{{ matched.id }}"
+                data-lang="oromo"
+                title="Record Oromo pronunciation"
+              >🎙 Record Oromo</button>
+
+              <button
+                type="button"
+                class="btn"
+                data-stop-btn
+                data-entry-type="{{ matched.type }}"
+                data-entry-id="{{ matched.id }}"
+                data-lang="oromo"
+                style="display:none;"
+              >⏹ Stop</button>
+            </div>
+
+            <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
+
+            <div class="small-actions" style="margin-top:10px;">
+              <button
+                type="button"
+                class="btn primary"
+                data-submit-btn
+                data-entry-type="{{ matched.type }}"
+                data-entry-id="{{ matched.id }}"
+                data-lang="oromo"
+                style="display:none;"
+              >✅ Submit</button>
+
+              <button
+                type="button"
+                class="btn"
+                data-rerecord-btn
+                data-entry-type="{{ matched.type }}"
+                data-entry-id="{{ matched.id }}"
+                data-lang="oromo"
+                style="display:none;"
+              >🔁 Re-record</button>
+            </div>
+
+            <!-- status compatible with audio.js -->
+            <div class="muted" data-status style="margin-top:8px;"></div>
           </div>
-
-          <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
-
-          <div class="small-actions" style="margin-top:10px;">
-            <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
-            <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
-          </div>
-
-          <!-- ✅ FIX: status element compatible with audio.js -->
-          <div class="muted" data-status style="margin-top:8px;"></div>
         {% else %}
           <div class="muted" style="margin-top:10px;">✅ Oromo audio already approved for this {{ matched.type }}.</div>
         {% endif %}
 
         <div class="small-actions" style="margin-top:10px;">
           <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo">Upload Oromo audio (file)</a>
-          <!-- English upload removed because backend blocks non-oromo -->
         </div>
       </div>
     {% endif %}
@@ -334,7 +361,6 @@ function startVoice(){
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260120"></script>
-
 
 </body>
 </html>

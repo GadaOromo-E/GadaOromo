@@ -1,93 +1,271 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Record Audio | {{ APP_NAME }}</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ APP_NAME }}</title>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 </head>
+
 <body>
+
+<div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
+  <div style="text-align:center;">
+    <div style="font-size:42px;">📘</div>
+    <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
+    <div class="muted" style="margin-top:6px;">Loading…</div>
+  </div>
+</div>
+<script>
+  window.addEventListener("load", () => {
+    const el = document.getElementById("bootSplash");
+    if (el) el.style.display = "none";
+  });
+</script>
+
+<div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+    <div>
+      <b>Update available</b>
+      <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn primary" type="button" data-reload>Reload</button>
+      <button class="btn" type="button" data-close>Later</button>
+    </div>
+  </div>
+</div>
+
+<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
+  <b>Install on iPhone</b>
+  <div class="muted" style="margin-top:6px; line-height:1.5;">
+    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+  </div>
+</div>
+
+<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
+  <span data-msg></span>
+</div>
 
 <div class="container">
 
-  <div class="topbar">
-    <div class="title-row">
-      <div>
-        <h2 style="margin:0;">🎙 Record Oromo Pronunciation</h2>
-        <div class="subtle">{{ entry_type|capitalize }} #{{ entry_id }}</div>
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Your global Oromo ↔ English community dictionary</p>
+
+      <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
+        <a class="btn primary" href="/">🏠 Home</a>
+        <a class="btn" href="/translate">🌍 Translate</a>
+        <a class="btn" href="/learn">📚 Learn language</a>
+        <a class="btn danger" href="/support">❤️ Support the project</a>
+        <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
       </div>
-      <a class="btn" href="/recorder/dashboard">⬅ Back</a>
     </div>
-  </div>
+  </header>
 
-  <div class="card">
-    <div><b>English:</b> {{ english }}</div>
-    <div style="margin-top:6px;"><b>Oromo:</b> {{ oromo }}</div>
-  </div>
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/admin">Admin login</a>
+  </nav>
 
-  {% if audio and audio.oromo %}
-    <div class="card">
-      <div class="subtle">Current LIVE Oromo audio:</div>
-      <audio controls style="width:100%; margin-top:8px;">
-        <source src="{{ audio.oromo }}">
-      </audio>
+  <section class="card">
+    <h2>Search Dictionary</h2>
+
+    <form method="POST" id="searchForm" class="row" style="align-items:stretch;">
+      <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
+      <button type="button" onclick="startVoiceSearch()" title="Speak search">🎤</button>
+      <button type="submit">Search</button>
+    </form>
+
+    <div class="subtle" style="margin-top:10px;">
+      Tip: press 🎤 and speak the word if you can’t type.
     </div>
+
+    {% if result %}
+      <div class="result-box" style="margin-top:14px;">
+        <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
+
+        <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
+
+          {% if result_id %}
+            {% if result_id not in approved_oromo_audio_word_ids %}
+              <!-- ✅ Public can record ONLY from search result -->
+              <button
+                type="button"
+                class="btn"
+                style="padding:8px 10px;"
+                data-record-btn
+                data-entry-type="word"
+                data-entry-id="{{ result_id }}"
+                data-lang="oromo"
+                title="Record Oromo pronunciation"
+              >🎙 Record Oromo</button>
+
+              <button type="button" class="btn" style="padding:8px 10px; display:none;" data-stop-btn>⏹ Stop</button>
+
+              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+
+              <div style="margin-top:8px;">
+                <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
+                <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
+              </div>
+
+              <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
+            {% else %}
+              <span class="muted" style="font-size:14px;">✅ Oromo audio approved</span>
+            {% endif %}
+          {% endif %}
+        </div>
+
+        {% if audio and (audio.oromo or audio.english) %}
+          <div style="margin-top:14px;">
+            <div class="subtle">🎧 Pronunciation</div>
+
+            {% if audio.oromo %}
+              <div class="subtle" style="margin-top:10px;">Oromo audio</div>
+              <audio controls style="width:100%;">
+                <source src="{{ audio.oromo }}">
+              </audio>
+            {% endif %}
+
+            {% if audio.english %}
+              <div class="subtle" style="margin-top:10px;">English audio</div>
+              <audio controls style="width:100%;">
+                <source src="{{ audio.english }}">
+              </audio>
+            {% endif %}
+          </div>
+        {% else %}
+          <div class="muted" style="margin-top:10px;">
+            No approved audio yet. You can help by recording Oromo here.
+          </div>
+        {% endif %}
+
+        <div class="small-actions" style="margin-top:12px;">
+          <button type="button" class="btn" onclick="speakEnglish()">🔊 Speak English</button>
+          <button type="button" class="btn" onclick="speakOromo()">🔊 Speak Oromo</button>
+        </div>
+
+        {% if result_id %}
+          <div class="muted" style="margin-top:8px; font-size:14px;">
+            Recorded Oromo becomes public after admin approval.
+          </div>
+        {% endif %}
+      </div>
+
+    {% elif result is not none %}
+      <div class="result-box" style="margin-top:14px;">No exact match found.</div>
+    {% endif %}
+
+    {% if suggestions %}
+      <div style="margin-top:14px;">
+        <h2>Did you mean…</h2>
+
+        {% if suggestions.en %}
+          <div class="subtle">English suggestions</div>
+          <div class="chips">
+            {% for s in suggestions.en.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.en.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.en.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+          </div>
+        {% endif %}
+
+        {% if suggestions.om %}
+          <div class="subtle" style="margin-top:10px;">Oromo suggestions</div>
+          <div class="chips">
+            {% for s in suggestions.om.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.om.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.om.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    <div class="quick-actions">
+      <a class="btn primary" href="/translate">🌍 Translator</a>
+      <a class="btn" href="/learn">📚 Learning</a>
+      <a class="btn danger" href="/support">❤️ Donate</a>
+      <a class="btn" href="/submit">➕ Add Word</a>
+      <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
+    </div>
+  </section>
+
+  {% if trending %}
+    <section class="card">
+      <h2>🔥 Trending Searches</h2>
+      <div class="chips">
+        {% for t in trending %}
+          <span class="chip" onclick="useSuggestion('{{ t[0]|e }}')">{{ t[0] }} <span class="muted">({{ t[1] }})</span></span>
+        {% endfor %}
+      </div>
+      <div class="subtle" style="margin-top:8px;">Tap a trending word to search it.</div>
+    </section>
   {% endif %}
 
-  <div class="card">
-    <h3>New Recording</h3>
+  <section class="card">
+    <h2>Approved Words</h2>
 
-    <div class="small-actions" style="margin-top:8px;">
-      <button
-        class="btn primary"
-        type="button"
-        data-record-btn
-        data-entry-type="{{ entry_type }}"
-        data-entry-id="{{ entry_id }}"
-        data-lang="oromo"
-      >🎙 Start Recording</button>
+    {% if words and words|length > 0 %}
+      <div class="word-list">
+        {% for w in words %}
+          <div class="word-row" style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+            <div style="flex:1; min-width:0;">
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                <span><b>{{ w[1] }}</b></span>
+                <span class="muted">→</span>
+                <span><b>{{ w[2] }}</b></span>
+                {% if w[0] in approved_oromo_audio_word_ids %}
+                  <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
+                {% endif %}
+              </div>
+            </div>
 
-      <button
-        class="btn"
-        type="button"
-        data-stop-btn
-        data-entry-type="{{ entry_type }}"
-        data-entry-id="{{ entry_id }}"
-        data-lang="oromo"
-        style="display:none;"
-      >⏹ Stop</button>
-    </div>
+            <!-- ✅ Public users can only record by SEARCHING -->
+            <button type="button" class="btn" onclick="useSuggestion('{{ w[1]|e }}')" title="Search this word">Search</button>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No approved words yet. Be the first to submit!</p>
+    {% endif %}
+  </section>
 
-    <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
-
-    <div class="small-actions" style="margin-top:10px;">
-      <button
-        class="btn primary"
-        type="button"
-        data-submit-btn
-        data-entry-type="{{ entry_type }}"
-        data-entry-id="{{ entry_id }}"
-        data-lang="oromo"
-        style="display:none;"
-      >✅ Save (Live)</button>
-
-      <button
-        class="btn"
-        type="button"
-        data-rerecord-btn
-        data-entry-type="{{ entry_type }}"
-        data-entry-id="{{ entry_id }}"
-        data-lang="oromo"
-        style="display:none;"
-      >🔁 Re-record</button>
-    </div>
-
-    <div class="muted" data-status-for="{{ entry_id }}" style="margin-top:10px;"></div>
-  </div>
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary</p>
+  </footer>
 
 </div>
 
-<!-- IMPORTANT: use recorder.js here (not audio.js) -->
-<script src="{{ url_for('static', filename='recorder.js') }}"></script>
+<script>
+/* your existing JS unchanged */
+</script>
+
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260120"></script>
+
 </body>
 </html>
+
+
 

@@ -1,9 +1,11 @@
+
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <title>Recorder Dashboard | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
 
@@ -12,9 +14,9 @@
     <div class="title-row">
       <div>
         <h2 style="margin:0;">🎛 Recorder Dashboard</h2>
-        <div class="subtle">Record live Oromo audio (auto-approved)</div>
+        <div class="subtle">Record live Oromo audio (published instantly)</div>
       </div>
-      <div class="small-actions">
+      <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
         <a class="btn" href="/">Home</a>
         <a class="btn" href="/recorder/logout">Logout</a>
       </div>
@@ -25,35 +27,74 @@
         type="text"
         name="q"
         value="{{ q }}"
-        placeholder="Search word/phrase..."
+        placeholder="Search English or Oromo..."
         style="width:100%;"
+        autocomplete="off"
       >
-      <div class="small-actions" style="margin-top:10px;">
+      <div class="small-actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
         <button class="btn primary" type="submit">Search</button>
         <a class="btn" href="/recorder/dashboard">Clear</a>
       </div>
     </form>
+
+    <!-- Quick stats -->
+    <div class="card" style="margin-top:12px;">
+      <div style="display:flex; gap:16px; flex-wrap:wrap;">
+        <div>
+          <div class="subtle">Words loaded</div>
+          <div style="font-weight:700;">{{ words|length }}</div>
+        </div>
+        <div>
+          <div class="subtle">Phrases loaded</div>
+          <div style="font-weight:700;">{{ phrases|length }}</div>
+        </div>
+        <div>
+          <div class="subtle">Words missing audio</div>
+          <div style="font-weight:700;">
+            {{ (words|length) - (words|selectattr("0", "in", approved_word_ids)|list|length) }}
+          </div>
+        </div>
+        <div>
+          <div class="subtle">Phrases missing audio</div>
+          <div style="font-weight:700;">
+            {{ (phrases|length) - (phrases|selectattr("0", "in", approved_phrase_ids)|list|length) }}
+          </div>
+        </div>
+      </div>
+      <div class="subtle" style="margin-top:8px;">
+        Tip: If audio already exists, you can still record again to replace it.
+      </div>
+    </div>
+
+    <!-- Simple tabs (no JS needed): use anchors -->
+    <div class="small-actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+      <a class="btn" href="#words">Words</a>
+      <a class="btn" href="#phrases">Phrases</a>
+    </div>
   </div>
 
-  <div class="card">
+  <div class="card" id="words">
     <h3 style="margin-top:0;">Words</h3>
     {% if not words %}
       <div class="subtle">No words found.</div>
     {% else %}
       {% for w in words %}
+        {% set has_audio = (w[0] in approved_word_ids) %}
         <div class="word-row" style="padding:10px 0; border-bottom:1px solid rgba(0,0,0,.08);">
           <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-            <div>
-              <div><b>{{ w[1] }}</b></div>
-              <div class="subtle">{{ w[2] }}</div>
-              {% if w[0] in approved_word_ids %}
+            <div style="min-width:0;">
+              <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis;">{{ w[1] }}</div>
+              <div class="subtle" style="overflow:hidden; text-overflow:ellipsis;">{{ w[2] }}</div>
+              {% if has_audio %}
                 <div class="subtle">✅ has live audio</div>
               {% else %}
                 <div class="subtle">⚠️ no live audio</div>
               {% endif %}
             </div>
-            <div class="small-actions">
-              <a class="btn primary" href="/recorder/entry/word/{{ w[0] }}">Record</a>
+            <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+              <a class="btn {% if has_audio %}{% else %}primary{% endif %}" href="/recorder/entry/word/{{ w[0] }}">
+                {% if has_audio %}Replace{% else %}Record{% endif %}
+              </a>
             </div>
           </div>
         </div>
@@ -61,31 +102,35 @@
     {% endif %}
   </div>
 
-  <div class="card">
+  <div class="card" id="phrases">
     <h3 style="margin-top:0;">Phrases</h3>
     {% if not phrases %}
       <div class="subtle">No phrases found.</div>
     {% else %}
       {% for p in phrases %}
+        {% set has_audio = (p[0] in approved_phrase_ids) %}
         <div class="word-row" style="padding:10px 0; border-bottom:1px solid rgba(0,0,0,.08);">
           <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-            <div>
-              <div><b>{{ p[1] }}</b></div>
-              <div class="subtle">{{ p[2] }}</div>
-              {% if p[0] in approved_phrase_ids %}
+            <div style="min-width:0;">
+              <div style="font-weight:700; overflow:hidden; text-overflow:ellipsis;">{{ p[1] }}</div>
+              <div class="subtle" style="overflow:hidden; text-overflow:ellipsis;">{{ p[2] }}</div>
+              {% if has_audio %}
                 <div class="subtle">✅ has live audio</div>
               {% else %}
                 <div class="subtle">⚠️ no live audio</div>
               {% endif %}
             </div>
-            <div class="small-actions">
-              <a class="btn primary" href="/recorder/entry/phrase/{{ p[0] }}">Record</a>
+            <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
+              <a class="btn {% if has_audio %}{% else %}primary{% endif %}" href="/recorder/entry/phrase/{{ p[0] }}">
+                {% if has_audio %}Replace{% else %}Record{% endif %}
+              </a>
             </div>
           </div>
         </div>
       {% endfor %}
     {% endif %}
   </div>
+
 </div>
 
 </body>

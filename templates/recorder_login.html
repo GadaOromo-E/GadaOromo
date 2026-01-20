@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Recorder Login | {{ APP_NAME }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -24,16 +25,26 @@
 
     <form method="POST">
       <label class="subtle">Recorder password</label>
-      <input type="password" name="password" required style="width:100%; margin-top:6px;">
+      <input
+        type="password"
+        name="password"
+        required
+        autofocus
+        autocomplete="current-password"
+        style="width:100%; margin-top:6px;"
+      >
       <div class="small-actions" style="margin-top:12px;">
         <button class="btn primary" type="submit">Login</button>
       </div>
-      <div class="subtle" style="margin-top:10px;">
+
+      <div class="subtle" style="margin-top:10px; line-height:1.5;">
         If you don’t have the password, you can’t access the recorder.
+        <br>Tip: You may need to login again if you clear cookies or open in a new browser.
       </div>
     </form>
   </div>
 </div>
 </body>
 </html>
+
 

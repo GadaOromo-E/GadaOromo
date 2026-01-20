@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin Dashboard | Gadaa Dictionary</title>
+  <title>Admin Dashboard | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -86,7 +86,7 @@
     <h2>Pending Audio</h2>
     <div class="subtle">
       Admin must listen first, then approve or reject.
-      <br>Note: Users should be able to submit multiple recordings (pending). Only <b>approved</b> should block new mic submissions.
+      <br>Note: Users can submit multiple recordings (pending). Only <b>approved</b> should block new mic submissions.
     </div>
 
     {% if pending_audio and pending_audio|length > 0 %}
@@ -100,7 +100,6 @@
               <b>{{ a[1] }}</b> #{{ a[2] }} — <b>{{ a[3] }}</b>
             </div>
 
-            {# Optional: show the dictionary text if available #}
             {% if a[1] == "word" %}
               {% set _row = (words_lookup[a[2]] if words_lookup is defined and a[2] in words_lookup else None) %}
               {% if _row %}
@@ -121,22 +120,17 @@
               {% endif %}
             {% endif %}
 
-            <!-- ✅ Admin can play BEFORE approve/reject -->
+            <!-- ✅ FIX: Correct upload URL -->
             <div class="subtle" style="margin-top:10px;">Audio preview</div>
             <audio controls preload="none" style="width:100%; margin-top:8px;">
-              <source src="{{ url_for('static', filename=a[4]) }}">
+              <source src="/{{ a[4] }}">
               Your browser does not support audio playback.
             </audio>
 
-            <!-- ✅ Use POST to avoid accidental approve/reject -->
+            <!-- ✅ FIX: must be GET links because app.py uses GET routes -->
             <div class="small-actions" style="margin-top:10px;">
-              <form method="POST" action="/approve_audio/{{ a[0] }}" style="margin:0;">
-                <button class="btn primary" type="submit">✅ Approve</button>
-              </form>
-
-              <form method="POST" action="/reject_audio/{{ a[0] }}" style="margin:0;">
-                <button class="btn danger" type="submit" onclick="return confirm('Reject this audio and delete the file?');">❌ Reject</button>
-              </form>
+              <a class="btn primary" href="/approve_audio/{{ a[0] }}">✅ Approve</a>
+              <a class="btn danger" href="/reject_audio/{{ a[0] }}" onclick="return confirm('Reject this audio and delete the file?');">❌ Reject</a>
             </div>
 
             <div class="muted" style="margin-top:8px; font-size:14px;">
@@ -155,6 +149,7 @@
 
 </body>
 </html>
+
 
 
 
