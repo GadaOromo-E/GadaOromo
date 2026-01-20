@@ -1,38 +1,261 @@
-/* static/audio.js
-   - Voice search (🎤) fills #searchWord (home page)
-   - Audio record (🎙) records + previews + uploads to POST /api/submit-audio
-   - Oromo ONLY (record/upload)
-   - Supports MANY rows (each row has its own Stop/Submit/Preview)
+/* static/audio.js (fixed)
+   - Voice search (home) fills #searchWord
+   - Record Oromo pronunciation per row/result, submit to POST /api/submit-audio
+   - Prevents "stuck recording..." by handling MediaRecorder lifecycle safely
 */
 
 (function () {
-  // ---------- Status helpers ----------
-  function findStatusEl(entryType, entryId) {
-    const key1 = `${entryType}_${entryId}`;
-    let el = document.querySelector(`[data-status-for="${key1}"]`);
-    if (el) return el;
+  // One active recording at a time, but unlimited submissions across different entries.
+  const active = {
+    recorder: null,
+    stream: null,
+    widget: null,     // container element (row/result) for current recording
+    chunks: [],
+    entryId: "",      // string (used to update status)
+    stopping: false,  // prevents double-stop
+  };
 
-    el = document.querySelector(`[data-status-for="${entryId}"]`);
-    if (el) return el;
-
-    return null;
+  function $(root, sel) {
+    return root ? root.querySelector(sel) : null;
   }
 
-  function setStatus(entryType, entryId, msg) {
-    const el = findStatusEl(entryType, entryId);
-    if (el) el.textContent = msg || "";
+  function findWidget(el) {
+    return el.closest(".word-row") || el.closest(".result-box") || el.closest("section") || document.body;
   }
 
-  // ---------- Voice Search (home only) ----------
-  window.startVoiceSearch = function startVoiceSearch() {
+  function readInfo(widget, btn) {
+    const entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
+    const entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
+    const lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
+    return { entryType, entryId, lang };
+  }
+
+  function setStatus(widget, entryId, msg) {
+    // Preferred: local [data-status] inside widget
+    const local = $(widget, "[data-status]");
+    if (local) local.textContent = msg || "";
+
+    // Backward compat: global [data-status-for="ID"]
+    if (entryId) {
+      const globalEl = document.querySelector(`[data-status-for="${entryId}"]`);
+      if (globalEl) globalEl.textContent = msg || "";
+    }
+  }
+
+  function pickMime() {
+    if (!window.MediaRecorder) return { mime: "", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return { mime: "audio/webm;codecs=opus", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/webm")) return { mime: "audio/webm", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return { mime: "audio/ogg;codecs=opus", ext: "ogg" };
+    if (MediaRecorder.isTypeSupported("audio/ogg")) return { mime: "audio/ogg", ext: "ogg" };
+    return { mime: "", ext: "webm" };
+  }
+
+  function stopTracks(stream) {
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch (_) {}
+  }
+
+  function resetActive() {
+    active.recorder = null;
+    active.stream = null;
+    active.widget = null;
+    active.chunks = [];
+    active.entryId = "";
+    active.stopping = false;
+  }
+
+  // Gracefully stop current recorder (wait for onstop to finalize UI)
+  function requestStop(reasonText) {
+    if (!active.recorder || active.recorder.state === "inactive") {
+      // even if inactive, release tracks
+      stopTracks(active.stream);
+      resetActive();
+      return;
+    }
+    if (active.stopping) return;
+    active.stopping = true;
+
+    // Update status for the row being recorded
+    if (active.widget) setStatus(active.widget, active.entryId, reasonText || "⏹ Stopping…");
+
+    try {
+      active.recorder.stop();
+    } catch (_) {
+      // If stop fails, force cleanup
+      stopTracks(active.stream);
+      resetActive();
+    }
+  }
+
+  async function startRecording(widget, recordBtn) {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone not supported in this browser.");
+
+    const info = readInfo(widget, recordBtn);
+    if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
+
+    // If something is recording already, stop it first (onstop will cleanup UI)
+    if (active.recorder && active.recorder.state !== "inactive") {
+      requestStop("⏹ Stopped (new recording started).");
+      // Give the browser a moment to fire onstop & release mic
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    const { mime, ext } = pickMime();
+    widget.dataset.ext = ext;
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+
+    // Set active session
+    active.recorder = recorder;
+    active.stream = stream;
+    active.widget = widget;
+    active.chunks = [];
+    active.entryId = info.entryId;
+    active.stopping = false;
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) active.chunks.push(e.data);
+    };
+
+    recorder.onerror = () => {
+      setStatus(widget, info.entryId, "❌ Recorder error.");
+      stopTracks(stream);
+      resetRowUI(widget);
+      resetActive();
+    };
+
+    recorder.onstop = () => {
+      // IMPORTANT: snapshot chunks BEFORE any reset
+      const chunks = active.chunks.slice();
+      const ext2 = widget.dataset.ext || "webm";
+      const mime2 = recorder.mimeType || (ext2 === "ogg" ? "audio/ogg" : "audio/webm");
+
+      // release mic
+      stopTracks(stream);
+
+      // Build blob (may be empty if user stopped instantly)
+      const blob = new Blob(chunks, { type: mime2 });
+      if (!blob || blob.size === 0) {
+        setStatus(widget, info.entryId, "⚠️ No audio captured. Try again.");
+        resetRowUI(widget);
+        resetActive();
+        return;
+      }
+
+      // store blob on widget for submit
+      widget._recordedBlob = blob;
+
+      // preview
+      const preview = $(widget, "[data-preview-audio]");
+      if (preview) {
+        const url = URL.createObjectURL(blob);
+        preview.src = url;
+        preview.style.display = "block";
+        preview.load();
+      }
+
+      // show submit/rerecord
+      const submitBtn = $(widget, "[data-submit-btn]");
+      const rerecordBtn = $(widget, "[data-rerecord-btn]");
+      if (submitBtn) submitBtn.style.display = "inline-block";
+      if (rerecordBtn) rerecordBtn.style.display = "inline-block";
+
+      // restore record/stop buttons
+      const rb = $(widget, "[data-record-btn]");
+      const sb = $(widget, "[data-stop-btn]");
+      if (rb) rb.style.display = "inline-block";
+      if (sb) sb.style.display = "none";
+
+      setStatus(widget, info.entryId, "✅ Recording ready. Submit when you want.");
+      resetActive();
+    };
+
+    recorder.start(200);
+  }
+
+  function resetRowUI(widget) {
+    const rb = $(widget, "[data-record-btn]");
+    const sb = $(widget, "[data-stop-btn]");
+    const submitBtn = $(widget, "[data-submit-btn]");
+    const rerecordBtn = $(widget, "[data-rerecord-btn]");
+    const preview = $(widget, "[data-preview-audio]");
+
+    if (rb) rb.style.display = "inline-block";
+    if (sb) sb.style.display = "none";
+    if (submitBtn) submitBtn.style.display = "none";
+    if (rerecordBtn) rerecordBtn.style.display = "none";
+    if (preview) preview.style.display = "none";
+  }
+
+  async function upload(widget, btn) {
+    const info = readInfo(widget, btn);
+    if (!info.entryType || !info.entryId) {
+      setStatus(widget, info.entryId, "❌ Missing entry info (entry_type/entry_id).");
+      return;
+    }
+    if (info.lang !== "oromo") {
+      setStatus(widget, info.entryId, "❌ Only Oromo audio is allowed.");
+      return;
+    }
+
+    const blob = widget._recordedBlob;
+    if (!blob) {
+      setStatus(widget, info.entryId, "❌ No recording found.");
+      return;
+    }
+
+    setStatus(widget, info.entryId, "⏳ Uploading…");
+
+    const fd = new FormData();
+    fd.append("entry_type", info.entryType);
+    fd.append("entry_id", info.entryId);
+    fd.append("lang", "oromo");
+
+    const ext = widget.dataset.ext || "webm";
+    fd.append("audio", blob, `recording.${ext}`);
+
+    let res, data;
+    try {
+      res = await fetch("/api/submit-audio", { method: "POST", body: fd });
+      data = await res.json().catch(() => null);
+    } catch (e) {
+      console.error(e);
+      setStatus(widget, info.entryId, "❌ Network error uploading audio.");
+      return;
+    }
+
+    if (!res.ok || !data || !data.ok) {
+      const msg = data?.error || `Upload failed (HTTP ${res.status})`;
+      console.error("Upload error:", msg, data);
+      setStatus(widget, info.entryId, "❌ " + msg);
+      return;
+    }
+
+    // Success: hide ONLY this word's mic (as you want)
+    setStatus(widget, info.entryId, "✅ Submitted! Waiting for admin approval.");
+
+    const rb = $(widget, "[data-record-btn]");
+    const sb = $(widget, "[data-stop-btn]");
+    const submitBtn = $(widget, "[data-submit-btn]");
+    const rerecordBtn = $(widget, "[data-rerecord-btn]");
+
+    if (rb) rb.style.display = "none";
+    if (sb) sb.style.display = "none";
+    if (submitBtn) submitBtn.style.display = "none";
+    if (rerecordBtn) rerecordBtn.style.display = "none";
+
+    // clear blob so user can't re-submit same blob accidentally
+    widget._recordedBlob = null;
+  }
+
+  // Voice search (home)
+  window.startVoiceSearch = function () {
     const input = document.getElementById("searchWord");
     if (!input) return alert("Search input not found.");
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Voice search not supported in this browser. Try Chrome on Android/Desktop.");
-      return;
-    }
+    if (!SpeechRecognition) return alert("Voice search not supported. Try Chrome on Android/Desktop.");
 
     const recog = new SpeechRecognition();
     recog.lang = "en-US";
@@ -46,265 +269,102 @@
     };
 
     recog.onerror = (e) => {
-      console.error("SpeechRecognition error:", e);
+      console.error(e);
       alert("Voice search failed: " + (e.error || "unknown error"));
     };
 
-    try {
-      recog.start();
-    } catch (err) {
-      console.error(err);
-      alert("Could not start voice search.");
-    }
+    try { recog.start(); } catch (e) { console.error(e); alert("Could not start voice search."); }
   };
 
-  // ---------- Recording support ----------
-  function pickMimeType() {
-    if (!window.MediaRecorder) return { mime: "", ext: "webm" };
-
-    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return { mime: "audio/webm;codecs=opus", ext: "webm" };
-    if (MediaRecorder.isTypeSupported("audio/webm")) return { mime: "audio/webm", ext: "webm" };
-    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return { mime: "audio/ogg;codecs=opus", ext: "ogg" };
-    if (MediaRecorder.isTypeSupported("audio/ogg")) return { mime: "audio/ogg", ext: "ogg" };
-
-    return { mime: "", ext: "webm" };
-  }
-
-  // One active recording at a time (simplest + safest UX)
-  // But you can record MANY different words one after another.
-  let active = null; // { stream, recorder, chunks, ctx }
-
-  function findScope(btn) {
-    // Best: per-row container
-    return (
-      btn.closest(".word-row") ||
-      btn.closest(".result-box") ||
-      btn.closest(".card") ||
-      btn.parentElement ||
-      document
-    );
-  }
-
-  function buildCtx(btn) {
-    const entryType = (btn.getAttribute("data-entry-type") || "").trim().toLowerCase();
-    const entryId = Number(btn.getAttribute("data-entry-id"));
-    const lang = (btn.getAttribute("data-lang") || "oromo").trim().toLowerCase();
-
-    if (!entryType || !entryId || !Number.isFinite(entryId)) {
-      alert("Missing entry type/id on record button.");
-      return null;
-    }
-
-    // Oromo ONLY
-    if (lang !== "oromo") {
-      alert("Only Oromo audio is allowed.");
-      return null;
-    }
-
-    const scope = findScope(btn);
-
-    // IMPORTANT: query inside the scope (not the whole card/section)
-    const stopBtn = scope.querySelector("[data-stop-btn]");
-    const submitBtn = scope.querySelector("[data-submit-btn]");
-    const rerecordBtn = scope.querySelector("[data-rerecord-btn]");
-    const previewAudio = scope.querySelector("[data-preview-audio]");
-
-    if (!stopBtn || !submitBtn || !rerecordBtn || !previewAudio) {
-      alert("Recording UI elements not found near this word. (Stop/Submit/Preview missing)");
-      return null;
-    }
-
-    return {
-      entryType,
-      entryId,
-      lang: "oromo",
-      recordBtn: btn,
-      stopBtn,
-      submitBtn,
-      rerecordBtn,
-      previewAudio,
-      ext: "webm",
-      blob: null,
-      scope,
-    };
-  }
-
-  async function startRecording(ctx) {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Microphone not supported in this browser.");
-    }
-
-    // If another recording is active, stop it cleanly first
-    if (active?.recorder && active.recorder.state !== "inactive") {
-      try { active.recorder.stop(); } catch (_) {}
-      try { active.stream?.getTracks()?.forEach(t => t.stop()); } catch (_) {}
-      active = null;
-    }
-
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const { mime, ext } = pickMimeType();
-    ctx.ext = ext;
-
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    const chunks = [];
-
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunks.push(e.data);
-    };
-
-    recorder.onstop = () => {
-      const type = recorder.mimeType || (ctx.ext === "ogg" ? "audio/ogg" : "audio/webm");
-      const blob = new Blob(chunks, { type });
-      ctx.blob = blob;
-
-      const url = URL.createObjectURL(blob);
-      ctx.previewAudio.src = url;
-      ctx.previewAudio.style.display = "block";
-      ctx.previewAudio.load();
-
-      ctx.submitBtn.style.display = "inline-block";
-      ctx.rerecordBtn.style.display = "inline-block";
-
-      setStatus(ctx.entryType, ctx.entryId, "✅ Recording ready. Submit when you want.");
-    };
-
-    recorder.start(200);
-
-    active = { stream, recorder, chunks, ctx };
-  }
-
-  function stopRecording(ctx) {
-    if (!active || active.ctx !== ctx) return;
-
-    try {
-      if (active.recorder && active.recorder.state !== "inactive") active.recorder.stop();
-    } catch (_) {}
-
-    try {
-      if (active.stream) {
-        active.stream.getTracks().forEach((t) => t.stop());
-      }
-    } catch (_) {}
-
-    // Keep ctx + blob; clear active recorder state
-    active = null;
-  }
-
-  async function upload(ctx) {
-    if (!ctx.blob) {
-      setStatus(ctx.entryType, ctx.entryId, "❌ No recording found.");
-      return;
-    }
-
-    setStatus(ctx.entryType, ctx.entryId, "⏳ Uploading…");
-
-    const fd = new FormData();
-    fd.append("entry_type", ctx.entryType);
-    fd.append("entry_id", String(ctx.entryId));
-    fd.append("lang", "oromo");
-
-    const filename = `recording.${ctx.ext || "webm"}`;
-    fd.append("audio", ctx.blob, filename);
-
-    let res, data;
-    try {
-      res = await fetch("/api/submit-audio", { method: "POST", body: fd });
-      try { data = await res.json(); } catch (_) { data = null; }
-    } catch (err) {
-      console.error(err);
-      setStatus(ctx.entryType, ctx.entryId, "❌ Network error uploading audio.");
-      return;
-    }
-
-    if (!res.ok || !data || !data.ok) {
-      const msg = data?.error || `Upload failed (HTTP ${res.status})`;
-      console.error("Upload error:", msg, data);
-      setStatus(ctx.entryType, ctx.entryId, "❌ " + msg);
-      return;
-    }
-
-    setStatus(ctx.entryType, ctx.entryId, "✅ Submitted! Waiting for admin approval.");
-    ctx.submitBtn.style.display = "none";
-  }
-
   function wire() {
-    document.querySelectorAll("[data-record-btn]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const ctx = buildCtx(btn);
-        if (!ctx) return;
+    document.addEventListener("click", async (e) => {
+      const recordBtn = e.target.closest("[data-record-btn]");
+      const stopBtn = e.target.closest("[data-stop-btn]");
+      const submitBtn = e.target.closest("[data-submit-btn]");
+      const rerecordBtn = e.target.closest("[data-rerecord-btn]");
 
-        // Reset UI in this scope
-        ctx.recordBtn.style.display = "none";
-        ctx.stopBtn.style.display = "inline-block";
-        ctx.submitBtn.style.display = "none";
-        ctx.rerecordBtn.style.display = "none";
-        ctx.previewAudio.style.display = "none";
+      if (recordBtn) {
+        const widget = findWidget(recordBtn);
+        const info = readInfo(widget, recordBtn);
 
-        setStatus(ctx.entryType, ctx.entryId, "🎙 Recording… (allow microphone permission)");
+        // UI for this widget only
+        recordBtn.style.display = "none";
+        const sb = $(widget, "[data-stop-btn]");
+        if (sb) sb.style.display = "inline-block";
+
+        const preview = $(widget, "[data-preview-audio]");
+        if (preview) preview.style.display = "none";
+
+        const sbtn = $(widget, "[data-submit-btn]");
+        const rbtn = $(widget, "[data-rerecord-btn]");
+        if (sbtn) sbtn.style.display = "none";
+        if (rbtn) rbtn.style.display = "none";
+
+        setStatus(widget, info.entryId, "🎙 Recording…");
 
         try {
-          await startRecording(ctx);
+          await startRecording(widget, recordBtn);
         } catch (err) {
           console.error(err);
-          setStatus(ctx.entryType, ctx.entryId, "❌ " + (err?.message || "Recording failed"));
-          ctx.recordBtn.style.display = "inline-block";
-          ctx.stopBtn.style.display = "none";
+          setStatus(widget, info.entryId, "❌ " + (err?.message || "Recording failed"));
+          // restore UI if start failed
+          recordBtn.style.display = "inline-block";
+          if (sb) sb.style.display = "none";
+          requestStop();
         }
-      });
+        return;
+      }
+
+      if (stopBtn) {
+        const widget = findWidget(stopBtn);
+        const info = readInfo(widget, stopBtn);
+
+        // Stop active recorder no matter which stop button was clicked
+        // (because only one recording can exist anyway)
+        if (active.recorder && active.recorder.state !== "inactive") {
+          requestStop("⏹ Stopped.");
+        } else {
+          setStatus(widget, info.entryId, "⏹ Stopped.");
+          resetRowUI(widget);
+        }
+        return;
+      }
+
+      if (rerecordBtn) {
+        const widget = findWidget(rerecordBtn);
+        const info = readInfo(widget, rerecordBtn);
+
+        widget._recordedBlob = null;
+        const preview = $(widget, "[data-preview-audio]");
+        if (preview) preview.style.display = "none";
+
+        const sbtn = $(widget, "[data-submit-btn]");
+        const rbtn = $(widget, "[data-rerecord-btn]");
+        if (sbtn) sbtn.style.display = "none";
+        if (rbtn) rbtn.style.display = "none";
+
+        setStatus(widget, info.entryId, "");
+        const rb = $(widget, "[data-record-btn]");
+        if (rb) rb.click();
+        return;
+      }
+
+      if (submitBtn) {
+        const widget = findWidget(submitBtn);
+        await upload(widget, submitBtn);
+        return;
+      }
     });
 
-    document.querySelectorAll("[data-stop-btn]").forEach((stopBtn) => {
-      stopBtn.addEventListener("click", () => {
-        // Stop belongs to the same scope as the stop button
-        const scope = stopBtn.closest(".word-row") || stopBtn.closest(".result-box") || stopBtn.closest(".card") || document;
-        const recordBtn = scope.querySelector("[data-record-btn]");
-        if (!recordBtn) return;
-
-        const ctx = buildCtx(recordBtn);
-        if (!ctx) return;
-
-        stopBtn.style.display = "none";
-        stopRecording(ctx);
-
-        // After stop, show record button again (user can re-record or submit)
-        ctx.recordBtn.style.display = "inline-block";
-      });
-    });
-
-    document.querySelectorAll("[data-rerecord-btn]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const scope = btn.closest(".word-row") || btn.closest(".result-box") || btn.closest(".card") || document;
-        const recordBtn = scope.querySelector("[data-record-btn]");
-        if (!recordBtn) return;
-
-        const ctx = buildCtx(recordBtn);
-        if (!ctx) return;
-
-        ctx.blob = null;
-        ctx.previewAudio.style.display = "none";
-        ctx.submitBtn.style.display = "none";
-        ctx.rerecordBtn.style.display = "none";
-        ctx.recordBtn.click();
-      });
-    });
-
-    document.querySelectorAll("[data-submit-btn]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const scope = btn.closest(".word-row") || btn.closest(".result-box") || btn.closest(".card") || document;
-        const recordBtn = scope.querySelector("[data-record-btn]");
-        if (!recordBtn) return;
-
-        const ctx = buildCtx(recordBtn);
-        if (!ctx) return;
-
-        await upload(ctx);
-      });
+    // Safety: if user leaves page while recording, stop mic
+    window.addEventListener("beforeunload", () => {
+      try { requestStop("⏹ Stopped."); } catch (_) {}
+      stopTracks(active.stream);
     });
   }
 
   document.addEventListener("DOMContentLoaded", wire);
 })();
-
 
 
 
