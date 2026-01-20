@@ -21,43 +21,73 @@
 
   <div class="card">
     <div><b>English:</b> {{ english }}</div>
-    <div><b>Oromo:</b> {{ oromo }}</div>
+    <div style="margin-top:6px;"><b>Oromo:</b> {{ oromo }}</div>
   </div>
 
   {% if audio and audio.oromo %}
     <div class="card">
-      <div class="subtle">Current approved Oromo audio:</div>
-      <audio controls style="width:100%;">
+      <div class="subtle">Current LIVE Oromo audio:</div>
+      <audio controls style="width:100%; margin-top:8px;">
         <source src="{{ audio.oromo }}">
       </audio>
     </div>
   {% endif %}
 
-  <div class="card" data-audio-widget
-       data-entry-type="{{ entry_type }}"
-       data-entry-id="{{ entry_id }}"
-       data-lang="oromo">
-
+  <div class="card">
     <h3>New Recording</h3>
 
-    <div class="small-actions">
-      <button class="btn primary" type="button" data-record-btn>🎙 Start Recording</button>
-      <button class="btn" type="button" data-stop-btn style="display:none;">⏹ Stop</button>
+    <div class="small-actions" style="margin-top:8px;">
+      <button
+        class="btn primary"
+        type="button"
+        data-record-btn
+        data-entry-type="{{ entry_type }}"
+        data-entry-id="{{ entry_id }}"
+        data-lang="oromo"
+      >🎙 Start Recording</button>
+
+      <button
+        class="btn"
+        type="button"
+        data-stop-btn
+        data-entry-type="{{ entry_type }}"
+        data-entry-id="{{ entry_id }}"
+        data-lang="oromo"
+        style="display:none;"
+      >⏹ Stop</button>
     </div>
 
     <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
 
     <div class="small-actions" style="margin-top:10px;">
-      <button class="btn primary" type="button" data-submit-btn style="display:none;">✅ Save</button>
-      <button class="btn" type="button" data-rerecord-btn style="display:none;">🔁 Re-record</button>
+      <button
+        class="btn primary"
+        type="button"
+        data-submit-btn
+        data-entry-type="{{ entry_type }}"
+        data-entry-id="{{ entry_id }}"
+        data-lang="oromo"
+        style="display:none;"
+      >✅ Save (Live)</button>
+
+      <button
+        class="btn"
+        type="button"
+        data-rerecord-btn
+        data-entry-type="{{ entry_type }}"
+        data-entry-id="{{ entry_id }}"
+        data-lang="oromo"
+        style="display:none;"
+      >🔁 Re-record</button>
     </div>
 
-    <div class="muted" data-status style="margin-top:8px;"></div>
+    <div class="muted" data-status-for="{{ entry_id }}" style="margin-top:10px;"></div>
   </div>
 
 </div>
 
-<script src="{{ url_for('static', filename='audio.js') }}"></script>
-
+<!-- IMPORTANT: use recorder.js here (not audio.js) -->
+<script src="{{ url_for('static', filename='recorder.js') }}"></script>
 </body>
 </html>
+

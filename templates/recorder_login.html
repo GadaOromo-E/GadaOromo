@@ -6,27 +6,34 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-
 <div class="container">
-  <div class="card">
-    <h2>🎙 Recorder Access</h2>
-    <div class="subtle">Authorized people only</div>
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">🔒 Recorder Login</h2>
+        <div class="subtle">Private access for live audio recording</div>
+      </div>
+      <a class="btn" href="/">⬅ Home</a>
+    </div>
+  </div>
 
+  <div class="card">
     {% if msg %}
-      <div class="result-box">{{ msg }}</div>
+      <div class="muted" style="margin-bottom:10px;">{{ msg }}</div>
     {% endif %}
 
     <form method="POST">
-      <label>Password</label>
-      <input type="password" name="password" required>
-
-      <div style="margin-top:10px;">
-        <button type="submit" class="btn primary">Login</button>
-        <a href="/" class="btn">Cancel</a>
+      <label class="subtle">Recorder password</label>
+      <input type="password" name="password" required style="width:100%; margin-top:6px;">
+      <div class="small-actions" style="margin-top:12px;">
+        <button class="btn primary" type="submit">Login</button>
+      </div>
+      <div class="subtle" style="margin-top:10px;">
+        If you don’t have the password, you can’t access the recorder.
       </div>
     </form>
   </div>
 </div>
-
 </body>
 </html>
+

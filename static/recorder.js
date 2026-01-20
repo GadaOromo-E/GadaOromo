@@ -1,25 +1,26 @@
-/* static/recorder.js
-   Mic recording + preview + upload to /api/submit-audio
-   Buttons must have:
-     - data-record-btn  (with data-entry-type, data-entry-id, data-lang)
-     - data-stop-btn
-     - data-preview-audio
-     - data-submit-btn
-     - data-rerecord-btn
-     - optional: data-trim-box + trim inputs (we’ll ignore trimming if not present)
+/* static/recorder.js (FIXED)
+   Recorder-only recording:
+   - Uploads to POST /recorder/api/submit-audio  ✅ (auto-approved + replace)
+   - Shows Preview + Save (publish) + Re-record
+   - Keeps it private: server requires recorder session, otherwise 401
+   - Uses your existing data-* buttons:
+       data-record-btn  (must have data-entry-type, data-entry-id, data-lang="oromo")
+       data-stop-btn
+       data-preview-audio
+       data-submit-btn   (we treat as SAVE button)
+       data-rerecord-btn
 */
 
 (() => {
-  const $ = (sel, root=document) => root.querySelector(sel);
-  const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  function setStatus(entryIdOrKey, msg) {
-    const el = document.querySelector(`[data-status-for="${entryIdOrKey}"]`);
+  function setStatus(key, msg) {
+    const el = document.querySelector(`[data-status-for="${key}"]`);
     if (el) el.textContent = msg || "";
   }
 
   function toast(msg) {
-    // Use your existing toast if present, else alert fallback
     const t = document.getElementById("pwaToast");
     if (t) {
       const msgEl = t.querySelector("[data-msg]");
@@ -31,32 +32,23 @@
         t.style.opacity = "0";
         setTimeout(() => (t.style.display = "none"), 200);
       }, 2000);
-      try { navigator.vibrate?.(10); } catch(_) {}
+      try { navigator.vibrate?.(10); } catch (_) {}
     } else {
       alert(msg);
     }
   }
 
-  // Check support
   const hasGetUserMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   const hasMediaRecorder = typeof window.MediaRecorder !== "undefined";
 
-  if (!hasGetUserMedia) {
-    // No mic support at all
-    console.warn("getUserMedia not supported");
-  }
-
-  // Keep one active recorder at a time
+  // One active recording at a time
   let active = null; // { recorder, stream, chunks, blob, url, mimeType, entryType, entryId, lang, ui... }
 
   function stopTracks(stream) {
-    try {
-      stream.getTracks().forEach(t => t.stop());
-    } catch (_) {}
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch (_) {}
   }
 
   function pickMimeType() {
-    // Prefer webm (Chrome), then ogg
     const candidates = [
       "audio/webm;codecs=opus",
       "audio/webm",
@@ -68,39 +60,43 @@
         if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
       } catch (_) {}
     }
-    return ""; // let browser decide
+    return "";
+  }
+
+  function extFromMime(mimeType) {
+    const mt = (mimeType || "").toLowerCase();
+    if (mt.includes("ogg")) return "ogg";
+    if (mt.includes("webm")) return "webm";
+    return "webm";
   }
 
   async function startRecording(btn) {
-    if (!hasGetUserMedia) {
-      toast("Microphone not supported in this browser.");
-      return;
-    }
-    if (!hasMediaRecorder) {
-      // iPhone Safari often ends here
-      toast("Recording not supported on this browser. Try Chrome on Android or desktop.");
-      return;
-    }
+    if (!hasGetUserMedia) return toast("Microphone not supported in this browser.");
+    if (!hasMediaRecorder) return toast("Recording not supported here. Try Chrome on Android/Desktop.");
 
-    // If already recording something else, stop it
-    if (active && active.recorder && active.recorder.state === "recording") {
+    // stop any current recording
+    if (active?.recorder?.state === "recording") {
       try { active.recorder.stop(); } catch (_) {}
     }
 
-    const entryType = (btn.dataset.entryType || "").trim();
+    const entryType = (btn.dataset.entryType || "").trim().toLowerCase();
     const entryId = (btn.dataset.entryId || "").trim();
-    const lang = (btn.dataset.lang || "oromo").trim();
+    const lang = (btn.dataset.lang || "oromo").trim().toLowerCase();
 
-    const key = entryId; // for status elements on home
-    const key2 = `${entryType}_${entryId}`; // translate page uses this
-    setStatus(key, "Requesting microphone…");
-    setStatus(key2, "Requesting microphone…");
+    if (!entryType || !entryId) return toast("Missing entry info on button (entry_type/entry_id).");
+    if (lang !== "oromo") return toast("Recorder only allows Oromo audio.");
 
-    // Find related UI in the same card/container
-    const root = btn.closest(".result-box, .word-row, .card, body") || document.body;
+    // status keys used by your templates
+    const keyWord = entryId;
+    const keyCombo = `${entryType}_${entryId}`;
+
+    setStatus(keyWord, "Requesting microphone…");
+    setStatus(keyCombo, "Requesting microphone…");
+
+    const root = btn.closest(".result-box, .word-row, .card, section, body") || document.body;
     const stopBtn = root.querySelector("[data-stop-btn]");
     const preview = root.querySelector("[data-preview-audio]");
-    const submitBtn = root.querySelector("[data-submit-btn]");
+    const saveBtn = root.querySelector("[data-submit-btn]"); // SAVE
     const rerecordBtn = root.querySelector("[data-rerecord-btn]");
 
     try {
@@ -109,67 +105,101 @@
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
       const chunks = [];
+
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunks.push(e.data);
       };
 
       recorder.onstart = () => {
-        setStatus(key, "Recording…");
-        setStatus(key2, "Recording…");
-        if (btn) btn.style.display = "none";
+        setStatus(keyWord, "Recording…");
+        setStatus(keyCombo, "Recording…");
+
+        btn.style.display = "none";
         if (stopBtn) stopBtn.style.display = "inline-block";
-        if (submitBtn) submitBtn.style.display = "none";
+
+        if (saveBtn) {
+          saveBtn.style.display = "none";
+          saveBtn.disabled = false;
+          saveBtn.textContent = saveBtn.dataset.saveLabel || "💾 Save";
+        }
         if (rerecordBtn) rerecordBtn.style.display = "none";
         if (preview) preview.style.display = "none";
+
         toast("Recording…");
-        try { navigator.vibrate?.(20); } catch(_) {}
       };
 
       recorder.onstop = () => {
         stopTracks(stream);
 
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const finalMime = recorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(chunks, { type: finalMime });
+
+        if (!blob || blob.size === 0) {
+          setStatus(keyWord, "No audio captured. Try again.");
+          setStatus(keyCombo, "No audio captured. Try again.");
+          btn.style.display = "inline-block";
+          if (stopBtn) stopBtn.style.display = "none";
+          return;
+        }
+
         const url = URL.createObjectURL(blob);
 
         if (preview) {
           preview.src = url;
           preview.style.display = "block";
+          preview.load();
         }
 
-        setStatus(key, "Recorded. Preview and submit ✅");
-        setStatus(key2, "Recorded. Preview and submit ✅");
+        setStatus(keyWord, "Recorded ✅ Click Save to publish.");
+        setStatus(keyCombo, "Recorded ✅ Click Save to publish.");
 
         if (stopBtn) stopBtn.style.display = "none";
-        if (btn) btn.style.display = "inline-block";
-        if (submitBtn) submitBtn.style.display = "inline-block";
+        btn.style.display = "inline-block";
+        if (saveBtn) saveBtn.style.display = "inline-block";
         if (rerecordBtn) rerecordBtn.style.display = "inline-block";
 
         active = {
-          recorder, stream, chunks, blob, url,
-          mimeType: recorder.mimeType || "audio/webm",
-          entryType, entryId, lang,
-          ui: { btn, stopBtn, preview, submitBtn, rerecordBtn, key, key2 }
+          recorder,
+          stream: null,
+          chunks: [],
+          blob,
+          url,
+          mimeType: finalMime,
+          entryType,
+          entryId,
+          lang,
+          ui: { btn, stopBtn, preview, saveBtn, rerecordBtn, keyWord, keyCombo, root }
         };
+
         toast("Recorded ✅");
-        try { navigator.vibrate?.(10); } catch(_) {}
       };
 
-      // Save active state early
-      active = { recorder, stream, chunks, blob: null, url: null, mimeType, entryType, entryId, lang,
-                 ui: { btn, stopBtn, preview, submitBtn, rerecordBtn, key, key2 } };
+      // set active early
+      active = {
+        recorder,
+        stream,
+        chunks,
+        blob: null,
+        url: null,
+        mimeType,
+        entryType,
+        entryId,
+        lang,
+        ui: { btn, stopBtn, preview, saveBtn, rerecordBtn, keyWord, keyCombo, root }
+      };
 
       recorder.start();
 
     } catch (err) {
       console.error(err);
-      setStatus(key, "Mic blocked. Allow microphone permission.");
-      setStatus(key2, "Mic blocked. Allow microphone permission.");
-      toast("Microphone blocked. Please allow permission in browser settings.");
+      setStatus(keyWord, "Mic blocked. Allow microphone permission.");
+      setStatus(keyCombo, "Mic blocked. Allow microphone permission.");
+      toast("Microphone blocked. Allow permission in browser settings.");
     }
   }
 
   function stopRecording() {
-    if (!active || !active.recorder) return;
+    if (!active?.recorder) return;
     try {
       if (active.recorder.state === "recording") active.recorder.stop();
     } catch (err) {
@@ -177,54 +207,70 @@
     }
   }
 
-  async function submitRecording() {
-    if (!active || !active.blob) {
-      toast("No recording found.");
-      return;
-    }
+  async function saveRecording() {
+    if (!active?.blob) return toast("No recording found.");
 
     const { entryType, entryId, lang, blob, mimeType, ui } = active;
-    const { key, key2, submitBtn } = ui || {};
+    const { keyWord, keyCombo, saveBtn, root } = ui || {};
 
-    setStatus(key, "Uploading…");
-    setStatus(key2, "Uploading…");
-    if (submitBtn) submitBtn.disabled = true;
+    setStatus(keyWord, "Saving…");
+    setStatus(keyCombo, "Saving…");
+    if (saveBtn) saveBtn.disabled = true;
 
-    // Choose extension based on mimeType
-    let ext = "webm";
-    const mt = (mimeType || "").toLowerCase();
-    if (mt.includes("ogg")) ext = "ogg";
-    if (mt.includes("webm")) ext = "webm";
+    const ext = extFromMime(mimeType);
 
     const fd = new FormData();
     fd.append("entry_type", entryType);
     fd.append("entry_id", entryId);
     fd.append("lang", lang);
-
-    // IMPORTANT: give filename with extension so your backend accepts it
     fd.append("audio", blob, `recording.${ext}`);
 
     try {
-      const res = await fetch("/api/submit-audio", { method: "POST", body: fd });
+      // ✅ IMPORTANT: recorder endpoint
+      const res = await fetch("/recorder/api/submit-audio", { method: "POST", body: fd });
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.ok) {
-        const msg = data.error || `Upload failed (${res.status})`;
-        setStatus(key, msg);
-        setStatus(key2, msg);
+        const msg = data.error || `Save failed (${res.status})`;
+        setStatus(keyWord, msg);
+        setStatus(keyCombo, msg);
         toast(msg);
-      } else {
-        setStatus(key, "Submitted ✅ Waiting for admin approval.");
-        setStatus(key2, "Submitted ✅ Waiting for admin approval.");
-        toast("Submitted ✅");
+
+        // If unauthorized, likely not logged in
+        if (res.status === 401) {
+          toast("Recorder login required. Please login again.");
+          window.location.href = "/recorder";
+        }
+        return;
       }
+
+      // ✅ success
+      setStatus(keyWord, "Saved ✅ Published now.");
+      setStatus(keyCombo, "Saved ✅ Published now.");
+      toast("Saved ✅ Published");
+
+      // If template has an "approved audio" player, update it
+      const approvedPlayer = root?.querySelector("[data-approved-audio]");
+      if (approvedPlayer && data.url) {
+        approvedPlayer.src = data.url;
+        approvedPlayer.style.display = "block";
+        approvedPlayer.load();
+      }
+
+      // Hide save + rerecord after save (optional)
+      if (ui?.saveBtn) ui.saveBtn.style.display = "none";
+      if (ui?.rerecordBtn) ui.rerecordBtn.style.display = "none";
+
+      // clean blob so it won't re-submit accidentally
+      active.blob = null;
+
     } catch (err) {
       console.error(err);
-      setStatus(key, "Upload failed. Check internet.");
-      setStatus(key2, "Upload failed. Check internet.");
-      toast("Upload failed. Check internet.");
+      setStatus(keyWord, "Save failed. Check internet.");
+      setStatus(keyCombo, "Save failed. Check internet.");
+      toast("Save failed. Check internet.");
     } finally {
-      if (submitBtn) submitBtn.disabled = false;
+      if (saveBtn) saveBtn.disabled = false;
     }
   }
 
@@ -233,28 +279,31 @@
     try {
       if (active.url) URL.revokeObjectURL(active.url);
     } catch (_) {}
-    // Start new recording on the original button
+
     const btn = active.ui?.btn;
     active = null;
     if (btn) startRecording(btn);
   }
 
-  // Wire up all buttons
   function bind() {
     $$("[data-record-btn]").forEach((btn) => {
       btn.addEventListener("click", () => startRecording(btn));
     });
-
     $$("[data-stop-btn]").forEach((btn) => {
       btn.addEventListener("click", () => stopRecording());
     });
-
+    // recorder: submit button is SAVE
     $$("[data-submit-btn]").forEach((btn) => {
-      btn.addEventListener("click", () => submitRecording());
+      btn.addEventListener("click", () => saveRecording());
     });
-
     $$("[data-rerecord-btn]").forEach((btn) => {
       btn.addEventListener("click", () => rerecord());
+    });
+
+    // Safety cleanup
+    window.addEventListener("beforeunload", () => {
+      try { stopRecording(); } catch (_) {}
+      try { stopTracks(active?.stream); } catch (_) {}
     });
   }
 

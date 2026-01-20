@@ -5,7 +5,7 @@ Created on Sun Jan 11 16:32:35 2026
 @author: ademo
 """
 """
-Gada Oromo Dictionary - Flask + SQLite + PWA-ready
+Gadaa Dictionary - Flask + SQLite + PWA-ready
 
 ✅ Includes:
 - Dictionary search + translate pages
@@ -1431,6 +1431,101 @@ def api_submit_audio():
         "url": _public_audio_url(rel_path)
     })
 
+@app.route("/recorder/api/submit-audio", methods=["POST"])
+def recorder_api_submit_audio():
+    """
+    Recorder-only endpoint:
+    - Requires recorder session
+    - Saves audio as APPROVED immediately
+    - Replaces old approved Oromo audio for that entry
+    """
+    if not require_recorder():
+        return jsonify({"ok": False, "error": "Recorder login required"}), 401
+
+    entry_type = (request.form.get("entry_type") or "").strip().lower()
+    entry_id_raw = (request.form.get("entry_id") or "").strip()
+    lang = (request.form.get("lang") or "oromo").strip().lower()
+
+    if entry_type not in ("word", "phrase"):
+        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
+    if not entry_id_raw.isdigit():
+        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
+    if lang != "oromo":
+        return jsonify({"ok": False, "error": "Only Oromo audio is allowed."}), 400
+
+    entry_id = int(entry_id_raw)
+
+    f = request.files.get("audio")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Missing audio file"}), 400
+
+    original = secure_filename(f.filename)
+    if "." not in original:
+        return jsonify({"ok": False, "error": "Audio file must have an extension (webm/mp3/wav/m4a/ogg)."}), 400
+    if not allowed_audio(original):
+        return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
+
+    ext = original.rsplit(".", 1)[1].lower()
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # Entry must exist + approved
+    if entry_type == "word":
+        c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
+
+    # Delete old approved Oromo audio for this entry (replace)
+    c.execute("""
+        SELECT id, file_path
+        FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+    """, (entry_type, entry_id, lang))
+    old_rows = c.fetchall()
+
+    c.execute("""
+        DELETE FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+    """, (entry_type, entry_id, lang))
+
+    conn.commit()
+
+    for _aid, fp in old_rows:
+        abs_path = _audio_abs_path(fp)
+        if abs_path and os.path.isfile(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                app.logger.exception(f"Could not delete old approved audio file: {abs_path}")
+
+    # Save new file
+    new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+    save_path = os.path.join(UPLOAD_FOLDER, new_name)
+    f.save(save_path)
+
+    rel_path = f"uploads/{new_name}"
+
+    c.execute("""
+        INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+        VALUES (?, ?, ?, ?, 'approved')
+    """, (entry_type, entry_id, lang, rel_path))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "ok": True,
+        "message": "Saved ✅ Published now.",
+        "status": "approved",
+        "url": _public_audio_url(rel_path)
+    })
+
+   
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
 
