@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gadaa AI | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <!-- PWA -->
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+</head>
+<body>
+
+<div class="container">
+
+  <div class="topbar">
+    <div class="title-row" style="align-items:flex-start;">
+      <div>
+        <h2 style="margin:0; color:#fff;">🤖 Gadaa AI</h2>
+        <div class="tagline">Free demo • Oromo + English • Promo mode</div>
+
+        <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
+          <a class="btn" href="/">🏠 Home</a>
+          <a class="btn" href="/translate">🌍 Translate</a>
+          <a class="btn" href="/recorder">🎙 Add Voice</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Chat with Gadaa AI (Free Demo)</h2>
+    <div class="muted" style="line-height:1.5;">
+      This demo uses your dictionary database (SQLite). It can:
+      <ul style="margin-top:8px; padding-left:18px;">
+        <li>Find exact word/phrase matches</li>
+        <li>Give mini-lessons + examples</li>
+        <li>Create quick quizzes</li>
+        <li>Suggest similar terms</li>
+      </ul>
+      <div style="margin-top:8px;">
+        Try: <code>hello</code>, <code>quiz me</code>, <code>suggest water</code>
+      </div>
+    </div>
+
+    <div id="aiChat" style="margin-top:14px;">
+      <div id="aiLog" class="result-box" style="min-height:160px; white-space:pre-wrap;"></div>
+
+      <div class="row" style="margin-top:10px; align-items:stretch;">
+        <input id="aiInput" type="text" placeholder="Type in Oromo or English..." />
+        <button id="aiSend" type="button">Send</button>
+      </div>
+
+      <div class="muted" id="aiStatus" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  {% if trending %}
+    <div class="card">
+      <h2>🔥 Trending</h2>
+      <div class="chips">
+        {% for row in trending %}
+          <span class="chip" data-pick="{{ row[0] }}">{{ row[0] }}</span>
+        {% endfor %}
+      </div>
+      <div class="subtle" style="margin-top:8px;">Tap a word to ask Gadaa AI about it.</div>
+    </div>
+  {% endif %}
+
+</div>
+
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+<script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260120"></script>
+</body>
+</html>

@@ -2156,6 +2156,215 @@ def create_admin():
     return "Admin created (or already exists). You can now login."
 
 
+
+# ------------------ GADAA AI (FREE DEMO - NO PAID API) ------------------
+# URL: /gadaa-ai
+# - bilingual Oromo + English
+# - rule-based tutor using your own SQLite dictionary
+# - promo-friendly, no card required
+# - later: can swap backend to paid AI without changing UI
+
+from collections import defaultdict
+import time
+
+# Simple in-memory rate limit (per IP). Resets on restart (OK for demo).
+_AI_LIMIT_WINDOW_SEC = 60
+_AI_LIMIT_MAX_REQ = 20
+_ai_hits = defaultdict(list)  # ip -> [timestamps]
+
+def _client_ip():
+    # Works behind proxies with ProxyFix
+    return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or request.remote_addr
+            or "unknown")
+
+def _rate_limit_ok():
+    ip = _client_ip()
+    now = time.time()
+    hits = _ai_hits[ip]
+    # keep only last window
+    hits = [t for t in hits if now - t < _AI_LIMIT_WINDOW_SEC]
+    if len(hits) >= _AI_LIMIT_MAX_REQ:
+        _ai_hits[ip] = hits
+        return False, ip, len(hits)
+    hits.append(now)
+    _ai_hits[ip] = hits
+    return True, ip, len(hits)
+
+def _db_lookup_word_or_phrase(q: str):
+    """
+    Try exact match in phrases then words (approved only).
+    Returns dict: {"type": "phrase"/"word", "id": int, "english": str, "oromo": str} or None
+    """
+    clean = normalize_text(q)
+    if not clean:
+        return None
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # phrases exact match
+    c.execute("SELECT id, english, oromo FROM phrases WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
+              (clean, clean))
+    r = c.fetchone()
+    if r:
+        conn.close()
+        return {"type": "phrase", "id": r[0], "english": r[1], "oromo": r[2]}
+
+    # word exact match (single token)
+    if len(clean.split()) == 1:
+        c.execute("SELECT id, english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
+                  (clean, clean))
+        r = c.fetchone()
+        if r:
+            conn.close()
+            return {"type": "word", "id": r[0], "english": r[1], "oromo": r[2]}
+
+    conn.close()
+    return None
+
+def _db_suggest(clean: str, limit=6):
+    """
+    Suggestions from both directions.
+    """
+    s_en = suggest_terms(clean, "en_om", limit=limit)
+    s_om = suggest_terms(clean, "om_en", limit=limit)
+    # flatten unique
+    items = []
+    for k in ("closest", "prefix", "partial"):
+        items += s_en.get(k, [])
+        items += s_om.get(k, [])
+    out = []
+    seen = set()
+    for x in items:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+        if len(out) >= limit:
+            break
+    return out
+
+def _make_lesson_card(entry: dict):
+    """
+    Build a small “teacher style” response.
+    """
+    en = entry["english"]
+    om = entry["oromo"]
+
+    # very lightweight “lesson”
+    examples = []
+    if entry["type"] == "word":
+        examples = [
+            f"Example (EN): I use **{en}** in a sentence.",
+            f"Example (OM): Ani jecha **{om}** keessatti fayyadama."
+        ]
+    else:
+        examples = [
+            f"Example (EN): **{en}**",
+            f"Example (OM): **{om}**"
+        ]
+
+    quiz = [
+        f"Quick quiz: What is the Oromo for **{en}**?",
+        f"Answer: **{om}**"
+    ]
+
+    return {
+        "title": f"📘 {entry['type'].capitalize()} lesson",
+        "english": en,
+        "oromo": om,
+        "examples": examples,
+        "quiz": quiz,
+        "audio": get_approved_audio(entry["type"], entry["id"])  # shows Oromo if exists
+    }
+
+@app.route("/gadaa-ai", methods=["GET"])
+def gadaa_ai_page():
+    trending = get_trending(limit=12)
+    return render_template("gadaa_ai.html", trending=trending)
+
+@app.route("/api/gadaa-ai", methods=["POST"])
+def gadaa_ai_api():
+    ok, ip, count = _rate_limit_ok()
+    if not ok:
+        return jsonify({
+            "ok": False,
+            "error": "Too many requests. Please wait 1 minute and try again."
+        }), 429
+
+    data = request.get_json(silent=True) or {}
+    msg = (data.get("message") or "").strip()
+    if not msg:
+        return jsonify({"ok": False, "error": "Empty message"}), 400
+
+    clean = normalize_text(msg)
+
+    # basic commands
+    if clean in ("help", "what can you do", "menu"):
+        return jsonify({
+            "ok": True,
+            "reply": {
+                "type": "text",
+                "text": (
+                    "Hi! I’m **Gadaa AI (free demo)**.\n\n"
+                    "Try:\n"
+                    "- Type a word/phrase in Oromo or English (exact match)\n"
+                    "- Ask: `quiz me` or `lesson`\n"
+                    "- Ask: `suggest <word>`\n\n"
+                    "Note: This demo uses your dictionary database (no paid AI yet)."
+                )
+            }
+        })
+
+    if clean.startswith("suggest "):
+        term = clean.replace("suggest ", "", 1).strip()
+        sug = _db_suggest(term, limit=8) if term else []
+        if not sug:
+            text = "No suggestions found."
+        else:
+            text = "Suggestions: " + ", ".join(sug)
+        return jsonify({"ok": True, "reply": {"type": "text", "text": text}})
+
+    # "quiz me" -> use a trending query if exists, else generic
+    if clean in ("quiz me", "quiz", "test me"):
+        trending = get_trending(limit=1)
+        pick = trending[0][0] if trending else "hello"
+        entry = _db_lookup_word_or_phrase(pick) or _db_lookup_word_or_phrase("hello")
+        if entry:
+            card = _make_lesson_card(entry)
+            return jsonify({"ok": True, "reply": {"type": "card", "card": card}})
+        return jsonify({"ok": True, "reply": {"type": "text", "text": "I need more approved words/phrases to quiz you."}})
+
+    # Normal: try dictionary lookup
+    entry = _db_lookup_word_or_phrase(msg)
+    if entry:
+        card = _make_lesson_card(entry)
+        return jsonify({"ok": True, "reply": {"type": "card", "card": card}})
+
+    # Not found: suggestions
+    sug = _db_suggest(clean, limit=8) if clean else []
+    if sug:
+        return jsonify({
+            "ok": True,
+            "reply": {
+                "type": "text",
+                "text": "I couldn't find an exact match. Try one of these: " + ", ".join(sug)
+            }
+        })
+
+    return jsonify({
+        "ok": True,
+        "reply": {
+            "type": "text",
+            "text": (
+                "I couldn't find that in the dictionary yet.\n"
+                "Tip: try a simpler word, or submit it via **Submit Word / Submit Phrase**."
+            )
+        }
+    })
+
+
+
 # ------------------ RUN ------------------
 
 if __name__ == "__main__":
