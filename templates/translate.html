@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -79,6 +78,8 @@
           <a class="btn primary" href="/translate">🔁 Translate</a>
           <a class="btn" href="/learn">📚 Learn</a>
           <a class="btn danger" href="/support">❤️ Support</a>
+          <a class="btn" href="/recorder">🎙 Add Voice</a>
+          <a class="btn" href="/gadaa-ai">🤖 Gadaa AI</a>
           <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
         </div>
       </div>
@@ -131,7 +132,7 @@
         <h2>🎧 Community Pronunciation</h2>
 
         {% if audio.oromo %}
-          <div class="subtle">Oromo audio</div>
+          <div class="subtle">Oromo audio (saved)</div>
           <audio controls style="width:100%;">
             <source src="{{ audio.oromo }}">
           </audio>
@@ -144,10 +145,11 @@
           </audio>
         {% endif %}
       </div>
-    {% elif audio %}
+    {% elif result %}
+      <!-- show a helpful message when there is a result but no matched audio -->
       <div style="margin-top:14px;">
         <h2>🎧 Community Pronunciation</h2>
-        <div class="muted">No approved audio yet.</div>
+        <div class="muted">No saved Oromo audio found for this translation yet.</div>
       </div>
     {% endif %}
 
@@ -168,7 +170,6 @@
         %}
 
         {% if not has_approved_oromo %}
-          <!-- ✅ Put entry info on the widget container so audio.js always works -->
           <div class="card" style="margin-top:10px;"
                data-entry-type="{{ matched.type }}"
                data-entry-id="{{ matched.id }}"
@@ -220,7 +221,6 @@
               >🔁 Re-record</button>
             </div>
 
-            <!-- status compatible with audio.js -->
             <div class="muted" data-status style="margin-top:8px;"></div>
           </div>
         {% else %}
@@ -360,14 +360,11 @@ function startVoice(){
 </script>
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260120"></script>
-<a class="btn" href="/recorder">🎙 Add Voice</a>
-<a class="btn" href="/gadaa-ai">🤖 Gadaa AI</a>
-
+<!-- ✅ bump to ensure new audio.js loads -->
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260124-11"></script>
 
 </body>
 </html>
-
 
 
 
