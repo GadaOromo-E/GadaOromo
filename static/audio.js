@@ -1,7 +1,11 @@
-/* static/audio.js (fixed)
+/* static/audio.js (updated)
    - Voice search (home) fills #searchWord
    - Record Oromo pronunciation per row/result, submit to POST /api/submit-audio
-   - Prevents "stuck recording..." by handling MediaRecorder lifecycle safely
+   - Fixes "auto logout" by:
+       ✅ sending cookies with fetch (credentials: same-origin)
+       ✅ preventing silent redirects (redirect: manual)
+       ✅ handling login HTML responses safely
+       ✅ no-store cache (helps with PWA/service-worker oddities)
 */
 
 (function () {
@@ -14,6 +18,10 @@
     entryId: "",      // string (used to update status)
     stopping: false,  // prevents double-stop
   };
+
+  // If you use CSRF (Flask-WTF), add: <meta name="csrf-token" content="{{ csrf_token() }}">
+  const CSRF_TOKEN =
+    document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || null;
 
   function $(root, sel) {
     return root ? root.querySelector(sel) : null;
@@ -188,6 +196,28 @@
     if (preview) preview.style.display = "none";
   }
 
+  // ✅ safe JSON: returns {ok:false, error:"..."} when server gives HTML or non-json
+  async function safeJson(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      // Could be HTML (login page) or text error
+      const txt = await res.text().catch(() => "");
+      return { ok: false, error: txt ? "Server returned non-JSON response." : "Server returned non-JSON response." };
+    }
+    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
+  }
+
+  function looksLikeLoginRedirect(res) {
+    // If server redirects to login, many setups end up with HTML content.
+    // With redirect:"manual", res.type can be "opaqueredirect" in some browsers.
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) return true;
+    if (res.type === "opaqueredirect") return true;
+    if (res.redirected) return true;
+    if (ct.includes("text/html")) return true;
+    return false;
+  }
+
   async function upload(widget, btn) {
     const info = readInfo(widget, btn);
     if (!info.entryType || !info.entryId) {
@@ -215,15 +245,32 @@
     const ext = widget.dataset.ext || "webm";
     fd.append("audio", blob, `recording.${ext}`);
 
-    let res, data;
+    const headers = {};
+    if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
+
+    let res;
     try {
-      res = await fetch("/api/submit-audio", { method: "POST", body: fd });
-      data = await res.json().catch(() => null);
+      res = await fetch("/api/submit-audio", {
+        method: "POST",
+        body: fd,
+        headers,
+        credentials: "same-origin",  // ✅ sends Flask session cookie
+        redirect: "manual",          // ✅ prevents silent redirect to login
+        cache: "no-store"
+      });
     } catch (e) {
       console.error(e);
       setStatus(widget, info.entryId, "❌ Network error uploading audio.");
       return;
     }
+
+    // ✅ If server thinks you're not logged in, don't “logout” — show message.
+    if (looksLikeLoginRedirect(res)) {
+      setStatus(widget, info.entryId, "⚠️ Session expired / not authorized. Please log in and try again.");
+      return;
+    }
+
+    const data = await safeJson(res);
 
     if (!res.ok || !data || !data.ok) {
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
@@ -320,7 +367,6 @@
         const info = readInfo(widget, stopBtn);
 
         // Stop active recorder no matter which stop button was clicked
-        // (because only one recording can exist anyway)
         if (active.recorder && active.recorder.state !== "inactive") {
           requestStop("⏹ Stopped.");
         } else {
@@ -365,6 +411,5 @@
 
   document.addEventListener("DOMContentLoaded", wire);
 })();
-
 
 
