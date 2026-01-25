@@ -1,27 +1,18 @@
 /* static/service-worker.js */
-const CACHE_NAME = "gada-v5"; // bump version so SW updates
+const CACHE_NAME = "gada-v6";
 
-/**
- * Core pages + assets to cache.
- * Keep this list small to avoid caching DB-driven pages too aggressively.
- */
 const CORE_ASSETS = [
-  "/",                 // Home
+  "/",
   "/translate",
   "/learn",
   "/support",
   "/offline",
 
-  // CSS / JS
   "/static/style.css",
   "/static/pwa-ui.js",
-
-  // ✅ Use the correct recorder script here
-  // If you still need audio.js on other pages, keep it too.
+  "/static/audio.js",
   "/static/recorder.js",
-  // "/static/audio.js",
 
-  // Manifest + icons
   "/manifest.webmanifest",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
@@ -30,12 +21,12 @@ const CORE_ASSETS = [
   "/static/icons/favicon-16x16.png",
 ];
 
-/* Install: cache core assets */
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(CORE_ASSETS);
-      // notify clients that offline is ready
+
+      // Notify pages that offline cache is ready
       const clients = await self.clients.matchAll({ type: "window" });
       clients.forEach((c) => c.postMessage({ type: "OFFLINE_READY" }));
     })
@@ -43,7 +34,6 @@ self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
 
-/* Activate: clean old caches */
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
@@ -53,43 +43,29 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-/**
- * Fetch strategy:
- * - ✅ Never cache non-GET (POST/PUT/DELETE) -> fixes your error
- * - ✅ Never cache /recorder/api/* (always network)
- * - HTML navigation: network-first, fallback to cache, then offline page
- * - Static files: cache-first
- * - Other: network-first fallback to cache
- */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
+
+  // ✅ CRITICAL: never intercept POST/PUT/DELETE (fixes upload stuck)
+  if (req.method !== "GET") return;
+
   const url = new URL(req.url);
 
   // Only same-origin
   if (url.origin !== self.location.origin) return;
 
-  // ✅ 1) IMPORTANT: do not touch POST/PUT/DELETE (uploads, forms, APIs)
-  if (req.method !== "GET") {
-    event.respondWith(fetch(req));
+  // ✅ Never cache / intercept any API routes (public + recorder)
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/recorder/api/")) {
     return;
   }
 
-  // ✅ 2) IMPORTANT: do not cache your recorder API calls
-  if (url.pathname.startsWith("/recorder/api/")) {
-    event.respondWith(fetch(req, { cache: "no-store" }));
-    return;
-  }
-
-  // HTML pages (navigate)
+  // HTML navigation: network-first
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          // ✅ Only cache successful GET HTML responses
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          }
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return res;
         })
         .catch(async () => {
@@ -100,17 +76,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets (cache-first)
+  // Static assets: cache-first
   if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
         return fetch(req).then((res) => {
-          // ✅ Only cache ok responses
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          }
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return res;
         });
       })
@@ -118,11 +91,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Default: network-first
+  // Default: network-first fallback cache
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
 
-/* Allow page to trigger update immediately */
 self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
