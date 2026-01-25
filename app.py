@@ -1406,6 +1406,12 @@ def recorder_api_delete_audio():
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
 
 def _handle_audio_submission(is_recorder: bool):
+    print("=== AUDIO SUBMIT ===")
+    print("is_recorder:", is_recorder)
+    print("path:", request.path)
+    print("form:", dict(request.form))
+    print("files:", list(request.files.keys()))
+
     """
     Shared handler for audio submission.
     - Public: pending, blocked if approved exists
@@ -1473,7 +1479,9 @@ def _handle_audio_submission(is_recorder: bool):
     new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_name)
     f.save(save_path)
-
+    print("save_path:", save_path)
+    print("exists_after_save:", os.path.exists(save_path))
+    
     rel_path = f"uploads/{new_name}"
     status = "approved" if is_recorder else "pending"
 
@@ -1483,7 +1491,8 @@ def _handle_audio_submission(is_recorder: bool):
     """, (entry_type, entry_id, lang, rel_path, status))
 
     conn.commit()
-    conn.close()
+    print("DB committed. rel_path:", rel_path, "status:", status)
+    conn.slose()
 
     return jsonify({
         "ok": True,

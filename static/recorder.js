@@ -322,6 +322,10 @@
         redirect: "manual",
         cache: "no-store",
         signal: controller.signal
+alert("HTTP status: " + res.status);
+const txt = await res.text();
+alert("Response: " + txt.slice(0, 300));
+return;
       });
     } catch (err) {
       console.error(err);
