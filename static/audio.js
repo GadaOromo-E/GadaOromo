@@ -1,19 +1,18 @@
-/* static/audio.js (FULL UPDATED - public recording)
+/* static/audio.js (FULL UPDATED - public recording + voice search)
    - Voice search (home) fills #searchWord
    - Record Oromo pronunciation per row/result, submit to POST /api/submit-audio
-   - Fixes "Submit stuck" by:
-       ✅ timeout (AbortController 30s)
-       ✅ sending cookies with fetch (credentials: same-origin)
-       ✅ preventing silent redirects (redirect: manual)
-       ✅ handling non-JSON responses safely
-       ✅ cache: no-store (helps with PWA/service-worker oddities)
-   - Keeps your existing UI behavior
+   - FIXES “Submitting stuck” by:
+       ✅ 30s timeout (AbortController)
+       ✅ credentials: same-origin (send cookies)
+       ✅ redirect: manual (avoid silent redirect)
+       ✅ cache: no-store (avoid SW caching weirdness)
+       ✅ safe JSON parsing (handles HTML / non-json errors)
+       ✅ re-enable Submit button on failure
 */
 
-console.log("✅ audio.js LOADED", new Date().toISOString());
-
 (function () {
-  // One active recording at a time
+  console.log("✅ audio.js LOADED", new Date().toISOString());
+
   const active = {
     recorder: null,
     stream: null,
@@ -23,7 +22,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     stopping: false,
   };
 
-  // If you use CSRF (Flask-WTF), add: <meta name="csrf-token" content="{{ csrf_token() }}">
   const CSRF_TOKEN =
     document.querySelector('meta[name="csrf-token"]')?.getAttribute("content") || null;
 
@@ -32,18 +30,13 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
   }
 
   function findWidget(el) {
-    return (
-      el.closest(".word-row") ||
-      el.closest(".result-box") ||
-      el.closest("section") ||
-      document.body
-    );
+    return el.closest(".word-row") || el.closest(".result-box") || el.closest("section") || document.body;
   }
 
   function readInfo(widget, btn) {
     const entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
-    const entryId = (btn?.dataset.entryId || widget.dataset.entryId || "").trim();
-    const lang = (btn?.dataset.lang || widget.dataset.lang || "oromo").trim().toLowerCase();
+    const entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
+    const lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
     return { entryType, entryId, lang };
   }
 
@@ -59,21 +52,15 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
 
   function pickMime() {
     if (!window.MediaRecorder) return { mime: "", ext: "webm" };
-    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))
-      return { mime: "audio/webm;codecs=opus", ext: "webm" };
-    if (MediaRecorder.isTypeSupported("audio/webm"))
-      return { mime: "audio/webm", ext: "webm" };
-    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus"))
-      return { mime: "audio/ogg;codecs=opus", ext: "ogg" };
-    if (MediaRecorder.isTypeSupported("audio/ogg"))
-      return { mime: "audio/ogg", ext: "ogg" };
+    if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) return { mime: "audio/webm;codecs=opus", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/webm")) return { mime: "audio/webm", ext: "webm" };
+    if (MediaRecorder.isTypeSupported("audio/ogg;codecs=opus")) return { mime: "audio/ogg;codecs=opus", ext: "ogg" };
+    if (MediaRecorder.isTypeSupported("audio/ogg")) return { mime: "audio/ogg", ext: "ogg" };
     return { mime: "", ext: "webm" };
   }
 
   function stopTracks(stream) {
-    try {
-      stream?.getTracks()?.forEach((t) => t.stop());
-    } catch (_) {}
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch (_) {}
   }
 
   function resetActive() {
@@ -99,7 +86,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     if (preview) preview.style.display = "none";
   }
 
-  // Gracefully stop current recorder (wait for onstop to finalize UI)
   function requestStop(reasonText) {
     if (!active.recorder || active.recorder.state === "inactive") {
       stopTracks(active.stream);
@@ -119,25 +105,35 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     }
   }
 
+  // ---------- Robust response handling ----------
+  function looksLikeLoginRedirect(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) return true;
+    if (res.type === "opaqueredirect") return true;
+    if (res.redirected) return true;
+    if (ct.includes("text/html")) return true;
+    return false;
+  }
+
+  async function safeJson(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      await res.text().catch(() => "");
+      return { ok: false, error: "Server returned non-JSON response (maybe redirect/login/server error)." };
+    }
+    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
+  }
+
   async function startRecording(widget, recordBtn) {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Microphone not supported in this browser.");
-    }
-    if (!window.MediaRecorder) {
-      throw new Error("Recording not supported in this browser. Try Chrome/Edge.");
-    }
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone not supported in this browser.");
+    if (!window.MediaRecorder) throw new Error("Recording not supported in this browser.");
 
     const info = readInfo(widget, recordBtn);
+    if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
 
-    // Public recording = Oromo only
-    if ((info.lang || "oromo") !== "oromo") {
-      throw new Error("Only Oromo audio is allowed.");
-    }
-
-    // Stop any current recording first
     if (active.recorder && active.recorder.state !== "inactive") {
       requestStop("⏹ Stopped (new recording started).");
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 250));
     }
 
     const { mime, ext } = pickMime();
@@ -203,44 +199,29 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       resetActive();
     };
 
-    // Start
-    recorder.start(200);
-  }
-
-  async function safeJson(res) {
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("application/json")) {
-      await res.text().catch(() => "");
-      return { ok: false, error: "Server returned non-JSON response." };
-    }
-    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
-  }
-
-  function looksLikeLoginRedirect(res) {
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (res.status === 401 || res.status === 403) return true;
-    if (res.type === "opaqueredirect") return true;
-    if (res.redirected) return true;
-    if (ct.includes("text/html")) return true;
-    return false;
+    // Start without timeslice for stability
+    recorder.start();
   }
 
   async function upload(widget, btn) {
     const info = readInfo(widget, btn);
-
     if (!info.entryType || !info.entryId) {
       setStatus(widget, info.entryId, "❌ Missing entry info (entry_type/entry_id).");
       return;
     }
-
-    // Public upload = Oromo only
-    info.lang = "oromo";
+    if (info.lang !== "oromo") {
+      setStatus(widget, info.entryId, "❌ Only Oromo audio is allowed.");
+      return;
+    }
 
     const blob = widget._recordedBlob;
     if (!blob) {
       setStatus(widget, info.entryId, "❌ No recording found.");
       return;
     }
+
+    const submitBtn = $(widget, "[data-submit-btn]");
+    if (submitBtn) submitBtn.disabled = true;
 
     setStatus(widget, info.entryId, "⏳ Uploading…");
 
@@ -255,7 +236,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     const headers = {};
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
-    // ✅ timeout (30s)
+    // ✅ timeout so it never “sticks forever”
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 30000);
 
@@ -272,11 +253,11 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       });
     } catch (e) {
       console.error(e);
-      const msg =
-        e?.name === "AbortError"
-          ? "❌ Upload timed out (30s). Try again."
-          : "❌ Network error uploading audio.";
+      const msg = e?.name === "AbortError"
+        ? "❌ Upload timed out (30s). Try again."
+        : "❌ Network error uploading audio.";
       setStatus(widget, info.entryId, msg);
+      if (submitBtn) submitBtn.disabled = false;
       clearTimeout(t);
       return;
     } finally {
@@ -284,7 +265,8 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     }
 
     if (looksLikeLoginRedirect(res)) {
-      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Refresh and try again.");
+      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please refresh and try again.");
+      if (submitBtn) submitBtn.disabled = false;
       return;
     }
 
@@ -294,15 +276,14 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
       console.error("Upload error:", msg, data);
       setStatus(widget, info.entryId, "❌ " + msg);
+      if (submitBtn) submitBtn.disabled = false;
       return;
     }
 
-    // Success
     setStatus(widget, info.entryId, "✅ Submitted! Waiting for admin approval.");
 
     const rb = $(widget, "[data-record-btn]");
     const sb = $(widget, "[data-stop-btn]");
-    const submitBtn = $(widget, "[data-submit-btn]");
     const rerecordBtn = $(widget, "[data-rerecord-btn]");
 
     if (rb) rb.style.display = "none";
@@ -337,12 +318,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       alert("Voice search failed: " + (e.error || "unknown error"));
     };
 
-    try {
-      recog.start();
-    } catch (e) {
-      console.error(e);
-      alert("Could not start voice search.");
-    }
+    try { recog.start(); } catch (e) { console.error(e); alert("Could not start voice search."); }
   };
 
   function wire() {
@@ -353,7 +329,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       const rerecordBtn = e.target.closest("[data-rerecord-btn]");
 
       if (recordBtn) {
-        e.preventDefault();
         const widget = findWidget(recordBtn);
         const info = readInfo(widget, recordBtn);
 
@@ -366,7 +341,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
 
         const sbtn = $(widget, "[data-submit-btn]");
         const rbtn = $(widget, "[data-rerecord-btn]");
-        if (sbtn) sbtn.style.display = "none";
+        if (sbtn) { sbtn.style.display = "none"; sbtn.disabled = false; }
         if (rbtn) rbtn.style.display = "none";
 
         setStatus(widget, info.entryId, "🎙 Recording…");
@@ -384,7 +359,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       }
 
       if (stopBtn) {
-        e.preventDefault();
         const widget = findWidget(stopBtn);
         const info = readInfo(widget, stopBtn);
 
@@ -398,18 +372,16 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       }
 
       if (rerecordBtn) {
-        e.preventDefault();
         const widget = findWidget(rerecordBtn);
         const info = readInfo(widget, rerecordBtn);
 
         widget._recordedBlob = null;
-
         const preview = $(widget, "[data-preview-audio]");
         if (preview) preview.style.display = "none";
 
         const sbtn = $(widget, "[data-submit-btn]");
         const rbtn = $(widget, "[data-rerecord-btn]");
-        if (sbtn) sbtn.style.display = "none";
+        if (sbtn) { sbtn.style.display = "none"; sbtn.disabled = false; }
         if (rbtn) rbtn.style.display = "none";
 
         setStatus(widget, info.entryId, "");
@@ -419,7 +391,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       }
 
       if (submitBtn) {
-        e.preventDefault();
         const widget = findWidget(submitBtn);
         await upload(widget, submitBtn);
         return;
@@ -434,18 +405,10 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     console.log("✅ audio.js wired");
   }
 
-  function bootWire() {
-    try {
-      wire();
-    } catch (e) {
-      console.error("❌ audio.js wire crashed:", e);
-    }
-  }
-
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bootWire);
+    document.addEventListener("DOMContentLoaded", wire);
   } else {
-    bootWire();
+    wire();
   }
 })();
 
