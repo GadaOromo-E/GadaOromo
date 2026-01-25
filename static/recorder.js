@@ -25,11 +25,23 @@
 
   // Toggle this if you want auto-reload after successful save
   const AUTO_RELOAD_AFTER_SAVE = true;
+console.log("✅ recorder.js loaded");
 
-  function setStatus(key, msg) {
-    const el = document.querySelector(`[data-status-for="${key}"]`);
-    if (el) el.textContent = msg || "";
+function setStatus(keyOrId, msg) {
+  // 1) exact match
+  let el = document.querySelector(`[data-status-for="${keyOrId}"]`);
+  if (el) { el.textContent = msg || ""; return; }
+
+  // 2) try type_id if numeric id and active entryType exists
+  const id = String(keyOrId || "").trim();
+  const t = active?.entryType;
+  if (t && id) {
+    el = document.querySelector(`[data-status-for="${t}_${id}"]`);
+    if (el) { el.textContent = msg || ""; return; }
   }
+}
+
+
 
   function toast(msg) {
     const t = document.getElementById("pwaToast");
@@ -490,6 +502,10 @@
     console.log("✅ recorder.js bound");
   }
 
+if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", bind);
-})();
+} else {
+  bind();
+}
+
 
