@@ -1498,12 +1498,6 @@ def recorder_api_submit_audio():
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
 
 def _handle_audio_submission(is_recorder: bool):
-    print("=== AUDIO SUBMIT ===")
-    print("is_recorder:", is_recorder)
-    print("path:", request.path)
-    print("form:", dict(request.form))
-    print("files:", list(request.files.keys()))
-
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
     lang = (request.form.get("lang") or "oromo").strip().lower()
@@ -1529,63 +1523,74 @@ def _handle_audio_submission(is_recorder: bool):
 
     ext = original.rsplit(".", 1)[1].lower()
 
-    conn = sqlite3.connect(DB_NAME)
+    # ✅ connect with timeout (prevents “stuck forever” on DB lock)
+    conn = sqlite3.connect(DB_NAME, timeout=30)
     c = conn.cursor()
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA synchronous=NORMAL;")
 
-    # Entry must exist + be approved
-    if entry_type == "word":
-        c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
-    else:
-        c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
+        # Entry must exist + be approved
+        if entry_type == "word":
+            c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
+        else:
+            c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    if is_recorder:
-        # Recorder replaces old approved AND removes pending duplicates
-        conn.close()
-        delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-    else:
-        # Public users: block if approved exists
-        c.execute("""
-            SELECT 1
-            FROM audio
-            WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
-            LIMIT 1
-        """, (entry_type, entry_id, lang))
-        if c.fetchone():
+        if is_recorder:
+            # ✅ IMPORTANT: do deletes BEFORE saving file + inserting
+            # Make sure delete_audio_for_entry_lang does not leave connections open.
             conn.close()
-            return jsonify({"ok": False, "error": "This entry already has approved audio."}), 409
+            delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
 
-    # Save file
-    new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
-    save_path = os.path.join(UPLOAD_FOLDER, new_name)
-    f.save(save_path)
+            conn = sqlite3.connect(DB_NAME, timeout=30)
+            c = conn.cursor()
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+        else:
+            # Public users: block if approved exists
+            c.execute("""
+                SELECT 1 FROM audio
+                WHERE entry_type=? AND entry_id=? AND lang=? AND status='approved'
+                LIMIT 1
+            """, (entry_type, entry_id, lang))
+            if c.fetchone():
+                return jsonify({"ok": False, "error": "This entry already has approved audio."}), 409
 
-    print("save_path:", save_path)
-    print("exists_after_save:", os.path.exists(save_path))
+        # Save file
+        new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+        save_path = os.path.join(UPLOAD_FOLDER, new_name)
+        f.save(save_path)
 
-    rel_path = f"uploads/{new_name}"
-    status = "approved" if is_recorder else "pending"
+        rel_path = f"uploads/{new_name}"
+        status = "approved" if is_recorder else "pending"
 
-    c.execute("""
-        INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
-        VALUES (?, ?, ?, ?, ?)
-    """, (entry_type, entry_id, lang, rel_path, status))
+        c.execute("""
+            INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+            VALUES (?, ?, ?, ?, ?)
+        """, (entry_type, entry_id, lang, rel_path, status))
 
-    conn.commit()
-    print("DB committed. rel_path:", rel_path, "status:", status)
-    conn.close()   # ✅ FIXED
+        conn.commit()
 
-    return jsonify({
-        "ok": True,
-        "message": ("Saved ✅ Published now." if is_recorder else "Oromo audio submitted for admin approval."),
-        "status": status,
-        "url": _public_audio_url(rel_path)
-    })
+        return jsonify({
+            "ok": True,
+            "message": ("Saved ✅ Published now." if is_recorder else "Oromo audio submitted for admin approval."),
+            "status": status,
+            "url": _public_audio_url(rel_path)
+        })
+
+    except sqlite3.OperationalError as e:
+        # ✅ if DB locked, return JSON (frontend won’t hang)
+        return jsonify({"ok": False, "error": f"Database error: {str(e)}"}), 500
+
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
