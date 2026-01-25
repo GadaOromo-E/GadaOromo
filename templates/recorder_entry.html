@@ -72,7 +72,16 @@
   </section>
 </div>
 
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260124-5"></script>
+<script>
+  window.RECORDER_ENTRY = {
+    api_submit_url: "/recorder/api/submit-audio",
+    api_delete_url: "/recorder/api/delete-audio",
+    entry_type: "{{ entry_type }}",
+    entry_id: {{ entry_id }}
+  };
+</script>
+
+<script src="{{ url_for('static', filename='recorder.js') }}?v=20260125-1"></script>
 </body>
 </html>
 
