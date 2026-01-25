@@ -554,15 +554,39 @@ def delete_audio_for_entry(entry_type: str, entry_id: int):
                 os.remove(abs_path)
             except Exception:
                 app.logger.exception(f"Could not delete audio file: {abs_path}")
+                
+def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statuses=("approved", "pending")) -> int:
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
 
+    q_marks = ",".join(["?"] * len(statuses))
+    c.execute(f"""
+        SELECT id, file_path
+        FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
+    """, (entry_type, entry_id, lang, *statuses))
+    rows = c.fetchall()
 
-def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statuses=("approved",)):
-    """
-    Recorder helper: delete audio for a given entry/lang/statuses and remove files.
-    Returns number of deleted rows.
-    """
-    lang = (lang or "").strip().lower()
-    statuses = tuple(statuses or ("approved",))
+    c.execute(f"""
+        DELETE FROM audio
+        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
+    """, (entry_type, entry_id, lang, *statuses))
+    conn.commit()
+    conn.close()
+
+    # delete files
+    deleted = 0
+    for _aid, fp in rows:
+        abs_path = _audio_abs_path(fp)
+        if abs_path and os.path.isfile(abs_path):
+            try:
+                os.remove(abs_path)
+            except Exception:
+                app.logger.exception(f"Could not delete audio file: {abs_path}")
+        deleted += 1
+
+    return deleted
+
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -579,10 +603,11 @@ def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statu
         DELETE FROM audio
         WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
     """, (entry_type, entry_id, lang, *statuses))
-
     conn.commit()
     conn.close()
 
+    # delete files
+    deleted = 0
     for _aid, fp in rows:
         abs_path = _audio_abs_path(fp)
         if abs_path and os.path.isfile(abs_path):
@@ -590,9 +615,9 @@ def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statu
                 os.remove(abs_path)
             except Exception:
                 app.logger.exception(f"Could not delete audio file: {abs_path}")
+        deleted += 1
 
-    return len(rows)
-
+    return deleted
 
 # ------------------ DATABASE SETUP ------------------
 
@@ -1410,7 +1435,6 @@ def recorder_api_delete_audio():
 
 @app.route("/recorder/api/submit-audio", methods=["POST"])
 def recorder_api_submit_audio():
-    # Recorder must be logged in
     if not require_recorder():
         return jsonify({"ok": False, "error": "Recorder login required"}), 401
 
@@ -1433,7 +1457,7 @@ def recorder_api_submit_audio():
     if not allowed_audio(f.filename):
         return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
 
-    # Check entry exists + approved
+    # entry must exist + approved
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     if entry_type == "word":
@@ -1445,6 +1469,10 @@ def recorder_api_submit_audio():
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
+    # ✅ Recorder uploads: replace existing audio (approved + pending) for this entry/lang
+    conn.close()
+    delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
+
     original = secure_filename(f.filename)
     ext = original.rsplit(".", 1)[1].lower()
     new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
@@ -1453,15 +1481,18 @@ def recorder_api_submit_audio():
 
     rel_path = f"uploads/{new_name}"
 
-    # ✅ recorder submissions still go pending (admin approval)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    # ✅ auto-approve for recorder
     c.execute("""
         INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
-        VALUES (?, ?, ?, ?, 'pending')
+        VALUES (?, ?, ?, ?, 'approved')
     """, (entry_type, entry_id, lang, rel_path))
     conn.commit()
     conn.close()
 
-    return jsonify({"ok": True, "message": "Recorder audio submitted for admin approval.","url": _public_audio_url(rel_path)})
+    url = _public_audio_url(rel_path)
+    return jsonify({"ok": True, "message": "Saved ✅ Published now.", "url": url})
 
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------

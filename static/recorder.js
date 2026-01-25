@@ -290,8 +290,15 @@
     }
     if (data.url) updateLivePlayer(data.url);
 
-    if (ui?.saveBtn) ui.saveBtn.style.display = "none";
-    if (ui?.rerecordBtn) ui.rerecordBtn.style.display = "none";
+   // ✅ Hide ALL recording controls after success (so user doesn't think it's not saved)
+if (ui?.saveBtn) ui.saveBtn.style.display = "none";
+if (ui?.rerecordBtn) ui.rerecordBtn.style.display = "none";
+if (ui?.stopBtn) ui.stopBtn.style.display = "none";
+if (ui?.btn) {
+  ui.btn.style.display = "none";         // hide record button
+  ui.btn.disabled = true;
+}
+
 
     active.blob = null;
 
