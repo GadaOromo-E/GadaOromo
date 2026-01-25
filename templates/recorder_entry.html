@@ -36,13 +36,30 @@
     </div>
 
     {% if audio and audio.oromo %}
-      <div style="margin-top:14px;">
-        <div class="subtle">✅ Current approved Oromo audio</div>
-        <audio controls style="width:100%; margin-top:6px;">
-          <source src="{{ audio.oromo }}">
-        </audio>
-      </div>
-    {% endif %}
+  <div id="liveAudioCard" style="margin-top:14px;">
+    <div class="subtle">✅ Current approved Oromo audio</div>
+
+    <audio id="liveAudio" controls style="width:100%; margin-top:6px;">
+      <source id="liveAudioSource" src="{{ audio.oromo }}">
+    </audio>
+
+    <div class="muted" id="liveStatus" style="margin-top:6px;"></div>
+
+    <!-- OPTIONAL: only if you want delete button -->
+    <button
+      id="deleteLiveBtn"
+      type="button"
+      class="btn danger"
+      style="margin-top:8px;"
+      data-entry-type="{{ entry_type }}"
+      data-entry-id="{{ entry_id }}"
+      data-lang="oromo"
+    >
+      🗑 Delete approved audio
+    </button>
+  </div>
+{% endif %}
+
 
     <div style="margin-top:14px;">
       <button
@@ -72,7 +89,7 @@
   </section>
 </div>
 
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260124-5"></script>
+<script src="{{ url_for('static', filename='recorder.js') }}?v=20260124-5"></script>
 </body>
 </html>
 

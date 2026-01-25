@@ -1352,6 +1352,12 @@ def recorder_entry(entry_type, entry_id):
 
 
 # ------------------ RECORDER API: GET CURRENT AUDIO + DELETE ------------------
+from werkzeug.exceptions import RequestEntityTooLarge
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_413(e):
+    return jsonify({"ok": False, "error": "Audio file too large. Record shorter or increase MAX_AUDIO_MB."}), 413
+
 
 @app.route("/recorder/api/audio", methods=["GET"])
 def recorder_api_audio_get():
@@ -1402,6 +1408,60 @@ def recorder_api_delete_audio():
     deleted = delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved",))
     return jsonify({"ok": True, "deleted": deleted})
 
+@app.route("/recorder/api/submit-audio", methods=["POST"])
+def recorder_api_submit_audio():
+    # Recorder must be logged in
+    if not require_recorder():
+        return jsonify({"ok": False, "error": "Recorder login required"}), 401
+
+    entry_type = (request.form.get("entry_type") or "").strip().lower()
+    entry_id_raw = (request.form.get("entry_id") or "").strip()
+    lang = (request.form.get("lang") or "oromo").strip().lower()
+
+    if entry_type not in ("word", "phrase"):
+        return jsonify({"ok": False, "error": "Invalid entry_type"}), 400
+    if lang not in ("oromo", "english"):
+        return jsonify({"ok": False, "error": "Invalid lang"}), 400
+    if not entry_id_raw.isdigit():
+        return jsonify({"ok": False, "error": "Invalid entry_id"}), 400
+
+    entry_id = int(entry_id_raw)
+
+    f = request.files.get("audio")
+    if not f or not f.filename:
+        return jsonify({"ok": False, "error": "Missing audio file"}), 400
+    if not allowed_audio(f.filename):
+        return jsonify({"ok": False, "error": "Allowed audio: mp3, wav, m4a, webm, ogg"}), 400
+
+    # Check entry exists + approved
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if entry_type == "word":
+        c.execute("SELECT id FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
+
+    original = secure_filename(f.filename)
+    ext = original.rsplit(".", 1)[1].lower()
+    new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
+    save_path = os.path.join(UPLOAD_FOLDER, new_name)
+    f.save(save_path)
+
+    rel_path = f"uploads/{new_name}"
+
+    # ✅ recorder submissions still go pending (admin approval)
+    c.execute("""
+        INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+        VALUES (?, ?, ?, ?, 'pending')
+    """, (entry_type, entry_id, lang, rel_path))
+    conn.commit()
+    conn.close()
+
+    return jsonify({"ok": True, "message": "Recorder audio submitted for admin approval.","url": _public_audio_url(rel_path)})
 
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------

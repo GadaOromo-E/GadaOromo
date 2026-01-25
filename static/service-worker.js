@@ -1,5 +1,5 @@
 /* static/service-worker.js */
-const CACHE_NAME = "gada-v4";
+const CACHE_NAME = "gada-v5"; // bump version so SW updates
 
 /**
  * Core pages + assets to cache.
@@ -15,7 +15,11 @@ const CORE_ASSETS = [
   // CSS / JS
   "/static/style.css",
   "/static/pwa-ui.js",
-  "/static/audio.js",
+
+  // ✅ Use the correct recorder script here
+  // If you still need audio.js on other pages, keep it too.
+  "/static/recorder.js",
+  // "/static/audio.js",
 
   // Manifest + icons
   "/manifest.webmanifest",
@@ -51,6 +55,8 @@ self.addEventListener("activate", (event) => {
 
 /**
  * Fetch strategy:
+ * - ✅ Never cache non-GET (POST/PUT/DELETE) -> fixes your error
+ * - ✅ Never cache /recorder/api/* (always network)
  * - HTML navigation: network-first, fallback to cache, then offline page
  * - Static files: cache-first
  * - Other: network-first fallback to cache
@@ -62,13 +68,28 @@ self.addEventListener("fetch", (event) => {
   // Only same-origin
   if (url.origin !== self.location.origin) return;
 
+  // ✅ 1) IMPORTANT: do not touch POST/PUT/DELETE (uploads, forms, APIs)
+  if (req.method !== "GET") {
+    event.respondWith(fetch(req));
+    return;
+  }
+
+  // ✅ 2) IMPORTANT: do not cache your recorder API calls
+  if (url.pathname.startsWith("/recorder/api/")) {
+    event.respondWith(fetch(req, { cache: "no-store" }));
+    return;
+  }
+
   // HTML pages (navigate)
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          // ✅ Only cache successful GET HTML responses
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          }
           return res;
         })
         .catch(async () => {
@@ -85,8 +106,11 @@ self.addEventListener("fetch", (event) => {
       caches.match(req).then((cached) => {
         if (cached) return cached;
         return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          // ✅ Only cache ok responses
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+          }
           return res;
         });
       })
@@ -104,4 +128,5 @@ self.addEventListener("message", (event) => {
     self.skipWaiting();
   }
 });
+
 
