@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Recorder Test Save</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <h1>Recorder Test Save</h1>
+      <p class="tagline">Minimal page to test recording + saving</p>
+      <div class="small-actions" style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <a class="btn" href="/recorder/dashboard">← Dashboard</a>
+        <a class="btn danger" href="/recorder/logout">Logout</a>
+      </div>
+    </div>
+  </header>
+
+  <section class="card">
+    <div class="subtle">Entry: <b>{{ entry_type }}</b> #<b>{{ entry_id }}</b></div>
+    <div style="margin-top:12px;">
+      <div><b>English:</b> {{ english }}</div>
+      <div style="margin-top:6px;"><b>Oromo:</b> {{ oromo }}</div>
+    </div>
+
+    <div style="margin-top:16px;">
+      <button class="btn primary" type="button"
+        data-record-btn
+        data-entry-type="{{ entry_type }}"
+        data-entry-id="{{ entry_id }}"
+        data-lang="oromo">🎙 Record</button>
+
+      <button class="btn" type="button" style="display:none;" data-stop-btn>⏹ Stop</button>
+
+      <audio controls style="width:100%; display:none; margin-top:10px;" data-preview-audio></audio>
+
+      <div style="margin-top:10px;">
+        <button class="btn primary" type="button" style="display:none;" data-submit-btn>✅ Save</button>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        <span data-status></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+  window.RECORDER_TEST = {
+    submit_url: "/recorder/api/submit-audio"
+  };
+</script>
+<script src="{{ url_for('static', filename='recorder_test.js') }}?v=1"></script>
+</body>
+</html>

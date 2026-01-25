@@ -1402,6 +1402,36 @@ def recorder_api_delete_audio():
     deleted = delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved",))
     return jsonify({"ok": True, "deleted": deleted})
 
+@app.route("/recorder/test-save/<entry_type>/<int:entry_id>")
+def recorder_test_save(entry_type, entry_id):
+    if not require_recorder():
+        return redirect("/recorder")
+
+    entry_type = (entry_type or "").strip().lower()
+    if entry_type not in ("word", "phrase"):
+        abort(400)
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if entry_type == "word":
+        c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
+    else:
+        c.execute("SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        abort(404)
+
+    return render_template(
+        "recorder_test_save.html",
+        entry_type=entry_type,
+        entry_id=entry_id,
+        english=row[1],
+        oromo=row[2],
+    )
+
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
 

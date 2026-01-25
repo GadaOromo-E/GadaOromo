@@ -105,4 +105,3 @@ self.addEventListener("message", (event) => {
   }
 });
 
-
