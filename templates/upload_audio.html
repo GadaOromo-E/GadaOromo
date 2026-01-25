@@ -33,8 +33,30 @@
       <b>Oromo:</b> {{ oromo }}
     </div>
 
+    {# ✅ show success/error messages (if passed from backend) #}
+    {% if msg %}
+      <div class="result-box" style="margin-top:12px;">
+        ✅ {{ msg }}
+      </div>
+    {% endif %}
+
+    {% if error %}
+      <div class="result-box" style="margin-top:12px;">
+        ❌ {{ error }}
+      </div>
+    {% endif %}
+
+    {# (Optional) show current approved audio if provided #}
+    {% if audio and audio.oromo %}
+      <div class="result-box" style="margin-top:12px;">
+        <div class="subtle">✅ Current approved Oromo audio</div>
+        <audio controls style="width:100%; margin-top:6px;">
+          <source src="{{ audio.oromo }}">
+        </audio>
+      </div>
+    {% endif %}
+
     {% if lang != "oromo" %}
-      <!-- UI safety: backend already blocks, but keep the page consistent -->
       <div class="result-box" style="margin-top:12px;">
         ❌ Only Oromo audio uploads are allowed.
       </div>
@@ -60,5 +82,6 @@
 
 </body>
 </html>
+
 
 

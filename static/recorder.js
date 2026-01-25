@@ -1,4 +1,4 @@
-/* static/recorder.js (FULL UPDATED - SAFE)
+/* static/recorder.js (FIXED)
    Recorder-only recording:
    - Records Oromo audio and uploads to POST /recorder/api/submit-audio (auto-approved + replace)
    - Delete LIVE Oromo audio: POST /recorder/api/delete-audio
@@ -153,7 +153,6 @@
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
 
-      // If mic track ends (common on iOS), show message instead of silent stop
       const track = stream.getAudioTracks()?.[0];
       if (track) {
         track.addEventListener("ended", () => {
@@ -213,7 +212,6 @@
           return;
         }
 
-        // Revoke old preview URL if any
         try { if (active?.url) URL.revokeObjectURL(active.url); } catch (_) {}
 
         const url = URL.createObjectURL(blob);
@@ -308,7 +306,6 @@
     const headers = {};
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
-    // timeout so it never gets stuck forever
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 30000);
 
@@ -322,10 +319,6 @@
         redirect: "manual",
         cache: "no-store",
         signal: controller.signal
-alert("HTTP status: " + res.status);
-const txt = await res.text();
-alert("Response: " + txt.slice(0, 300));
-return;
       });
     } catch (err) {
       console.error(err);
@@ -362,7 +355,6 @@ return;
     setStatus(entryId, data.message || "Saved ✅ Published now.");
     toast("Saved ✅");
 
-    // ✅ Update preview to SERVER URL (so user sees the real saved audio)
     const preview = ui?.preview || root?.querySelector("[data-preview-audio]");
     if (data.url && preview) {
       const bust = (data.url.includes("?") ? "&" : "?") + "t=" + Date.now();
@@ -371,17 +363,13 @@ return;
       preview.load();
     }
 
-    // ✅ Update any "live audio" card if present
     if (data.url) updateLivePlayer(data.url);
 
-    // ✅ Hide buttons after success
     if (ui?.saveBtn) ui.saveBtn.style.display = "none";
     if (ui?.rerecordBtn) ui.rerecordBtn.style.display = "none";
 
-    // ✅ Clear blob so it won't re-submit same audio
     active.blob = null;
 
-    // ✅ Auto reload to refresh "Current approved Oromo audio" section
     if (AUTO_RELOAD_AFTER_SAVE) {
       setTimeout(() => window.location.reload(), 800);
     }
@@ -496,5 +484,4 @@ return;
 
   document.addEventListener("DOMContentLoaded", bind);
 })();
-
 

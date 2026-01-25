@@ -1,9 +1,11 @@
 /* static/service-worker.js */
-const CACHE_NAME = "gada-v4";
+const CACHE_NAME = "gada-v5";
 
 /**
  * Core pages + assets to cache.
  * Keep this list small to avoid caching DB-driven pages too aggressively.
+ * NOTE: We intentionally DO NOT pre-cache audio.js / recorder.js,
+ * so recording/upload fixes are always up-to-date.
  */
 const CORE_ASSETS = [
   "/",                 // Home
@@ -12,10 +14,9 @@ const CORE_ASSETS = [
   "/support",
   "/offline",
 
-  // CSS / JS
+  // CSS / base JS (safe)
   "/static/style.css",
   "/static/pwa-ui.js",
-  "/static/audio.js",
 
   // Manifest + icons
   "/manifest.webmanifest",
@@ -31,7 +32,6 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(CORE_ASSETS);
-      // notify clients that offline is ready
       const clients = await self.clients.matchAll({ type: "window" });
       clients.forEach((c) => c.postMessage({ type: "OFFLINE_READY" }));
     })
@@ -50,9 +50,35 @@ self.addEventListener("activate", (event) => {
 });
 
 /**
+ * Helpers
+ */
+async function networkFirst(req) {
+  try {
+    const res = await fetch(req);
+    const copy = res.clone();
+    caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+    return res;
+  } catch (e) {
+    const cached = await caches.match(req);
+    return cached || caches.match("/offline");
+  }
+}
+
+async function cacheFirst(req) {
+  const cached = await caches.match(req);
+  if (cached) return cached;
+
+  const res = await fetch(req);
+  const copy = res.clone();
+  caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+  return res;
+}
+
+/**
  * Fetch strategy:
  * - HTML navigation: network-first, fallback to cache, then offline page
- * - Static files: cache-first
+ * - JS files: network-first (prevents stale audio/recorder scripts)
+ * - Other static files (css/icons/manifest): cache-first
  * - Other: network-first fallback to cache
  */
 self.addEventListener("fetch", (event) => {
@@ -64,37 +90,29 @@ self.addEventListener("fetch", (event) => {
 
   // HTML pages (navigate)
   if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        })
-        .catch(async () => {
-          const cached = await caches.match(req);
-          return cached || caches.match("/offline");
-        })
-    );
+    event.respondWith(networkFirst(req));
     return;
   }
 
-  // Static assets (cache-first)
-  if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
-    event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        });
-      })
-    );
+  // Always get fresh JS (prevents "record/submit not updated" issues)
+  if (url.pathname.startsWith("/static/") && url.pathname.endsWith(".js")) {
+    event.respondWith(networkFirst(req));
     return;
   }
 
-  // Default: network-first
+  // Manifest
+  if (url.pathname === "/manifest.webmanifest") {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+
+  // Other static assets (cache-first)
+  if (url.pathname.startsWith("/static/")) {
+    event.respondWith(cacheFirst(req));
+    return;
+  }
+
+  // Default: network-first, fallback to cache
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
 
@@ -104,4 +122,6 @@ self.addEventListener("message", (event) => {
     self.skipWaiting();
   }
 });
+
+
 

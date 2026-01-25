@@ -1412,11 +1412,6 @@ def _handle_audio_submission(is_recorder: bool):
     print("form:", dict(request.form))
     print("files:", list(request.files.keys()))
 
-    """
-    Shared handler for audio submission.
-    - Public: pending, blocked if approved exists
-    - Recorder: approved immediately, replaces old approved (and removes pending duplicates)
-    """
     entry_type = (request.form.get("entry_type") or "").strip().lower()
     entry_id_raw = (request.form.get("entry_id") or "").strip()
     lang = (request.form.get("lang") or "oromo").strip().lower()
@@ -1456,11 +1451,9 @@ def _handle_audio_submission(is_recorder: bool):
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
     if is_recorder:
-        # Recorder replaces old approved AND removes any pending for same entry/lang (clean DB)
-        # Delete old approved + pending rows/files
+        # Recorder replaces old approved AND removes pending duplicates
         conn.close()
         delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
-        # reopen to insert
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
     else:
@@ -1479,9 +1472,10 @@ def _handle_audio_submission(is_recorder: bool):
     new_name = f"{entry_type}_{entry_id}_{lang}_{uuid4().hex}.{ext}"
     save_path = os.path.join(UPLOAD_FOLDER, new_name)
     f.save(save_path)
+
     print("save_path:", save_path)
     print("exists_after_save:", os.path.exists(save_path))
-    
+
     rel_path = f"uploads/{new_name}"
     status = "approved" if is_recorder else "pending"
 
@@ -1492,7 +1486,7 @@ def _handle_audio_submission(is_recorder: bool):
 
     conn.commit()
     print("DB committed. rel_path:", rel_path, "status:", status)
-    conn.slose()
+    conn.close()   # ✅ FIXED
 
     return jsonify({
         "ok": True,
@@ -1500,20 +1494,6 @@ def _handle_audio_submission(is_recorder: bool):
         "status": status,
         "url": _public_audio_url(rel_path)
     })
-
-
-@app.route("/api/submit-audio", methods=["POST"])
-def api_submit_audio():
-    # Public + recorder (auto-detect via session)
-    return _handle_audio_submission(is_recorder=require_recorder())
-
-
-@app.route("/recorder/api/submit-audio", methods=["POST"])
-def recorder_api_submit_audio():
-    # Recorder-only (kept for compatibility with your current JS)
-    if not require_recorder():
-        return jsonify({"ok": False, "error": "Recorder login required"}), 401
-    return _handle_audio_submission(is_recorder=True)
 
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
