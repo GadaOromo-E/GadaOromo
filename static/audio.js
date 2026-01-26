@@ -1,14 +1,19 @@
-/* static/audio.js (FIXED - public recording submit)
-   - Fix "Missing entry info" by reading entry_type/entry_id from the record button
-   - Reliable binding even when loaded late
-   - Upload timeout (30s)
-   - Disables submit while uploading
-   - credentials: same-origin + redirect: manual + cache: no-store
+/* static/audio.js (FIXED)
+   - Voice search (home) fills #searchWord
+   - Public record Oromo pronunciation per search result / translate matched block
+   - Submit to POST /api/submit-audio (pending admin approval)
+   - Fixes "Missing entry info" by reading entry_type/id from:
+       1) clicked button dataset
+       2) nearest parent with data-entry-type/data-entry-id
+   - Fixes "stuck submit" by:
+       ✅ timeout (30s)
+       ✅ credentials: same-origin
+       ✅ redirect: manual
+       ✅ cache: no-store
 */
 
-console.log("✅ audio.js LOADED", new Date().toISOString());
-
 (function () {
+  // One active recording at a time
   const active = {
     recorder: null,
     stream: null,
@@ -25,33 +30,34 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     return root ? root.querySelector(sel) : null;
   }
 
+  // ✅ IMPORTANT: include .card as possible container (your translate page uses it)
   function findWidget(el) {
-    return el.closest(".word-row") || el.closest(".result-box") || el.closest("section") || document.body;
+    return (
+      el.closest("[data-entry-type][data-entry-id]") ||
+      el.closest(".word-row") ||
+      el.closest(".result-box") ||
+      el.closest(".card") ||
+      el.closest("section") ||
+      document.body
+    );
   }
 
-  // ✅ FIX: always get entry_type/entry_id from:
-  // 1) clicked button dataset
-  // 2) widget.dataset
-  // 3) record button inside same widget (MOST IMPORTANT)
+  // ✅ strongest way to read entry info
   function readInfo(widget, btn) {
-    let entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
-    let entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
-    let lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
+    // 1) from the clicked button first
+    let entryType = (btn?.dataset.entryType || "").trim().toLowerCase();
+    let entryId = (btn?.dataset.entryId || "").trim();
+    let lang = (btn?.dataset.lang || "").trim().toLowerCase();
 
+    // 2) if missing, read from nearest parent with data-entry-type/data-entry-id
     if (!entryType || !entryId) {
-      const recordBtn = $(widget, "[data-record-btn]");
-      if (recordBtn) {
-        entryType = (recordBtn.dataset.entryType || entryType || "").trim().toLowerCase();
-        entryId   = (recordBtn.dataset.entryId   || entryId   || "").trim();
-        lang      = (recordBtn.dataset.lang      || lang      || "oromo").trim().toLowerCase();
-      }
+      const holder = btn?.closest?.("[data-entry-type][data-entry-id]") || widget;
+      entryType = (holder?.dataset.entryType || "").trim().toLowerCase();
+      entryId = (holder?.dataset.entryId || "").trim();
+      if (!lang) lang = (holder?.dataset.lang || "").trim().toLowerCase();
     }
 
-    // cache on widget for later (submit button)
-    if (entryType) widget.dataset.entryType = entryType;
-    if (entryId) widget.dataset.entryId = entryId;
-    if (lang) widget.dataset.lang = lang;
-
+    if (!lang) lang = "oromo";
     return { entryType, entryId, lang };
   }
 
@@ -108,6 +114,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
 
   async function startRecording(widget, recordBtn) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone not supported in this browser.");
+    if (!window.MediaRecorder) throw new Error("Recording not supported in this browser.");
 
     const info = readInfo(widget, recordBtn);
     if (!info.entryType || !info.entryId) throw new Error("Missing entry info (entry_type/entry_id).");
@@ -122,13 +129,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     widget.dataset.ext = ext;
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    let recorder;
-    try {
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-    } catch (_) {
-      recorder = new MediaRecorder(stream);
-    }
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
 
     active.recorder = recorder;
     active.stream = stream;
@@ -141,8 +142,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       if (e.data && e.data.size > 0) active.chunks.push(e.data);
     };
 
-    recorder.onerror = (e) => {
-      console.error("Recorder error:", e);
+    recorder.onerror = () => {
       setStatus(widget, info.entryId, "❌ Recorder error.");
       stopTracks(stream);
       resetRowUI(widget);
@@ -188,6 +188,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       resetActive();
     };
 
+    // Start recorder
     recorder.start(200);
   }
 
@@ -230,6 +231,10 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       setStatus(widget, info.entryId, "❌ Missing entry info (entry_type/entry_id).");
       return;
     }
+    if (info.lang !== "oromo") {
+      setStatus(widget, info.entryId, "❌ Only Oromo audio is allowed.");
+      return;
+    }
 
     const blob = widget._recordedBlob;
     if (!blob) {
@@ -237,8 +242,8 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       return;
     }
 
-    btn.disabled = true;
     setStatus(widget, info.entryId, "⏳ Uploading…");
+    btn.disabled = true;
 
     const fd = new FormData();
     fd.append("entry_type", info.entryType);
@@ -252,7 +257,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
     const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 30000);
+    const timer = setTimeout(() => controller.abort(), 30000);
 
     let res;
     try {
@@ -266,20 +271,18 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
         signal: controller.signal
       });
     } catch (e) {
+      const msg = e?.name === "AbortError" ? "❌ Upload timed out (30s)." : "❌ Network error uploading audio.";
       console.error(e);
-      const msg = e?.name === "AbortError"
-        ? "❌ Upload timed out (30s). Try again."
-        : "❌ Network error uploading audio.";
       setStatus(widget, info.entryId, msg);
       btn.disabled = false;
-      clearTimeout(t);
+      clearTimeout(timer);
       return;
     } finally {
-      clearTimeout(t);
+      clearTimeout(timer);
     }
 
     if (looksLikeLoginRedirect(res)) {
-      setStatus(widget, info.entryId, "⚠️ Not authorized. (Public submit should not require login.)");
+      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please log in and try again.");
       btn.disabled = false;
       return;
     }
@@ -307,8 +310,10 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     if (rerecordBtn) rerecordBtn.style.display = "none";
 
     widget._recordedBlob = null;
+    btn.disabled = false;
   }
 
+  // Voice search (home)
   window.startVoiceSearch = function () {
     const input = document.getElementById("searchWord");
     if (!input) return alert("Search input not found.");
@@ -415,19 +420,9 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       try { requestStop("⏹ Stopped."); } catch (_) {}
       stopTracks(active.stream);
     });
-
-    console.log("✅ audio.js bound");
   }
 
-  function boot() {
-    try { wire(); } catch (e) { console.error("❌ audio.js wire crashed:", e); }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  document.addEventListener("DOMContentLoaded", wire);
 })();
 
 
