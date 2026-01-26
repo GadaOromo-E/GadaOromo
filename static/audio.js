@@ -1,6 +1,7 @@
 /* static/audio.js (FIXED - public recording submit)
+   - Fix "Missing entry info" by reading entry_type/entry_id from the record button
    - Reliable binding even when loaded late
-   - Upload timeout (30s) so it never hangs
+   - Upload timeout (30s)
    - Disables submit while uploading
    - credentials: same-origin + redirect: manual + cache: no-store
 */
@@ -28,10 +29,29 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     return el.closest(".word-row") || el.closest(".result-box") || el.closest("section") || document.body;
   }
 
+  // ✅ FIX: always get entry_type/entry_id from:
+  // 1) clicked button dataset
+  // 2) widget.dataset
+  // 3) record button inside same widget (MOST IMPORTANT)
   function readInfo(widget, btn) {
-    const entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
-    const entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
-    const lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
+    let entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
+    let entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
+    let lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
+
+    if (!entryType || !entryId) {
+      const recordBtn = $(widget, "[data-record-btn]");
+      if (recordBtn) {
+        entryType = (recordBtn.dataset.entryType || entryType || "").trim().toLowerCase();
+        entryId   = (recordBtn.dataset.entryId   || entryId   || "").trim();
+        lang      = (recordBtn.dataset.lang      || lang      || "oromo").trim().toLowerCase();
+      }
+    }
+
+    // cache on widget for later (submit button)
+    if (entryType) widget.dataset.entryType = entryType;
+    if (entryId) widget.dataset.entryId = entryId;
+    if (lang) widget.dataset.lang = lang;
+
     return { entryType, entryId, lang };
   }
 
@@ -90,6 +110,7 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone not supported in this browser.");
 
     const info = readInfo(widget, recordBtn);
+    if (!info.entryType || !info.entryId) throw new Error("Missing entry info (entry_type/entry_id).");
     if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
 
     if (active.recorder && active.recorder.state !== "inactive") {
@@ -167,7 +188,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       resetActive();
     };
 
-    // start
     recorder.start(200);
   }
 
@@ -217,7 +237,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
       return;
     }
 
-    // disable button so it can't be spam-clicked
     btn.disabled = true;
     setStatus(widget, info.entryId, "⏳ Uploading…");
 
@@ -290,7 +309,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     widget._recordedBlob = null;
   }
 
-  // Voice search (home)
   window.startVoiceSearch = function () {
     const input = document.getElementById("searchWord");
     if (!input) return alert("Search input not found.");
@@ -401,7 +419,6 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     console.log("✅ audio.js bound");
   }
 
-  // Bind safely even if script loads after DOMContentLoaded
   function boot() {
     try { wire(); } catch (e) { console.error("❌ audio.js wire crashed:", e); }
   }
@@ -412,4 +429,5 @@ console.log("✅ audio.js LOADED", new Date().toISOString());
     boot();
   }
 })();
+
 
