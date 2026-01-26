@@ -8,6 +8,11 @@
 </head>
 <body>
 
+<!-- Optional: Toast (helps show messages if you reuse toast JS) -->
+<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
+  <span data-msg></span>
+</div>
+
 <div class="container">
 
   <header class="topbar">
@@ -19,6 +24,11 @@
       <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
         <a class="btn" href="/">⬅ Home</a>
         <a class="btn" href="/translate">🌍 Translate</a>
+
+        <!-- Optional: go back to recorder entry if you have that route -->
+        {% if entry_type and entry_id %}
+          <a class="btn" href="/recorder/entry/{{ entry_type }}/{{ entry_id }}">🎙 Recorder page</a>
+        {% endif %}
       </div>
     </div>
   </header>
@@ -34,7 +44,6 @@
     </div>
 
     {% if lang != "oromo" %}
-      <!-- UI safety: backend already blocks, but keep the page consistent -->
       <div class="result-box" style="margin-top:12px;">
         ❌ Only Oromo audio uploads are allowed.
       </div>
@@ -60,6 +69,7 @@
 
 </body>
 </html>
+
 
 
 
