@@ -1,16 +1,16 @@
-/* static/audio.js (PUBLIC mic recorder - FIXED STOP BUTTON)
-   - Voice search (home) fills #searchWord
-   - Record Oromo pronunciation per result row, submit to POST /api/submit-audio
-   FIXES:
-     ✅ Stop button always appears (creates one if missing)
-     ✅ Safety show Stop on recorder.onstart
-     ✅ Better widget detection (result-box / word-row / card)
-     ✅ Upload timeout (prevents stuck)
+/* static/audio.js (FIXED)
+   Public recording:
+   - Records Oromo pronunciation and uploads to POST /api/submit-audio
+   - FIXES "Missing entry info (entry_type/entry_id)" by:
+       ✅ storing entry info on the widget when recording starts
+       ✅ also reading from widget._entryInfo fallback
+   - FIXES "Stop button disappears / cannot stop" by:
+       ✅ always showing stop button inside the same widget
+       ✅ robust widget detection (result-box / word-row)
+   - Keeps your voice search startVoiceSearch()
 */
 
 (function () {
-  console.log("✅ audio.js LOADED", new Date().toISOString());
-
   // One active recording at a time
   const active = {
     recorder: null,
@@ -29,26 +29,52 @@
   }
 
   function findWidget(el) {
+    // Most reliable for your pages
     return (
       el.closest(".result-box") ||
       el.closest(".word-row") ||
       el.closest(".card") ||
-      el.closest("section") ||
       document.body
     );
   }
 
+  function setWidgetInfo(widget, info) {
+    if (!widget || !info) return;
+    widget._entryInfo = info; // ✅ IMPORTANT: store for submit/stop buttons
+    widget.dataset.entryType = info.entryType || widget.dataset.entryType || "";
+    widget.dataset.entryId = info.entryId || widget.dataset.entryId || "";
+    widget.dataset.lang = info.lang || widget.dataset.lang || "oromo";
+  }
+
   function readInfo(widget, btn) {
-    const entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
-    const entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
-    const lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
+    // Try button dataset, widget dataset, then widget._entryInfo
+    const fromBtn = {
+      entryType: (btn?.dataset.entryType || "").trim().toLowerCase(),
+      entryId: (btn?.dataset.entryId || "").trim(),
+      lang: (btn?.dataset.lang || "").trim().toLowerCase(),
+    };
+
+    const fromWidget = {
+      entryType: (widget?.dataset.entryType || "").trim().toLowerCase(),
+      entryId: (widget?.dataset.entryId || "").trim(),
+      lang: (widget?.dataset.lang || "").trim().toLowerCase(),
+    };
+
+    const fromStored = widget?._entryInfo || {};
+
+    const entryType = fromBtn.entryType || fromWidget.entryType || (fromStored.entryType || "").trim().toLowerCase();
+    const entryId = fromBtn.entryId || fromWidget.entryId || String(fromStored.entryId || "").trim();
+    const lang = fromBtn.lang || fromWidget.lang || (fromStored.lang || "oromo").trim().toLowerCase();
+
     return { entryType, entryId, lang };
   }
 
   function setStatus(widget, entryId, msg) {
+    // local status area if present
     const local = $(widget, "[data-status]");
     if (local) local.textContent = msg || "";
 
+    // global fallback (your index.html uses this)
     if (entryId) {
       const globalEl = document.querySelector(`[data-status-for="${entryId}"]`);
       if (globalEl) globalEl.textContent = msg || "";
@@ -75,30 +101,6 @@
     active.chunks = [];
     active.entryId = "";
     active.stopping = false;
-  }
-
-  // Ensure Stop button exists inside widget
-  function ensureStopButton(widget, info, recordBtn) {
-    let stopBtn = $(widget, "[data-stop-btn]");
-    if (stopBtn) return stopBtn;
-
-    // Create a stop button if missing
-    stopBtn = document.createElement("button");
-    stopBtn.type = "button";
-    stopBtn.className = "btn";
-    stopBtn.setAttribute("data-stop-btn", "");
-    stopBtn.textContent = "⏹ Stop";
-    stopBtn.style.padding = "8px 10px";
-    stopBtn.style.display = "none";
-
-    // Put it right after the record button if possible
-    if (recordBtn && recordBtn.parentNode) {
-      recordBtn.parentNode.insertBefore(stopBtn, recordBtn.nextSibling);
-    } else {
-      widget.appendChild(stopBtn);
-    }
-
-    return stopBtn;
   }
 
   function resetRowUI(widget) {
@@ -139,28 +141,37 @@
     if (!window.MediaRecorder) throw new Error("Recording not supported in this browser.");
 
     const info = readInfo(widget, recordBtn);
-    if (!info.entryType || !info.entryId) throw new Error("Missing entry info (entry_type/entry_id).");
-    if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
 
-    // Stop any existing recording first
+    if (!info.entryType || !info.entryId) {
+      throw new Error("Missing entry info (entry_type/entry_id).");
+    }
+    if ((info.lang || "oromo") !== "oromo") {
+      throw new Error("Only Oromo audio is allowed.");
+    }
+
+    // ✅ store info so Submit/Stop buttons work later
+    setWidgetInfo(widget, info);
+
+    // Stop old recording
     if (active.recorder && active.recorder.state !== "inactive") {
       requestStop("⏹ Stopped (new recording started).");
       await new Promise(r => setTimeout(r, 250));
     }
 
+    const stopBtn = $(widget, "[data-stop-btn]");
+    if (stopBtn) stopBtn.style.display = "inline-block"; // ✅ ensure visible
+
     const { mime, ext } = pickMime();
     widget.dataset.ext = ext;
-
-    // Set active session early (so Stop can work even if async)
-    active.widget = widget;
-    active.entryId = info.entryId;
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
 
     active.recorder = recorder;
     active.stream = stream;
+    active.widget = widget;
     active.chunks = [];
+    active.entryId = info.entryId;
     active.stopping = false;
 
     recorder.ondataavailable = (e) => {
@@ -172,13 +183,6 @@
       stopTracks(stream);
       resetRowUI(widget);
       resetActive();
-    };
-
-    recorder.onstart = () => {
-      // EXTRA SAFETY: ensure stop is visible
-      const sb = $(widget, "[data-stop-btn]");
-      if (sb) sb.style.display = "inline-block";
-      setStatus(widget, info.entryId, "🎙 Recording…");
     };
 
     recorder.onstop = () => {
@@ -220,7 +224,8 @@
       resetActive();
     };
 
-    recorder.start(); // no timeslice (more stable)
+    // Start (no timeslice is more stable for some browsers)
+    recorder.start();
   }
 
   async function safeJson(res) {
@@ -229,7 +234,7 @@
       await res.text().catch(() => "");
       return { ok: false, error: "Server returned non-JSON response." };
     }
-    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
+    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response." }));
   }
 
   function looksLikeLoginRedirect(res) {
@@ -246,10 +251,6 @@
 
     if (!info.entryType || !info.entryId) {
       setStatus(widget, info.entryId, "❌ Missing entry info (entry_type/entry_id).");
-      return;
-    }
-    if (info.lang !== "oromo") {
-      setStatus(widget, info.entryId, "❌ Only Oromo audio is allowed.");
       return;
     }
 
@@ -272,10 +273,6 @@
     const headers = {};
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
-    // timeout so upload can’t hang forever
-    const controller = new AbortController();
-    const t = setTimeout(() => controller.abort(), 30000);
-
     let res;
     try {
       res = await fetch("/api/submit-audio", {
@@ -285,38 +282,33 @@
         credentials: "same-origin",
         redirect: "manual",
         cache: "no-store",
-        signal: controller.signal
       });
     } catch (e) {
-      const msg = e?.name === "AbortError" ? "❌ Upload timed out (30s)." : "❌ Network error uploading audio.";
       console.error(e);
-      setStatus(widget, info.entryId, msg);
+      setStatus(widget, info.entryId, "❌ Network error uploading audio.");
       return;
-    } finally {
-      clearTimeout(t);
     }
 
     if (looksLikeLoginRedirect(res)) {
-      setStatus(widget, info.entryId, "⚠️ Not authorized. Please log in and try again.");
+      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please log in and try again.");
       return;
     }
 
     const data = await safeJson(res);
 
-    if (!res.ok || !data || !data.ok) {
+    if (!res.ok || !data?.ok) {
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
-      console.error("Upload error:", msg, data);
       setStatus(widget, info.entryId, "❌ " + msg);
       return;
     }
 
     setStatus(widget, info.entryId, "✅ Submitted! Waiting for admin approval.");
 
+    // Hide buttons after success
     const rb = $(widget, "[data-record-btn]");
     const sb = $(widget, "[data-stop-btn]");
     const submitBtn = $(widget, "[data-submit-btn]");
     const rerecordBtn = $(widget, "[data-rerecord-btn]");
-
     if (rb) rb.style.display = "none";
     if (sb) sb.style.display = "none";
     if (submitBtn) submitBtn.style.display = "none";
@@ -363,11 +355,11 @@
         const widget = findWidget(recordBtn);
         const info = readInfo(widget, recordBtn);
 
-        // Ensure stop exists + show it
-        const sb = ensureStopButton(widget, info, recordBtn);
+        // ✅ store info now (so submit works later even if submit has no data-*)
+        setWidgetInfo(widget, info);
 
-        // UI
         recordBtn.style.display = "none";
+        const sb = $(widget, "[data-stop-btn]");
         if (sb) sb.style.display = "inline-block";
 
         const preview = $(widget, "[data-preview-audio]");

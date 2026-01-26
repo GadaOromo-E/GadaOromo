@@ -139,17 +139,35 @@
                 class="btn"
                 style="padding:8px 10px; display:none;"
                 data-stop-btn
-              >⏹ Stop</button>
+                 data-entry-type="word"
+                 data-entry-id="{{ result_id }}"
+                 data-lang="oromo"
+              >⏹ Stop</button>  
+<audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
 
-              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+<div style="margin-top:8px;">
+  <button
+    type="button"
+    class="btn primary"
+    data-submit-btn
+    data-entry-type="word"
+    data-entry-id="{{ result_id }}"
+    data-lang="oromo"
+    style="display:none;"
+  >✅ Submit</button>
 
-              <div style="margin-top:8px;">
-                <button type="button" class="btn primary" data-submit-btn style="display:none;">✅ Submit</button>
-                <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
-              </div>
+  <button
+    type="button"
+    class="btn"
+    data-rerecord-btn
+    data-entry-type="word"
+    data-entry-id="{{ result_id }}"
+    data-lang="oromo"
+    style="display:none;"
+  >🔁 Re-record</button>
+</div>
 
-              <!-- ✅ NEW local status for audio.js -->
-              <span class="muted" data-status style="display:block; margin-top:6px; font-size:14px;"></span>
+<span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
 
               <!-- keep your old one too (compat) -->
               <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
