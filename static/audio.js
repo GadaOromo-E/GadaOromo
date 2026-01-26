@@ -1,18 +1,16 @@
-/* static/audio.js (FIXED)
+/* static/audio.js (PUBLIC mic recorder - FIXED STOP BUTTON)
    - Voice search (home) fills #searchWord
-   - Public record Oromo pronunciation per search result / translate matched block
-   - Submit to POST /api/submit-audio (pending admin approval)
-   - Fixes "Missing entry info" by reading entry_type/id from:
-       1) clicked button dataset
-       2) nearest parent with data-entry-type/data-entry-id
-   - Fixes "stuck submit" by:
-       ✅ timeout (30s)
-       ✅ credentials: same-origin
-       ✅ redirect: manual
-       ✅ cache: no-store
+   - Record Oromo pronunciation per result row, submit to POST /api/submit-audio
+   FIXES:
+     ✅ Stop button always appears (creates one if missing)
+     ✅ Safety show Stop on recorder.onstart
+     ✅ Better widget detection (result-box / word-row / card)
+     ✅ Upload timeout (prevents stuck)
 */
 
 (function () {
+  console.log("✅ audio.js LOADED", new Date().toISOString());
+
   // One active recording at a time
   const active = {
     recorder: null,
@@ -30,34 +28,20 @@
     return root ? root.querySelector(sel) : null;
   }
 
-  // ✅ IMPORTANT: include .card as possible container (your translate page uses it)
   function findWidget(el) {
     return (
-      el.closest("[data-entry-type][data-entry-id]") ||
-      el.closest(".word-row") ||
       el.closest(".result-box") ||
+      el.closest(".word-row") ||
       el.closest(".card") ||
       el.closest("section") ||
       document.body
     );
   }
 
-  // ✅ strongest way to read entry info
   function readInfo(widget, btn) {
-    // 1) from the clicked button first
-    let entryType = (btn?.dataset.entryType || "").trim().toLowerCase();
-    let entryId = (btn?.dataset.entryId || "").trim();
-    let lang = (btn?.dataset.lang || "").trim().toLowerCase();
-
-    // 2) if missing, read from nearest parent with data-entry-type/data-entry-id
-    if (!entryType || !entryId) {
-      const holder = btn?.closest?.("[data-entry-type][data-entry-id]") || widget;
-      entryType = (holder?.dataset.entryType || "").trim().toLowerCase();
-      entryId = (holder?.dataset.entryId || "").trim();
-      if (!lang) lang = (holder?.dataset.lang || "").trim().toLowerCase();
-    }
-
-    if (!lang) lang = "oromo";
+    const entryType = (btn?.dataset.entryType || widget.dataset.entryType || "").trim().toLowerCase();
+    const entryId   = (btn?.dataset.entryId   || widget.dataset.entryId   || "").trim();
+    const lang      = (btn?.dataset.lang      || widget.dataset.lang      || "oromo").trim().toLowerCase();
     return { entryType, entryId, lang };
   }
 
@@ -93,6 +77,44 @@
     active.stopping = false;
   }
 
+  // Ensure Stop button exists inside widget
+  function ensureStopButton(widget, info, recordBtn) {
+    let stopBtn = $(widget, "[data-stop-btn]");
+    if (stopBtn) return stopBtn;
+
+    // Create a stop button if missing
+    stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.className = "btn";
+    stopBtn.setAttribute("data-stop-btn", "");
+    stopBtn.textContent = "⏹ Stop";
+    stopBtn.style.padding = "8px 10px";
+    stopBtn.style.display = "none";
+
+    // Put it right after the record button if possible
+    if (recordBtn && recordBtn.parentNode) {
+      recordBtn.parentNode.insertBefore(stopBtn, recordBtn.nextSibling);
+    } else {
+      widget.appendChild(stopBtn);
+    }
+
+    return stopBtn;
+  }
+
+  function resetRowUI(widget) {
+    const rb = $(widget, "[data-record-btn]");
+    const sb = $(widget, "[data-stop-btn]");
+    const submitBtn = $(widget, "[data-submit-btn]");
+    const rerecordBtn = $(widget, "[data-rerecord-btn]");
+    const preview = $(widget, "[data-preview-audio]");
+
+    if (rb) rb.style.display = "inline-block";
+    if (sb) sb.style.display = "none";
+    if (submitBtn) submitBtn.style.display = "none";
+    if (rerecordBtn) rerecordBtn.style.display = "none";
+    if (preview) preview.style.display = "none";
+  }
+
   function requestStop(reasonText) {
     if (!active.recorder || active.recorder.state === "inactive") {
       stopTracks(active.stream);
@@ -120,6 +142,7 @@
     if (!info.entryType || !info.entryId) throw new Error("Missing entry info (entry_type/entry_id).");
     if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
 
+    // Stop any existing recording first
     if (active.recorder && active.recorder.state !== "inactive") {
       requestStop("⏹ Stopped (new recording started).");
       await new Promise(r => setTimeout(r, 250));
@@ -128,14 +151,16 @@
     const { mime, ext } = pickMime();
     widget.dataset.ext = ext;
 
+    // Set active session early (so Stop can work even if async)
+    active.widget = widget;
+    active.entryId = info.entryId;
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
 
     active.recorder = recorder;
     active.stream = stream;
-    active.widget = widget;
     active.chunks = [];
-    active.entryId = info.entryId;
     active.stopping = false;
 
     recorder.ondataavailable = (e) => {
@@ -147,6 +172,13 @@
       stopTracks(stream);
       resetRowUI(widget);
       resetActive();
+    };
+
+    recorder.onstart = () => {
+      // EXTRA SAFETY: ensure stop is visible
+      const sb = $(widget, "[data-stop-btn]");
+      if (sb) sb.style.display = "inline-block";
+      setStatus(widget, info.entryId, "🎙 Recording…");
     };
 
     recorder.onstop = () => {
@@ -188,22 +220,7 @@
       resetActive();
     };
 
-    // Start recorder
-    recorder.start(200);
-  }
-
-  function resetRowUI(widget) {
-    const rb = $(widget, "[data-record-btn]");
-    const sb = $(widget, "[data-stop-btn]");
-    const submitBtn = $(widget, "[data-submit-btn]");
-    const rerecordBtn = $(widget, "[data-rerecord-btn]");
-    const preview = $(widget, "[data-preview-audio]");
-
-    if (rb) rb.style.display = "inline-block";
-    if (sb) sb.style.display = "none";
-    if (submitBtn) submitBtn.style.display = "none";
-    if (rerecordBtn) rerecordBtn.style.display = "none";
-    if (preview) preview.style.display = "none";
+    recorder.start(); // no timeslice (more stable)
   }
 
   async function safeJson(res) {
@@ -243,7 +260,6 @@
     }
 
     setStatus(widget, info.entryId, "⏳ Uploading…");
-    btn.disabled = true;
 
     const fd = new FormData();
     fd.append("entry_type", info.entryType);
@@ -256,8 +272,9 @@
     const headers = {};
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
+    // timeout so upload can’t hang forever
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 30000);
+    const t = setTimeout(() => controller.abort(), 30000);
 
     let res;
     try {
@@ -274,16 +291,13 @@
       const msg = e?.name === "AbortError" ? "❌ Upload timed out (30s)." : "❌ Network error uploading audio.";
       console.error(e);
       setStatus(widget, info.entryId, msg);
-      btn.disabled = false;
-      clearTimeout(timer);
       return;
     } finally {
-      clearTimeout(timer);
+      clearTimeout(t);
     }
 
     if (looksLikeLoginRedirect(res)) {
-      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please log in and try again.");
-      btn.disabled = false;
+      setStatus(widget, info.entryId, "⚠️ Not authorized. Please log in and try again.");
       return;
     }
 
@@ -293,7 +307,6 @@
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
       console.error("Upload error:", msg, data);
       setStatus(widget, info.entryId, "❌ " + msg);
-      btn.disabled = false;
       return;
     }
 
@@ -310,7 +323,6 @@
     if (rerecordBtn) rerecordBtn.style.display = "none";
 
     widget._recordedBlob = null;
-    btn.disabled = false;
   }
 
   // Voice search (home)
@@ -351,8 +363,11 @@
         const widget = findWidget(recordBtn);
         const info = readInfo(widget, recordBtn);
 
+        // Ensure stop exists + show it
+        const sb = ensureStopButton(widget, info, recordBtn);
+
+        // UI
         recordBtn.style.display = "none";
-        const sb = $(widget, "[data-stop-btn]");
         if (sb) sb.style.display = "inline-block";
 
         const preview = $(widget, "[data-preview-audio]");
@@ -422,7 +437,11 @@
     });
   }
 
-  document.addEventListener("DOMContentLoaded", wire);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wire);
+  } else {
+    wire();
+  }
 })();
 
 
