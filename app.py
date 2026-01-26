@@ -1496,6 +1496,15 @@ def recorder_api_submit_audio():
 
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
+@app.route("/api/submit-audio", methods=["POST"])
+def api_submit_audio():
+    return _handle_audio_submission(is_recorder=False)
+
+@app.route("/recorder/api/submit-audio", methods=["POST"])
+def recorder_api_submit_audio2():
+    if not require_recorder():
+        return jsonify({"ok": False, "error": "Recorder login required"}), 401
+    return _handle_audio_submission(is_recorder=True)
 
 def _handle_audio_submission(is_recorder: bool):
     entry_type = (request.form.get("entry_type") or "").strip().lower()

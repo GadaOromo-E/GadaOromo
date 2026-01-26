@@ -196,7 +196,10 @@
       </div>
 
     {% elif result is not none %}
-      <div class="result-box" style="margin-top:14px;">No exact match found.</div>
+     <div class="result-box" style="margin-top:14px;"
+     data-entry-type="word"
+     data-entry-id="{{ result_id }}"
+     data-lang="oromo">
     {% endif %}
 
     {% if suggestions %}
@@ -283,7 +286,7 @@
 </script>
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260126-1"></script>
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260125-4"></script>
 </body>
 </html>
 
