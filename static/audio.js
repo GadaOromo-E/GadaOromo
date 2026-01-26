@@ -1,18 +1,13 @@
-/* static/audio.js (FULL UPDATED - public recording + voice search)
-   - Voice search (home) fills #searchWord
-   - Record Oromo pronunciation per row/result, submit to POST /api/submit-audio
-   - FIXES “Submitting stuck” by:
-       ✅ 30s timeout (AbortController)
-       ✅ credentials: same-origin (send cookies)
-       ✅ redirect: manual (avoid silent redirect)
-       ✅ cache: no-store (avoid SW caching weirdness)
-       ✅ safe JSON parsing (handles HTML / non-json errors)
-       ✅ re-enable Submit button on failure
+/* static/audio.js (FIXED - public recording submit)
+   - Reliable binding even when loaded late
+   - Upload timeout (30s) so it never hangs
+   - Disables submit while uploading
+   - credentials: same-origin + redirect: manual + cache: no-store
 */
 
-(function () {
-  console.log("✅ audio.js LOADED", new Date().toISOString());
+console.log("✅ audio.js LOADED", new Date().toISOString());
 
+(function () {
   const active = {
     recorder: null,
     stream: null,
@@ -72,20 +67,6 @@
     active.stopping = false;
   }
 
-  function resetRowUI(widget) {
-    const rb = $(widget, "[data-record-btn]");
-    const sb = $(widget, "[data-stop-btn]");
-    const submitBtn = $(widget, "[data-submit-btn]");
-    const rerecordBtn = $(widget, "[data-rerecord-btn]");
-    const preview = $(widget, "[data-preview-audio]");
-
-    if (rb) rb.style.display = "inline-block";
-    if (sb) sb.style.display = "none";
-    if (submitBtn) submitBtn.style.display = "none";
-    if (rerecordBtn) rerecordBtn.style.display = "none";
-    if (preview) preview.style.display = "none";
-  }
-
   function requestStop(reasonText) {
     if (!active.recorder || active.recorder.state === "inactive") {
       stopTracks(active.stream);
@@ -105,28 +86,8 @@
     }
   }
 
-  // ---------- Robust response handling ----------
-  function looksLikeLoginRedirect(res) {
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (res.status === 401 || res.status === 403) return true;
-    if (res.type === "opaqueredirect") return true;
-    if (res.redirected) return true;
-    if (ct.includes("text/html")) return true;
-    return false;
-  }
-
-  async function safeJson(res) {
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (!ct.includes("application/json")) {
-      await res.text().catch(() => "");
-      return { ok: false, error: "Server returned non-JSON response (maybe redirect/login/server error)." };
-    }
-    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
-  }
-
   async function startRecording(widget, recordBtn) {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone not supported in this browser.");
-    if (!window.MediaRecorder) throw new Error("Recording not supported in this browser.");
 
     const info = readInfo(widget, recordBtn);
     if (info.lang !== "oromo") throw new Error("Only Oromo audio is allowed.");
@@ -140,7 +101,13 @@
     widget.dataset.ext = ext;
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+
+    let recorder;
+    try {
+      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    } catch (_) {
+      recorder = new MediaRecorder(stream);
+    }
 
     active.recorder = recorder;
     active.stream = stream;
@@ -153,7 +120,8 @@
       if (e.data && e.data.size > 0) active.chunks.push(e.data);
     };
 
-    recorder.onerror = () => {
+    recorder.onerror = (e) => {
+      console.error("Recorder error:", e);
       setStatus(widget, info.entryId, "❌ Recorder error.");
       stopTracks(stream);
       resetRowUI(widget);
@@ -195,22 +163,51 @@
       if (rb) rb.style.display = "inline-block";
       if (sb) sb.style.display = "none";
 
-      setStatus(widget, info.entryId, "✅ Recording ready. Submit when you want.");
+      setStatus(widget, info.entryId, "✅ Recording ready. Click Submit.");
       resetActive();
     };
 
-    // Start without timeslice for stability
-    recorder.start();
+    // start
+    recorder.start(200);
+  }
+
+  function resetRowUI(widget) {
+    const rb = $(widget, "[data-record-btn]");
+    const sb = $(widget, "[data-stop-btn]");
+    const submitBtn = $(widget, "[data-submit-btn]");
+    const rerecordBtn = $(widget, "[data-rerecord-btn]");
+    const preview = $(widget, "[data-preview-audio]");
+
+    if (rb) rb.style.display = "inline-block";
+    if (sb) sb.style.display = "none";
+    if (submitBtn) submitBtn.style.display = "none";
+    if (rerecordBtn) rerecordBtn.style.display = "none";
+    if (preview) preview.style.display = "none";
+  }
+
+  async function safeJson(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (!ct.includes("application/json")) {
+      await res.text().catch(() => "");
+      return { ok: false, error: "Server returned non-JSON response." };
+    }
+    return await res.json().catch(() => ({ ok: false, error: "Invalid JSON response from server." }));
+  }
+
+  function looksLikeLoginRedirect(res) {
+    const ct = (res.headers.get("content-type") || "").toLowerCase();
+    if (res.status === 401 || res.status === 403) return true;
+    if (res.type === "opaqueredirect") return true;
+    if (res.redirected) return true;
+    if (ct.includes("text/html")) return true;
+    return false;
   }
 
   async function upload(widget, btn) {
     const info = readInfo(widget, btn);
+
     if (!info.entryType || !info.entryId) {
       setStatus(widget, info.entryId, "❌ Missing entry info (entry_type/entry_id).");
-      return;
-    }
-    if (info.lang !== "oromo") {
-      setStatus(widget, info.entryId, "❌ Only Oromo audio is allowed.");
       return;
     }
 
@@ -220,9 +217,8 @@
       return;
     }
 
-    const submitBtn = $(widget, "[data-submit-btn]");
-    if (submitBtn) submitBtn.disabled = true;
-
+    // disable button so it can't be spam-clicked
+    btn.disabled = true;
     setStatus(widget, info.entryId, "⏳ Uploading…");
 
     const fd = new FormData();
@@ -236,7 +232,6 @@
     const headers = {};
     if (CSRF_TOKEN) headers["X-CSRFToken"] = CSRF_TOKEN;
 
-    // ✅ timeout so it never “sticks forever”
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), 30000);
 
@@ -257,7 +252,7 @@
         ? "❌ Upload timed out (30s). Try again."
         : "❌ Network error uploading audio.";
       setStatus(widget, info.entryId, msg);
-      if (submitBtn) submitBtn.disabled = false;
+      btn.disabled = false;
       clearTimeout(t);
       return;
     } finally {
@@ -265,8 +260,8 @@
     }
 
     if (looksLikeLoginRedirect(res)) {
-      setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please refresh and try again.");
-      if (submitBtn) submitBtn.disabled = false;
+      setStatus(widget, info.entryId, "⚠️ Not authorized. (Public submit should not require login.)");
+      btn.disabled = false;
       return;
     }
 
@@ -276,7 +271,7 @@
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
       console.error("Upload error:", msg, data);
       setStatus(widget, info.entryId, "❌ " + msg);
-      if (submitBtn) submitBtn.disabled = false;
+      btn.disabled = false;
       return;
     }
 
@@ -284,6 +279,7 @@
 
     const rb = $(widget, "[data-record-btn]");
     const sb = $(widget, "[data-stop-btn]");
+    const submitBtn = $(widget, "[data-submit-btn]");
     const rerecordBtn = $(widget, "[data-rerecord-btn]");
 
     if (rb) rb.style.display = "none";
@@ -341,7 +337,7 @@
 
         const sbtn = $(widget, "[data-submit-btn]");
         const rbtn = $(widget, "[data-rerecord-btn]");
-        if (sbtn) { sbtn.style.display = "none"; sbtn.disabled = false; }
+        if (sbtn) sbtn.style.display = "none";
         if (rbtn) rbtn.style.display = "none";
 
         setStatus(widget, info.entryId, "🎙 Recording…");
@@ -381,7 +377,7 @@
 
         const sbtn = $(widget, "[data-submit-btn]");
         const rbtn = $(widget, "[data-rerecord-btn]");
-        if (sbtn) { sbtn.style.display = "none"; sbtn.disabled = false; }
+        if (sbtn) sbtn.style.display = "none";
         if (rbtn) rbtn.style.display = "none";
 
         setStatus(widget, info.entryId, "");
@@ -402,13 +398,18 @@
       stopTracks(active.stream);
     });
 
-    console.log("✅ audio.js wired");
+    console.log("✅ audio.js bound");
+  }
+
+  // Bind safely even if script loads after DOMContentLoaded
+  function boot() {
+    try { wire(); } catch (e) { console.error("❌ audio.js wire crashed:", e); }
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", wire);
+    document.addEventListener("DOMContentLoaded", boot);
   } else {
-    wire();
+    boot();
   }
 })();
 

@@ -86,20 +86,20 @@
     </div>
   </header>
 
-<nav class="nav">
-  <a class="nav-link" href="/">Home</a>
-  <a class="nav-link" href="/translate">Translate</a>
-  <a class="nav-link" href="/submit">Submit Word</a>
-  <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
 
-  <!-- ✅ NEW: password-only recorder entry -->
-  <a class="nav-link" href="/recorder">Add Voice</a>
+    <!-- ✅ password-only recorder entry -->
+    <a class="nav-link" href="/recorder">Add Voice</a>
 
-  <a class="nav-link" href="/learn">Learn</a>
-<a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
-  <a class="nav-link" href="/support">Donate</a>
-  <a class="nav-link" href="/admin">Admin login</a>
-</nav>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/admin">Admin login</a>
+  </nav>
 
   <section class="card">
     <h2>Search Dictionary</h2>
@@ -123,7 +123,6 @@
 
           {% if result_id %}
             {% if result_id not in approved_oromo_audio_word_ids %}
-              <!-- ✅ Public can record ONLY from search result -->
               <button
                 type="button"
                 class="btn"
@@ -149,6 +148,10 @@
                 <button type="button" class="btn" data-rerecord-btn style="display:none;">🔁 Re-record</button>
               </div>
 
+              <!-- ✅ NEW local status for audio.js -->
+              <span class="muted" data-status style="display:block; margin-top:6px; font-size:14px;"></span>
+
+              <!-- keep your old one too (compat) -->
               <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
             {% else %}
               <span class="muted" style="font-size:14px;">✅ Oromo audio approved</span>
@@ -260,7 +263,6 @@
               </div>
             </div>
 
-            <!-- ✅ Public users can only record by SEARCHING. So list shows only Search button. -->
             <button type="button" class="btn" onclick="useSuggestion('{{ w[1]|e }}')" title="Search this word">Search</button>
           </div>
         {% endfor %}
@@ -280,10 +282,8 @@
 /* your existing JS unchanged */
 </script>
 
-<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260120"></script>
-
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260126-1"></script>
 </body>
 </html>
 
