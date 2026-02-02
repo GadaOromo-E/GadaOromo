@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.gadaoromo.app",
+      "sha256_cert_fingerprints": [
+        "3C:48:01:7F:0B:2B:E4:09:78:FC:9B:87:7A:4A:F1:78:7B:EA:E0:A9:6B:CD:6A:60:6B:E9:AF:39:33:09:D4:0E"
+      ]
+    }
+  }
+]

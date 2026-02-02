@@ -137,6 +137,14 @@ def add_security_headers(resp):
     return resp
 
 
+@app.before_request
+def force_primary_domain():
+    if request.host == "gadaoromo.onrender.com":
+        return redirect(
+            "https://gadaadictionary.com" + request.full_path,
+            code=301
+        )
+
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
 
 @app.route("/robots.txt")
@@ -189,6 +197,18 @@ def sitemap_xml():
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
+
+    # static pages
+    for path, freq, prio in urls:
+        loc = f"{base}{path}"
+        xml_parts += [
+            "<url>",
+            f"<loc>{loc}</loc>",
+            f"<lastmod>{now}</lastmod>",
+            f"<changefreq>{freq}</changefreq>",
+            f"<priority>{prio}</priority>",
+            "</url>",
+        ]
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
@@ -1496,15 +1516,6 @@ def recorder_api_submit_audio():
 
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
-@app.route("/api/submit-audio", methods=["POST"])
-def api_submit_audio():
-    return _handle_audio_submission(is_recorder=False)
-
-@app.route("/recorder/api/submit-audio", methods=["POST"])
-def recorder_api_submit_audio2():
-    if not require_recorder():
-        return jsonify({"ok": False, "error": "Recorder login required"}), 401
-    return _handle_audio_submission(is_recorder=True)
 
 def _handle_audio_submission(is_recorder: bool):
     entry_type = (request.form.get("entry_type") or "").strip().lower()

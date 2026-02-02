@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{{ word.en }} — {{ APP_NAME }}</title>
+
+  <meta name="description"
+        content="Meaning of {{ word.en }} in Oromo ({{ word.om }}). Oromo ↔ English dictionary entry with pronunciation.">
+
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="{{ request.url }}">
+
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+<div class="container">
+
+  <header class="topbar">
+    <h1>{{ APP_NAME }}</h1>
+    <p class="tagline">Oromo ↔ English Dictionary</p>
+  </header>
+
+  <section class="card">
+    <h2>{{ word.en }}</h2>
+
+    <p style="font-size:18px; margin-top:8px;">
+      <b>Oromo:</b> {{ word.om }}
+    </p>
+
+    {% if word.explanation %}
+      <p class="muted" style="margin-top:10px;">
+        {{ word.explanation }}
+      </p>
+    {% endif %}
+
+    {% if word.audio_oromo %}
+      <div style="margin-top:12px;">
+        <b>Oromo pronunciation</b>
+        <audio controls style="width:100%;">
+          <source src="{{ word.audio_oromo }}">
+        </audio>
+      </div>
+    {% endif %}
+
+    {% if word.audio_english %}
+      <div style="margin-top:12px;">
+        <b>English pronunciation</b>
+        <audio controls style="width:100%;">
+          <source src="{{ word.audio_english }}">
+        </audio>
+      </div>
+    {% endif %}
+  </section>
+
+  <div class="quick-actions">
+    <a class="btn primary" href="/?q={{ word.en }}">🔍 Search</a>
+    <a class="btn" href="/">🏠 Home</a>
+  </div>
+
+  <footer class="footer">
+    <p>© {{ current_year }} {{ APP_NAME }}</p>
+  </footer>
+
+</div>
+</body>
+</html>
