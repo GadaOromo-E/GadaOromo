@@ -197,7 +197,6 @@ def sitemap_xml():
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
-
     # static pages
     for path, freq, prio in urls:
         loc = f"{base}{path}"
@@ -209,6 +208,14 @@ def sitemap_xml():
             f"<priority>{prio}</priority>",
             "</url>",
         ]
+
+@app.route("/.well-known/<path:filename>")
+def well_known(filename):
+    return send_from_directory(
+        os.path.join(app.static_folder, ".well-known"),
+        filename,
+        mimetype="application/json"
+    )
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
