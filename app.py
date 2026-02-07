@@ -84,6 +84,13 @@ DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
 
+@app.before_request
+def force_primary_domain():
+    if request.path.startswith("/.well-known/"):
+        return None
+    if request.host == "gadaoromo.onrender.com":
+        return redirect("https://gadaadictionary.com" + request.full_path, code=301)
+
 
 def _safe_url(u: str) -> str:
     if not u:
@@ -136,14 +143,6 @@ def add_security_headers(resp):
         resp.headers.setdefault("Cache-Control", "no-cache")
     return resp
 
-
-@app.before_request
-def force_primary_domain():
-    if request.host == "gadaoromo.onrender.com":
-        return redirect(
-            "https://gadaadictionary.com" + request.full_path,
-            code=301
-        )
 
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
 
@@ -209,11 +208,11 @@ def sitemap_xml():
             "</url>",
         ]
 
-@app.route("/.well-known/<path:filename>")
-def well_known(filename):
+@app.route("/.well-known/assetlinks.json")
+def assetlinks():
     return send_from_directory(
         os.path.join(app.static_folder, ".well-known"),
-        filename,
+        "assetlinks.json",
         mimetype="application/json"
     )
 
