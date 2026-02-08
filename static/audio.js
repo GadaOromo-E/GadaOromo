@@ -278,11 +278,17 @@
       res = await fetch("/api/submit-audio", {
         method: "POST",
         body: fd,
-        headers,
         credentials: "same-origin",
-        redirect: "manual",
         cache: "no-store",
       });
+
+ // Try to parse JSON (your backend returns JSON)
+  try {
+    data = await res.json();
+  } catch (_) {
+    data = null;
+  }
+
     } catch (e) {
       console.error(e);
       setStatus(widget, info.entryId, "❌ Network error uploading audio.");
