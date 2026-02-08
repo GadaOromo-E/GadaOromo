@@ -38,7 +38,11 @@
       <div style="margin-top:12px;">
         <b>Oromo pronunciation</b>
         <audio controls style="width:100%;">
-          <source src="{{ word.audio_oromo }}">
+          {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
+            <source src="{{ word.audio_oromo }}">
+          {% else %}
+            <source src="{{ url_for('static', filename=word.audio_oromo) }}">
+          {% endif %}
         </audio>
       </div>
     {% endif %}
@@ -47,7 +51,11 @@
       <div style="margin-top:12px;">
         <b>English pronunciation</b>
         <audio controls style="width:100%;">
-          <source src="{{ word.audio_english }}">
+          {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
+            <source src="{{ word.audio_english }}">
+          {% else %}
+            <source src="{{ url_for('static', filename=word.audio_english) }}">
+          {% endif %}
         </audio>
       </div>
     {% endif %}
@@ -62,15 +70,5 @@
     <p>© {{ current_year }} {{ APP_NAME }}</p>
   </footer>
 </div>
-
-
-<button class="btn" type="button" onclick="speakEnglish('{{ word.en|e }}')">
-  🔊 Speak English
-</button>
-
-<button class="btn" type="button" onclick="speakOromo('{{ word.om|e }}')">
-  🔊 Speak Oromo
-</button>
-<script src="/static/tts.js?v=20260208-99"></script>
 </body>
 </html>
