@@ -115,6 +115,13 @@ function speakText(text, langCode){
   window.speechSynthesis.speak(u);
 }
 </script>
+<button class="btn" type="button" onclick="speakEnglish('{{ word.en|e }}')">
+  🔊 Speak English
+</button>
+
+<button class="btn" type="button" onclick="speakOromo('{{ word.om|e }}')">
+  🔊 Speak Oromo
+</button>
 
 </body>
 </html>
