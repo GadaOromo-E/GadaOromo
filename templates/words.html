@@ -64,57 +64,23 @@
 
 </div>
 <script>
-let cachedVoices = [];
+window.speakEnglish = function(text){
+  if (!("speechSynthesis" in window)) return alert("TTS not supported.");
+  const u = new SpeechSynthesisUtterance(text || "");
+  u.lang = "en-US";
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+};
 
-function loadVoices(){
-  if (!("speechSynthesis" in window)) return;
-  cachedVoices = window.speechSynthesis.getVoices();
-}
-
-if ("speechSynthesis" in window) {
-  loadVoices();
-  window.speechSynthesis.onvoiceschanged = loadVoices;
-}
-
-function pickBestVoice(langCode){
-  if (!cachedVoices || cachedVoices.length === 0) return null;
-
-  const lc = (langCode || "").toLowerCase();
-
-  // exact match
-  let v = cachedVoices.find(x => (x.lang || "").toLowerCase() === lc);
-  if (v) return v;
-
-  // base language (en, om, etc.)
-  const base = lc.split("-")[0];
-  v = cachedVoices.find(x => (x.lang || "").toLowerCase().startsWith(base));
-  if (v) return v;
-
-  // fallback to English
-  return cachedVoices.find(x => (x.lang || "").toLowerCase().startsWith("en")) || null;
-}
-
-function speakText(text, langCode){
-  if (!("speechSynthesis" in window)) {
-    alert("TTS is not supported in this browser.");
-    return;
-  }
-  if (!text || !text.trim()) return;
-
-  const u = new SpeechSynthesisUtterance(text);
-  const voice = pickBestVoice(langCode);
-
-  if (voice) {
-    u.voice = voice;
-    u.lang = voice.lang;
-  } else {
-    u.lang = langCode;
-  }
-
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
-}
+window.speakOromo = function(text){
+  if (!("speechSynthesis" in window)) return alert("TTS not supported.");
+  const u = new SpeechSynthesisUtterance(text || "");
+  u.lang = "om-ET";
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+};
 </script>
+
 <button class="btn" type="button" onclick="speakEnglish('{{ word.en|e }}')">
   🔊 Speak English
 </button>
