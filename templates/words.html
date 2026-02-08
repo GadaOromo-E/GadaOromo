@@ -61,25 +61,8 @@
   <footer class="footer">
     <p>© {{ current_year }} {{ APP_NAME }}</p>
   </footer>
-
 </div>
-<script>
-window.speakEnglish = function(text){
-  if (!("speechSynthesis" in window)) return alert("TTS not supported.");
-  const u = new SpeechSynthesisUtterance(text || "");
-  u.lang = "en-US";
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-};
 
-window.speakOromo = function(text){
-  if (!("speechSynthesis" in window)) return alert("TTS not supported.");
-  const u = new SpeechSynthesisUtterance(text || "");
-  u.lang = "om-ET";
-  speechSynthesis.cancel();
-  speechSynthesis.speak(u);
-};
-</script>
 
 <button class="btn" type="button" onclick="speakEnglish('{{ word.en|e }}')">
   🔊 Speak English
@@ -88,6 +71,6 @@ window.speakOromo = function(text){
 <button class="btn" type="button" onclick="speakOromo('{{ word.om|e }}')">
   🔊 Speak Oromo
 </button>
-
+<script src="{{ url_for('static', filename='tts.js') }}?v=20260208-2"></script>
 </body>
 </html>
