@@ -63,5 +63,37 @@
   </footer>
 
 </div>
+<div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap;">
+  <button class="btn" type="button" onclick="speakText('{{ word.en|e }}','en-US')">🔊 Speak English</button>
+  <button class="btn" type="button" onclick="speakText('{{ word.om|e }}','om-ET')">🔊 Speak Oromo</button>
+</div>
+
+<script>
+let cachedVoices = [];
+function loadVoices(){ cachedVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }
+if ('speechSynthesis' in window) {
+  loadVoices();
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+}
+function pickBestVoice(langCode){
+  if(!cachedVoices || cachedVoices.length===0) return null;
+  const lc=(langCode||"").toLowerCase();
+  let v=cachedVoices.find(x => (x.lang||"").toLowerCase()===lc);
+  if(v) return v;
+  const base=lc.split("-")[0];
+  v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith(base));
+  if(v) return v;
+  return null;
+}
+function speakText(text, langCode){
+  if(!('speechSynthesis' in window)) return alert("Speech is not supported in this browser.");
+  if(!text || !text.trim()) return alert("Nothing to speak.");
+  const u=new SpeechSynthesisUtterance(text);
+  const best=pickBestVoice(langCode);
+  if(best){ u.voice=best; u.lang=best.lang; } else { u.lang=langCode; }
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(u);
+}
+</script>
 </body>
 </html>
