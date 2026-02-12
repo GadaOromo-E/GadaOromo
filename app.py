@@ -304,7 +304,7 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 # ------------------ TEXT NORMALIZATION ------------------
 
 def normalize_text(text: str) -> str:
-    t = (text or "").strip().lower()
+    t = (text or "").strip()
     t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
     t = re.sub(r"[^\w\s']+", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
