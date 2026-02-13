@@ -306,7 +306,6 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 def normalize_text(text: str) -> str:
     t = (text or "").strip()
     t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
-    t = re.sub(r"[^\w\s']+", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -1968,6 +1967,23 @@ def admin_manage():
         phrase_q=phrase_q
     )
 
+ADMIN_MANAGE_PASSWORD = os.environ.get("ADMIN_MANAGE_PASSWORD", "")
+
+@app.route("/admin/manage-lock", methods=["GET", "POST"])
+def admin_manage_lock():
+    if not require_admin():
+        return redirect("/admin")
+
+    error = None
+
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        if ADMIN_MANAGE_PASSWORD and pw == ADMIN_MANAGE_PASSWORD:
+            session["admin_manage_ok"] = True
+            return redirect("/admin/manage")
+        error = "Wrong management password."
+
+    return render_template("admin_manage_lock.html", error=error)
 
 # ------------------ CHANGE PASSWORD ------------------
 

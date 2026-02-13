@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Management Lock</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h2>🔒 Admin Management</h2>
+    <p class="muted">Enter management password to continue.</p>
+
+    {% if error %}
+      <div class="result-box" style="border-color:#b00020; color:#b00020;">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" style="margin-top:12px;">
+      <input type="password" name="password" placeholder="Management password" required>
+      <div style="height:12px;"></div>
+      <button class="btn primary" type="submit">Enter</button>
+      <a class="btn" href="/dashboard">Back</a>
+    </form>
+  </div>
+</div>
+</body>
+</html>
