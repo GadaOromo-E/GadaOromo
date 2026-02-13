@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Unlock Admin Management</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<div class="container">
+
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Admin Management Lock</h2>
+        <div class="subtle">Enter management password</div>
+      </div>
+      <a class="btn" href="/dashboard">⬅ Back</a>
+    </div>
+  </div>
+
+  {% if msg %}
+    <div class="result-box">{{ msg }}</div>
+  {% endif %}
+
+  <div class="card">
+    <form method="POST">
+      <input type="password" name="manage_password" placeholder="Management password" required>
+      <div style="height:10px;"></div>
+      <button type="submit">Unlock</button>
+    </form>
+  </div>
+
+</div>
+
+</body>
+</html>

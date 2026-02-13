@@ -1729,6 +1729,26 @@ def admin_login():
 
     return render_template("admin_login.html")
 
+# ------------------ ADMIN MANAGEMENT UNLOCK ------------------
+@app.route("/admin/manage/unlock", methods=["GET", "POST"])
+def admin_manage_unlock():
+    if not require_admin():
+        return redirect("/admin")
+
+    msg = None
+
+    if request.method == "POST":
+        entered = request.form.get("manage_password") or ""
+        real_pw = os.environ.get("ADMIN_MANAGE_PASSWORD")
+
+        if entered == real_pw:
+            session["manage_unlocked"] = True
+            return redirect("/admin/manage")
+        else:
+            msg = "Wrong management password."
+
+    return render_template("admin_manage_unlock.html", msg=msg)
+
 
 # ------------------ ADMIN DASHBOARD ------------------
 
@@ -1778,6 +1798,9 @@ def dashboard():
 def admin_manage():
     if not require_admin():
         return redirect("/admin")
+
+    if not session.get("manage_unlocked"):
+        return redirect("/admin/manage/unlock")
 
     msg = None
 
@@ -1968,40 +1991,6 @@ def admin_manage():
         word_q=word_q,
         phrase_q=phrase_q
     )
-
-@app.route("/admin/manage-lock", methods=["GET", "POST"])
-def admin_manage_lock():
-    # Må være admin logget inn først
-    if not require_admin():
-        return redirect("/admin")
-
-    # Hvis du ikke har satt passord i Render → vis klar feilmelding
-    if not ADMIN_MANAGE_PASSWORD:
-        return render_template(
-            "admin_manage_lock.html",
-            error="ADMIN_MANAGE_PASSWORD is not set in Render Environment."
-        )
-
-    error = None
-
-    if request.method == "POST":
-        pw = (request.form.get("password") or "").strip()
-
-        if pw == ADMIN_MANAGE_PASSWORD:
-            session["admin_manage_ok"] = True
-            return redirect("/admin/manage")
-
-        error = "Wrong management password."
-
-    return render_template("admin_manage_lock.html", error=error)
-
-@app.route("/admin/manage-lockout", methods=["GET"])
-def admin_manage_lockout():
-    if not require_admin():
-        return redirect("/admin")
-
-    session.pop("admin_manage_ok", None)
-    return redirect("/admin/manage-lock")
 
 
 # ------------------ CHANGE PASSWORD ------------------
