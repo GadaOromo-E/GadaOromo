@@ -74,6 +74,8 @@ app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 
+ADMIN_MANAGE_PASSWORD = os.environ.get("ADMIN_MANAGE_PASSWORD", "")
+
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 API_URL = os.environ.get("API_URL", "").strip()
@@ -1967,13 +1969,11 @@ def admin_manage():
         phrase_q=phrase_q
     )
 
-ADMIN_MANAGE_PASSWORD = os.environ.get("ADMIN_MANAGE_PASSWORD", "")
 
 @app.route("/admin/manage-lock", methods=["GET", "POST"])
 def admin_manage_lock():
     if not require_admin():
         return redirect("/admin")
-
     error = None
 
     if request.method == "POST":
