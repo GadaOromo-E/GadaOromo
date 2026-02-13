@@ -1969,21 +1969,40 @@ def admin_manage():
         phrase_q=phrase_q
     )
 
-
 @app.route("/admin/manage-lock", methods=["GET", "POST"])
 def admin_manage_lock():
+    # Må være admin logget inn først
     if not require_admin():
         return redirect("/admin")
+
+    # Hvis du ikke har satt passord i Render → vis klar feilmelding
+    if not ADMIN_MANAGE_PASSWORD:
+        return render_template(
+            "admin_manage_lock.html",
+            error="ADMIN_MANAGE_PASSWORD is not set in Render Environment."
+        )
+
     error = None
 
     if request.method == "POST":
-        pw = request.form.get("password", "")
-        if ADMIN_MANAGE_PASSWORD and pw == ADMIN_MANAGE_PASSWORD:
+        pw = (request.form.get("password") or "").strip()
+
+        if pw == ADMIN_MANAGE_PASSWORD:
             session["admin_manage_ok"] = True
             return redirect("/admin/manage")
+
         error = "Wrong management password."
 
     return render_template("admin_manage_lock.html", error=error)
+
+@app.route("/admin/manage-lockout", methods=["GET"])
+def admin_manage_lockout():
+    if not require_admin():
+        return redirect("/admin")
+
+    session.pop("admin_manage_ok", None)
+    return redirect("/admin/manage-lock")
+
 
 # ------------------ CHANGE PASSWORD ------------------
 
