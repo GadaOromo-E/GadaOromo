@@ -60,7 +60,8 @@ from openpyxl import load_workbook
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
-UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+BASE_DIR = "/var/data" if os.path.exists("/var/data") else os.getcwd()
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
