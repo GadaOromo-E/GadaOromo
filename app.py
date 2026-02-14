@@ -60,6 +60,11 @@ from openpyxl import load_workbook
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
 # ✅ IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
@@ -1077,8 +1082,7 @@ def submit():
             filename = (f.filename or "").lower().strip()
 
             # Save upload to temp file (streamed, avoids RAM spike)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=filename, dir="/tmp") as tmp:
-
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
                 f.save(tmp.name)
                 path = tmp.name
 
@@ -1193,8 +1197,7 @@ def submit_phrase():
             filename = (f.filename or "").lower().strip()
 
             # Save upload to temp file (no RAM spike)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=filename, dir="/tmp") as tmp:
-
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
                 f.save(tmp.name)
                 path = tmp.name
 
