@@ -329,32 +329,39 @@ def dedup_preserve_order(items):
 
 # ------------------ COMMUNITY FILE PARSERS (NO GOOGLE) ------------------
 
-def parse_csv_pairs(file_bytes: bytes):
-    text = file_bytes.decode("utf-8", errors="replace")
-    f = StringIO(text)
-    reader = csv.DictReader(f)
+def parse_csv_pairs_from_path(path: str):
+    # prøv UTF-8 først, fallback latin-1
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            with open(path, "r", encoding=enc, newline="") as f:
+                reader = csv.DictReader(f)
+                out = []
+                for row in reader:
+                    en = normalize_text((row.get("english") or row.get("English") or "").strip())
+                    om = normalize_text((row.get("oromo") or row.get("Oromo") or "").strip())
+                    if en or om:
+                        out.append((en, om))
 
-    out = []
-    for row in reader:
-        en = normalize_text((row.get("english") or row.get("English") or "").strip())
-        om = normalize_text((row.get("oromo") or row.get("Oromo") or "").strip())
-        if en or om:
-            out.append((en, om))
+            seen = set()
+            final = []
+            for en, om in out:
+                if en and en not in seen:
+                    seen.add(en)
+                    final.append((en, om))
+            return final
+        except UnicodeDecodeError:
+            continue
+
+    raise ValueError("Could not decode CSV file.")
+
+
+def parse_xlsx_pairs_from_path(path: str):
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
 
     seen = set()
     final = []
-    for en, om in out:
-        if en and en not in seen:
-            seen.add(en)
-            final.append((en, om))
-    return final
 
-
-def parse_xlsx_pairs(file_bytes: bytes):
-    wb = load_workbook(BytesIO(file_bytes))
-    ws = wb.active
-
-    out = []
     for idx, row in enumerate(ws.iter_rows(values_only=True)):
         if not row:
             continue
@@ -362,20 +369,17 @@ def parse_xlsx_pairs(file_bytes: bytes):
         a = (row[0] if len(row) > 0 else "") or ""
         b = (row[1] if len(row) > 1 else "") or ""
 
+        # skip header row
         if idx == 0 and str(a).strip().lower() in ("english", "en") and str(b).strip().lower() in ("oromo", "om"):
             continue
 
         en = normalize_text(str(a))
         om = normalize_text(str(b))
-        if en or om:
-            out.append((en, om))
 
-    seen = set()
-    final = []
-    for en, om in out:
         if en and en not in seen:
             seen.add(en)
             final.append((en, om))
+
     return final
 
 
@@ -1051,7 +1055,6 @@ def translate():
         approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
-
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
@@ -1060,21 +1063,28 @@ def submit():
 
     if request.method == "POST":
         mode = (request.form.get("mode") or "").strip().lower()
-
         f = request.files.get("file")
+
+        # ---------- FILE MODE ----------
         if mode == "file" or (f and f.filename):
             if not f or not f.filename:
                 msg = "Please choose a CSV or XLSX file."
                 return render_template("submit.html", msg=msg)
 
+            import tempfile, os
+
             filename = (f.filename or "").lower().strip()
-            data = f.read()
+
+            # Save upload to temp file (streamed, avoids RAM spike)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+                f.save(tmp.name)
+                path = tmp.name
 
             try:
                 if filename.endswith(".csv"):
-                    pairs = parse_csv_pairs(data)
+                    pairs = parse_csv_pairs_from_path(path)
                 elif filename.endswith(".xlsx"):
-                    pairs = parse_xlsx_pairs(data)
+                    pairs = parse_xlsx_pairs_from_path(path)
                 else:
                     msg = "Only .csv or .xlsx files are allowed."
                     return render_template("submit.html", msg=msg)
@@ -1082,6 +1092,11 @@ def submit():
                 app.logger.exception(f"submit (words) file parse error: {repr(e)}")
                 msg = "Could not read the file. Please check its format."
                 return render_template("submit.html", msg=msg)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
             if not pairs:
                 msg = "No rows found in the file."
@@ -1099,19 +1114,31 @@ def submit():
             c = conn.cursor()
 
             for en, om in pairs:
-                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (en, om))
+                c.execute(
+                    "SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1",
+                    (en, om),
+                )
                 if c.fetchone():
                     skipped += 1
                     continue
-                c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+
+                c.execute(
+                    "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+                    (en, om),
+                )
                 inserted += 1
 
             conn.commit()
             conn.close()
 
-            msg = f"Thanks! File submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
+            msg = (
+                f"Thanks! File submitted. "
+                f"Added: {inserted} | Skipped duplicates: {skipped}. "
+                f"Waiting for admin approval."
+            )
             return render_template("submit.html", msg=msg)
 
+        # ---------- TEXT MODE ----------
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
@@ -1122,13 +1149,19 @@ def submit():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        c.execute("SELECT 1 FROM words WHERE english=? OR oromo=?", (english, oromo))
+        c.execute(
+            "SELECT 1 FROM words WHERE english=? OR oromo=?",
+            (english, oromo),
+        )
         if c.fetchone():
             conn.close()
             msg = "This word already exists (or is pending). Try another."
             return render_template("submit.html", msg=msg)
 
-        c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
+        c.execute(
+            "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+            (english, oromo),
+        )
         conn.commit()
         conn.close()
 
@@ -1136,7 +1169,6 @@ def submit():
         return render_template("submit.html", msg=msg)
 
     return render_template("submit.html", msg=msg)
-
 
 # ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
 
@@ -1146,21 +1178,28 @@ def submit_phrase():
 
     if request.method == "POST":
         mode = (request.form.get("mode") or "").strip().lower()
-
         f = request.files.get("file")
+
+        # ---------- FILE MODE ----------
         if mode == "file" or (f and f.filename):
             if not f or not f.filename:
                 msg = "Please choose a CSV or XLSX file."
                 return render_template("submit_phrase.html", msg=msg)
 
+            import tempfile, os
+
             filename = (f.filename or "").lower().strip()
-            data = f.read()
+
+            # Save upload to temp file (no RAM spike)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+                f.save(tmp.name)
+                path = tmp.name
 
             try:
                 if filename.endswith(".csv"):
-                    pairs = parse_csv_pairs(data)
+                    pairs = parse_csv_pairs_from_path(path)
                 elif filename.endswith(".xlsx"):
-                    pairs = parse_xlsx_pairs(data)
+                    pairs = parse_xlsx_pairs_from_path(path)
                 else:
                     msg = "Only .csv or .xlsx files are allowed."
                     return render_template("submit_phrase.html", msg=msg)
@@ -1168,6 +1207,11 @@ def submit_phrase():
                 app.logger.exception(f"submit_phrase file parse error: {repr(e)}")
                 msg = "Could not read the file. Please check its format."
                 return render_template("submit_phrase.html", msg=msg)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
             if not pairs:
                 msg = "No rows found in the file."
@@ -1185,19 +1229,31 @@ def submit_phrase():
             c = conn.cursor()
 
             for en, om in pairs:
-                c.execute("SELECT 1 FROM phrases WHERE english=? OR oromo=? LIMIT 1", (en, om))
+                c.execute(
+                    "SELECT 1 FROM phrases WHERE english=? OR oromo=? LIMIT 1",
+                    (en, om),
+                )
                 if c.fetchone():
                     skipped += 1
                     continue
-                c.execute("INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+
+                c.execute(
+                    "INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')",
+                    (en, om),
+                )
                 inserted += 1
 
             conn.commit()
             conn.close()
 
-            msg = f"Thanks! Phrase file submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
+            msg = (
+                f"Thanks! Phrase file submitted. "
+                f"Added: {inserted} | Skipped duplicates: {skipped}. "
+                f"Waiting for admin approval."
+            )
             return render_template("submit_phrase.html", msg=msg)
 
+        # ---------- TEXT MODE ----------
         english = normalize_text(request.form.get("english", ""))
         oromo = normalize_text(request.form.get("oromo", ""))
 
@@ -1208,13 +1264,19 @@ def submit_phrase():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        c.execute("SELECT 1 FROM phrases WHERE english=? OR oromo=?", (english, oromo))
+        c.execute(
+            "SELECT 1 FROM phrases WHERE english=? OR oromo=?",
+            (english, oromo),
+        )
         if c.fetchone():
             conn.close()
             msg = "This phrase already exists (or is pending). Try another."
             return render_template("submit_phrase.html", msg=msg)
 
-        c.execute("INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')", (english, oromo))
+        c.execute(
+            "INSERT INTO phrases (english, oromo, status) VALUES (?, ?, 'pending')",
+            (english, oromo),
+        )
         conn.commit()
         conn.close()
 
@@ -1222,7 +1284,6 @@ def submit_phrase():
         return render_template("submit_phrase.html", msg=msg)
 
     return render_template("submit_phrase.html", msg=msg)
-
 
 # ------------------ LEGACY: COMMUNITY FILE SUBMISSION ------------------
 
@@ -1236,14 +1297,20 @@ def submit_file():
             msg = "Please choose a file."
             return render_template("submit_file.html", msg=msg)
 
+        import tempfile, os
+
         filename = (f.filename or "").lower().strip()
-        data = f.read()
+
+        # Save upload to temp file (prevents RAM spike)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+            f.save(tmp.name)
+            path = tmp.name
 
         try:
             if filename.endswith(".csv"):
-                pairs = parse_csv_pairs(data)
+                pairs = parse_csv_pairs_from_path(path)
             elif filename.endswith(".xlsx"):
-                pairs = parse_xlsx_pairs(data)
+                pairs = parse_xlsx_pairs_from_path(path)
             else:
                 msg = "Only .csv or .xlsx files are allowed."
                 return render_template("submit_file.html", msg=msg)
@@ -1251,6 +1318,11 @@ def submit_file():
             app.logger.exception(f"submit_file parse error: {repr(e)}")
             msg = "Could not read the file. Please check its format."
             return render_template("submit_file.html", msg=msg)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
         if not pairs:
             msg = "No rows found in the file."
@@ -1268,20 +1340,32 @@ def submit_file():
         c = conn.cursor()
 
         for en, om in pairs:
-            c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (en, om))
+            c.execute(
+                "SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1",
+                (en, om),
+            )
             if c.fetchone():
                 skipped += 1
                 continue
-            c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+
+            c.execute(
+                "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+                (en, om),
+            )
             inserted += 1
 
         conn.commit()
         conn.close()
 
-        msg = f"Thanks! File submitted. Added: {inserted} | Skipped duplicates: {skipped}. Waiting for admin approval."
+        msg = (
+            f"Thanks! File submitted. "
+            f"Added: {inserted} | Skipped duplicates: {skipped}. "
+            f"Waiting for admin approval."
+        )
         return render_template("submit_file.html", msg=msg)
 
     return render_template("submit_file.html", msg=msg)
+
 
 
 # ------------------ RECORDER LOGIN + DASHBOARD ------------------
@@ -1617,7 +1701,6 @@ def _handle_audio_submission(is_recorder: bool):
             conn.close()
         except Exception:
             pass
-
 
 
 # ------------------ COMMUNITY AUDIO UPLOAD PAGE (OROMO ONLY) ------------------
