@@ -231,7 +231,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
 MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
-app.config["MAX_CONTENT_LENGTH"] = MAX_AUDIO_MB * 1024 * 1024
+MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "100"))
+app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 
 
 # ------------------ PWA ROUTES ------------------
@@ -1076,7 +1077,8 @@ def submit():
             filename = (f.filename or "").lower().strip()
 
             # Save upload to temp file (streamed, avoids RAM spike)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename, dir="/tmp") as tmp:
+
                 f.save(tmp.name)
                 path = tmp.name
 
@@ -1191,7 +1193,8 @@ def submit_phrase():
             filename = (f.filename or "").lower().strip()
 
             # Save upload to temp file (no RAM spike)
-            with tempfile.NamedTemporaryFile(delete=False, suffix=filename) as tmp:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=filename, dir="/tmp") as tmp:
+
                 f.save(tmp.name)
                 path = tmp.name
 
@@ -1488,12 +1491,25 @@ def recorder_entry(entry_type, entry_id):
 
 
 # ------------------ RECORDER API: GET CURRENT AUDIO + DELETE ------------------
+
 from werkzeug.exceptions import RequestEntityTooLarge
 
 @app.errorhandler(RequestEntityTooLarge)
 def handle_413(e):
-    return jsonify({"ok": False, "error": "Audio file too large. Record shorter or increase MAX_AUDIO_MB."}), 413
+    # JSON for API endpoints
+    if request.path.startswith("/api/") or request.path.startswith("/recorder/api/"):
+        return jsonify({"ok": False, "error": "File too large. Please upload a smaller file."}), 413
 
+    # HTML for normal pages
+    msg = "File too large. Please upload a smaller file (or increase MAX_UPLOAD_MB)."
+    if request.path.startswith("/submit_phrase"):
+        return render_template("submit_phrase.html", msg=msg), 413
+    if request.path.startswith("/submit_file"):
+        return render_template("submit_file.html", msg=msg), 413
+    if request.path.startswith("/submit"):
+        return render_template("submit.html", msg=msg), 413
+
+    return "File too large.", 413
 
 @app.route("/recorder/api/audio", methods=["GET"])
 def recorder_api_audio_get():
