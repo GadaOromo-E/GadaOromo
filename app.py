@@ -1914,8 +1914,6 @@ def admin_manage():
     if not session.get("manage_unlocked"):
         return redirect("/admin/manage/unlock")
 
-    session.pop("manage_unlocked", None)
-
     msg = None
 
     if request.method == "POST":
