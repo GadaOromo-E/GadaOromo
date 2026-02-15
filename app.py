@@ -992,6 +992,10 @@ def home():
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
     )
 
+@app.route("/health")
+def health():
+    return "ok", 200
+
 
 # ------------------ TRANSLATE ------------------
 

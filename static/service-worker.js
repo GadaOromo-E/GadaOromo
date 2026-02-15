@@ -46,10 +46,28 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
-  // ✅ CRITICAL: never intercept POST/PUT/DELETE (fixes upload stuck)
+  // ✅ NEVER intercept POST/PUT/DELETE (fix upload stuck)
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
+
+  // only same-origin caching
+  if (url.origin !== self.location.origin) return;
+
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      return (
+        cached ||
+        fetch(req).then((res) => {
+          const copy = res.clone();
+          caches.open("static-v1").then((cache) => cache.put(req, copy));
+          return res;
+        })
+      );
+    })
+  );
+});
+
 
   // Only same-origin
   if (url.origin !== self.location.origin) return;
