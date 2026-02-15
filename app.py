@@ -1,13 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Created on Sun Jan 11 16:32:35 2026
-
 @author: ademo
-"""
-"""
+
 Gadaa Dictionary - Flask + SQLite + PWA-ready
 
-✅ Includes:
+Includes:
 - Dictionary search + translate pages
 - Admin login + dashboard + approve/reject
 - Public submission: words + phrases (manual + CSV/XLSX)
@@ -16,17 +14,19 @@ Gadaa Dictionary - Flask + SQLite + PWA-ready
 - Community audio upload + admin approve/reject
 - In-page mic recording posts to: POST /api/submit-audio
 - /learn, /support
-- PWA support:
-    - /manifest.webmanifest
-    - /service-worker.js (root scope)
-    - /offline
-- SEO / Google:
-    - /robots.txt
-    - /sitemap.xml
-    - ProxyFix for Render (correct https URLs)
-    - google verification file route
 
-✅ Recorder mode (password protected):
+PWA support:
+- /manifest.webmanifest
+- /service-worker.js (root scope)
+- /offline
+
+SEO / Google:
+- /robots.txt
+- /sitemap.xml
+- ProxyFix for Render (correct https URLs)
+- google verification file route
+
+Recorder mode (password protected):
 - Recorder password login (/recorder)
 - Recorder dashboard (/recorder/dashboard) to quickly record unlimited words/phrases
 - Recorder recordings are AUTO-APPROVED and can REPLACE existing approved audio
@@ -43,6 +43,7 @@ from uuid import uuid4
 from difflib import get_close_matches
 from io import StringIO, BytesIO
 from datetime import datetime
+import unicodedata
 
 import requests
 from flask import (
@@ -59,6 +60,7 @@ from openpyxl import load_workbook
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
+
 
 @app.route("/health")
 def health():
@@ -97,12 +99,14 @@ DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
 
+
 @app.before_request
 def force_primary_domain():
     if request.path.startswith("/.well-known/"):
         return None
     if request.host == "gadaoromo.onrender.com":
         return redirect("https://gadaadictionary.com" + request.full_path, code=301)
+    return None
 
 
 def _safe_url(u: str) -> str:
@@ -129,7 +133,7 @@ def _site_base_url() -> str:
         root = (request.url_root or "").rstrip("/")
         return root
     except Exception:
-        return "https://gadaoromo.onrender.com"
+        return "https://gadaadictionary.com"
 
 
 @app.context_processor
@@ -155,7 +159,6 @@ def add_security_headers(resp):
     if resp.mimetype == "text/html":
         resp.headers.setdefault("Cache-Control", "no-cache")
     return resp
-
 
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
 
@@ -209,25 +212,15 @@ def sitemap_xml():
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
 
-    # static pages
-    for path, freq, prio in urls:
-        loc = f"{base}{path}"
-        xml_parts += [
-            "<url>",
-            f"<loc>{loc}</loc>",
-            f"<lastmod>{now}</lastmod>",
-            f"<changefreq>{freq}</changefreq>",
-            f"<priority>{prio}</priority>",
-            "</url>",
-        ]
 
 @app.route("/.well-known/assetlinks.json")
 def assetlinks():
     return send_from_directory(
         os.path.join(app.static_folder, ".well-known"),
         "assetlinks.json",
-        mimetype="application/json"
+        mimetype="application/json",
     )
+
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
@@ -260,7 +253,9 @@ def manifest():
 
 @app.route("/service-worker.js")
 def service_worker():
-    resp = make_response(send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js"))
+    resp = make_response(
+        send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js")
+    )
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
     resp.headers["Cache-Control"] = "no-cache"
@@ -277,7 +272,7 @@ def favicon():
     return send_from_directory(
         os.path.join(app.root_path, "static", "icons"),
         "favicon.ico",
-        mimetype="image/vnd.microsoft.icon"
+        mimetype="image/vnd.microsoft.icon",
     )
 
 
@@ -314,7 +309,6 @@ IMPORT_MAX_WORDS = IMPORT_BATCH_SIZE * IMPORT_MAX_CALLS  # 2000
 OROMO_STOP = {"fi", "kan", "inni", "isaan", "ani", "ati", "nu", "keessa", "irratti"}
 EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", "with", "it", "this"}
 
-
 # ------------------ TEXT NORMALIZATION ------------------
 
 def normalize_text(text: str) -> str:
@@ -339,6 +333,15 @@ def dedup_preserve_order(items):
     return out
 
 
+def make_search_key(text: str) -> str:
+    t = (text or "").strip()
+    t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
+    t = unicodedata.normalize("NFKC", t)
+    t = t.casefold()
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
 # ------------------ COMMUNITY FILE PARSERS (NO GOOGLE) ------------------
 
 def parse_csv_pairs_from_path(path: str):
@@ -361,6 +364,7 @@ def parse_csv_pairs_from_path(path: str):
                     seen.add(en)
                     final.append((en, om))
             return final
+
         except UnicodeDecodeError:
             continue
 
@@ -583,10 +587,16 @@ def delete_audio_for_entry(entry_type: str, entry_id: int):
     """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
+    c.execute(
+        "SELECT id, file_path FROM audio WHERE entry_type=? AND entry_id=?",
+        (entry_type, entry_id)
+    )
     rows = c.fetchall()
 
-    c.execute("DELETE FROM audio WHERE entry_type=? AND entry_id=?", (entry_type, entry_id))
+    c.execute(
+        "DELETE FROM audio WHERE entry_type=? AND entry_id=?",
+        (entry_type, entry_id)
+    )
     conn.commit()
     conn.close()
 
@@ -597,12 +607,23 @@ def delete_audio_for_entry(entry_type: str, entry_id: int):
                 os.remove(abs_path)
             except Exception:
                 app.logger.exception(f"Could not delete audio file: {abs_path}")
-                
-def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statuses=("approved", "pending")) -> int:
+
+
+def delete_audio_for_entry_lang(
+    entry_type: str,
+    entry_id: int,
+    lang: str,
+    statuses=("approved", "pending")
+) -> int:
+    """
+    Deletes audio rows + files for a specific entry/lang, filtered by statuses.
+    Returns number of rows deleted.
+    """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     q_marks = ",".join(["?"] * len(statuses))
+
     c.execute(f"""
         SELECT id, file_path
         FROM audio
@@ -617,7 +638,6 @@ def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statu
     conn.commit()
     conn.close()
 
-    # delete files
     deleted = 0
     for _aid, fp in rows:
         abs_path = _audio_abs_path(fp)
@@ -630,37 +650,6 @@ def delete_audio_for_entry_lang(entry_type: str, entry_id: int, lang: str, statu
 
     return deleted
 
-
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    q_marks = ",".join(["?"] * len(statuses))
-    c.execute(f"""
-        SELECT id, file_path
-        FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
-    """, (entry_type, entry_id, lang, *statuses))
-    rows = c.fetchall()
-
-    c.execute(f"""
-        DELETE FROM audio
-        WHERE entry_type=? AND entry_id=? AND lang=? AND status IN ({q_marks})
-    """, (entry_type, entry_id, lang, *statuses))
-    conn.commit()
-    conn.close()
-
-    # delete files
-    deleted = 0
-    for _aid, fp in rows:
-        abs_path = _audio_abs_path(fp)
-        if abs_path and os.path.isfile(abs_path):
-            try:
-                os.remove(abs_path)
-            except Exception:
-                app.logger.exception(f"Could not delete audio file: {abs_path}")
-        deleted += 1
-
-    return deleted
 
 # ------------------ DATABASE SETUP ------------------
 
@@ -669,21 +658,25 @@ def init_db():
     c = conn.cursor()
 
     c.execute("""
-        CREATE TABLE IF NOT EXISTS words (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            english TEXT,
-            oromo TEXT,
-            status TEXT
-        )
+    CREATE TABLE IF NOT EXISTS words (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        english TEXT,
+        oromo TEXT,
+        english_key TEXT,
+        oromo_key TEXT,
+        status TEXT
+    )
     """)
 
     c.execute("""
-        CREATE TABLE IF NOT EXISTS phrases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            english TEXT,
-            oromo TEXT,
-            status TEXT
-        )
+    CREATE TABLE IF NOT EXISTS phrases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        english TEXT,
+        oromo TEXT,
+        english_key TEXT,
+        oromo_key TEXT,
+        status TEXT
+    )
     """)
 
     c.execute("""
@@ -731,6 +724,57 @@ def init_db():
 
 
 init_db()
+
+
+def ensure_key_columns():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    def has_col(table, col):
+        c.execute(f"PRAGMA table_info({table})")
+        return any(r[1] == col for r in c.fetchall())
+
+    for table in ("words", "phrases"):
+        if not has_col(table, "english_key"):
+            c.execute(f"ALTER TABLE {table} ADD COLUMN english_key TEXT")
+        if not has_col(table, "oromo_key"):
+            c.execute(f"ALTER TABLE {table} ADD COLUMN oromo_key TEXT")
+
+    conn.commit()
+    conn.close()
+
+
+def backfill_keys():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("SELECT id, english, oromo FROM words")
+    for wid, en, om in c.fetchall():
+        c.execute(
+            "UPDATE words SET english_key=?, oromo_key=? WHERE id=?",
+            (make_search_key(en), make_search_key(om), wid)
+        )
+
+    c.execute("SELECT id, english, oromo FROM phrases")
+    for pid, en, om in c.fetchall():
+        c.execute(
+            "UPDATE phrases SET english_key=?, oromo_key=? WHERE id=?",
+            (make_search_key(en), make_search_key(om), pid)
+        )
+
+    conn.commit()
+    conn.close()
+
+
+def ensure_key_indexes():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("CREATE INDEX IF NOT EXISTS idx_words_english_key ON words(english_key)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_words_oromo_key ON words(oromo_key)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_phrases_english_key ON phrases(english_key)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_phrases_oromo_key ON phrases(oromo_key)")
+    conn.commit()
+    conn.close()
 
 
 # ------------------ ANALYTICS HELPERS ------------------
@@ -782,7 +826,6 @@ def get_trending(limit=20):
     rows = c.fetchall()
     conn.close()
     return rows
-
 
 # ------------------ SUGGESTIONS ------------------
 
@@ -959,12 +1002,13 @@ def home():
     audio = None
 
     if request.method == "POST":
-        word = normalize_text(request.form.get("word", ""))
+        raw = request.form.get("word", "")
+        word = make_search_key(raw)
 
         c.execute("""
             SELECT id, english, oromo
             FROM words
-            WHERE status='approved' AND (english=? OR oromo=?)
+            WHERE status='approved' AND (english_key=? OR oromo_key=?)
         """, (word, word))
         row = c.fetchone()
 
@@ -1016,26 +1060,27 @@ def translate():
         if direction == "auto":
             direction = detect_direction_auto(text)
 
-        clean = normalize_text(text)
+        clean_exact = normalize_text(text)
+        clean_key = make_search_key(text)
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
-        if clean:
+        if clean_exact:
             if direction == "om_en":
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo=?", (clean,))
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo=?", (clean_exact,))
             else:
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND english=?", (clean,))
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND english=?", (clean_exact,))
             pr = c.fetchone()
             if pr:
                 matched = {"type": "phrase", "id": pr[0]}
                 audio = get_approved_audio("phrase", pr[0])
 
-        if not matched and clean and len(clean.split()) == 1:
+        if not matched and clean_exact and len(clean_exact.split()) == 1:
             if direction == "om_en":
-                c.execute("SELECT id FROM words WHERE status='approved' AND oromo=?", (clean,))
+                c.execute("SELECT id FROM words WHERE status='approved' AND oromo=?", (clean_exact,))
             else:
-                c.execute("SELECT id FROM words WHERE status='approved' AND english=?", (clean,))
+                c.execute("SELECT id FROM words WHERE status='approved' AND english=?", (clean_exact,))
             wr = c.fetchone()
             if wr:
                 matched = {"type": "word", "id": wr[0]}
@@ -1047,8 +1092,8 @@ def translate():
         record_search(text, direction, is_phrase, is_exact)
         result = translated
 
-        if clean and not is_exact and len(clean.split()) == 1:
-            suggestions = suggest_terms(clean, direction)
+        if clean_key and not is_exact and len(clean_exact.split()) == 1:
+            suggestions = suggest_terms(clean_key, direction)
 
     trending = get_trending(limit=15)
     approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
@@ -1067,6 +1112,7 @@ def translate():
         approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
+
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
 @app.route("/submit", methods=["GET", "POST"])
@@ -1083,7 +1129,7 @@ def submit():
                 msg = "Please choose a CSV or XLSX file."
                 return render_template("submit.html", msg=msg)
 
-            import tempfile, os
+            import tempfile
 
             filename = (f.filename or "").lower().strip()
 
@@ -1182,6 +1228,7 @@ def submit():
 
     return render_template("submit.html", msg=msg)
 
+
 # ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
 
 @app.route("/submit_phrase", methods=["GET", "POST"])
@@ -1198,7 +1245,7 @@ def submit_phrase():
                 msg = "Please choose a CSV or XLSX file."
                 return render_template("submit_phrase.html", msg=msg)
 
-            import tempfile, os
+            import tempfile
 
             filename = (f.filename or "").lower().strip()
 
@@ -1297,6 +1344,7 @@ def submit_phrase():
 
     return render_template("submit_phrase.html", msg=msg)
 
+
 # ------------------ LEGACY: COMMUNITY FILE SUBMISSION ------------------
 
 @app.route("/submit_file", methods=["GET", "POST"])
@@ -1309,7 +1357,7 @@ def submit_file():
             msg = "Please choose a file."
             return render_template("submit_file.html", msg=msg)
 
-        import tempfile, os
+        import tempfile
 
         filename = (f.filename or "").lower().strip()
 
@@ -1377,8 +1425,6 @@ def submit_file():
         return render_template("submit_file.html", msg=msg)
 
     return render_template("submit_file.html", msg=msg)
-
-
 
 # ------------------ RECORDER LOGIN + DASHBOARD ------------------
 # Requires env var: RECORDER_PASSWORD
@@ -1478,9 +1524,15 @@ def recorder_entry(entry_type, entry_id):
     c = conn.cursor()
 
     if entry_type == "word":
-        c.execute("SELECT id, english, oromo FROM words WHERE id=? AND status='approved'", (entry_id,))
+        c.execute(
+            "SELECT id, english, oromo FROM words WHERE id=? AND status='approved'",
+            (entry_id,)
+        )
     else:
-        c.execute("SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'", (entry_id,))
+        c.execute(
+            "SELECT id, english, oromo FROM phrases WHERE id=? AND status='approved'",
+            (entry_id,)
+        )
 
     row = c.fetchone()
     conn.close()
@@ -1503,6 +1555,7 @@ def recorder_entry(entry_type, entry_id):
 
 from werkzeug.exceptions import RequestEntityTooLarge
 
+
 @app.errorhandler(RequestEntityTooLarge)
 def handle_413(e):
     # JSON for API endpoints
@@ -1519,6 +1572,7 @@ def handle_413(e):
         return render_template("submit.html", msg=msg), 413
 
     return "File too large.", 413
+
 
 @app.route("/recorder/api/audio", methods=["GET"])
 def recorder_api_audio_get():
@@ -1568,6 +1622,7 @@ def recorder_api_delete_audio():
 
     deleted = delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved",))
     return jsonify({"ok": True, "deleted": deleted})
+
 
 @app.route("/recorder/api/submit-audio", methods=["POST"])
 def recorder_api_submit_audio():
@@ -1677,7 +1732,6 @@ def _handle_audio_submission(is_recorder: bool):
 
         if is_recorder:
             # ✅ IMPORTANT: do deletes BEFORE saving file + inserting
-            # Make sure delete_audio_for_entry_lang does not leave connections open.
             conn.close()
             delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
 
@@ -1718,7 +1772,6 @@ def _handle_audio_submission(is_recorder: bool):
         })
 
     except sqlite3.OperationalError as e:
-        # ✅ if DB locked, return JSON (frontend won’t hang)
         return jsonify({"ok": False, "error": f"Database error: {str(e)}"}), 500
 
     finally:
@@ -1837,6 +1890,7 @@ def admin_login():
 
     return render_template("admin_login.html")
 
+
 # ------------------ ADMIN MANAGEMENT UNLOCK ------------------
 
 @app.route("/admin/manage/unlock", methods=["GET", "POST"])
@@ -1931,7 +1985,10 @@ def admin_manage():
                 if c.fetchone():
                     msg = "Admin already exists with that email."
                 else:
-                    c.execute("INSERT INTO admin (email, password) VALUES (?, ?)", (email, generate_password_hash(password)))
+                    c.execute(
+                        "INSERT INTO admin (email, password) VALUES (?, ?)",
+                        (email, generate_password_hash(password))
+                    )
                     conn.commit()
                     msg = "Admin added."
                 conn.close()
@@ -2104,7 +2161,6 @@ def admin_manage():
         phrase_q=phrase_q
     )
 
-
 # ------------------ CHANGE PASSWORD ------------------
 
 @app.route("/admin/change_password", methods=["GET", "POST"])
@@ -2249,7 +2305,10 @@ def admin_import():
                     skipped += 1
                     continue
 
-                c.execute("INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')", (en, om))
+                c.execute(
+                    "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
+                    (en, om)
+                )
                 inserted += 1
 
         conn.commit()
@@ -2373,7 +2432,6 @@ def reject_audio(audio_id):
 
     return redirect("/dashboard")
 
-
 # ------------------ LOGOUT ------------------
 
 @app.route("/logout")
@@ -2404,7 +2462,6 @@ def create_admin():
     return "Admin created (or already exists). You can now login."
 
 
-
 # ------------------ GADAA AI (FREE DEMO - NO PAID API) ------------------
 # URL: /gadaa-ai
 # - bilingual Oromo + English
@@ -2420,11 +2477,15 @@ _AI_LIMIT_WINDOW_SEC = 60
 _AI_LIMIT_MAX_REQ = 20
 _ai_hits = defaultdict(list)  # ip -> [timestamps]
 
+
 def _client_ip():
     # Works behind proxies with ProxyFix
-    return (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-            or request.remote_addr
-            or "unknown")
+    return (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or request.remote_addr
+        or "unknown"
+    )
+
 
 def _rate_limit_ok():
     ip = _client_ip()
@@ -2439,6 +2500,7 @@ def _rate_limit_ok():
     _ai_hits[ip] = hits
     return True, ip, len(hits)
 
+
 def _db_lookup_word_or_phrase(q: str):
     """
     Try exact match in phrases then words (approved only).
@@ -2452,8 +2514,11 @@ def _db_lookup_word_or_phrase(q: str):
     c = conn.cursor()
 
     # phrases exact match
-    c.execute("SELECT id, english, oromo FROM phrases WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
-              (clean, clean))
+    c.execute(
+        "SELECT id, english, oromo FROM phrases "
+        "WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
+        (clean, clean),
+    )
     r = c.fetchone()
     if r:
         conn.close()
@@ -2461,8 +2526,11 @@ def _db_lookup_word_or_phrase(q: str):
 
     # word exact match (single token)
     if len(clean.split()) == 1:
-        c.execute("SELECT id, english, oromo FROM words WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
-                  (clean, clean))
+        c.execute(
+            "SELECT id, english, oromo FROM words "
+            "WHERE status='approved' AND (english=? OR oromo=?) LIMIT 1",
+            (clean, clean),
+        )
         r = c.fetchone()
         if r:
             conn.close()
@@ -2471,17 +2539,20 @@ def _db_lookup_word_or_phrase(q: str):
     conn.close()
     return None
 
+
 def _db_suggest(clean: str, limit=6):
     """
     Suggestions from both directions.
     """
     s_en = suggest_terms(clean, "en_om", limit=limit)
     s_om = suggest_terms(clean, "om_en", limit=limit)
+
     # flatten unique
     items = []
     for k in ("closest", "prefix", "partial"):
         items += s_en.get(k, [])
         items += s_om.get(k, [])
+
     out = []
     seen = set()
     for x in items:
@@ -2492,6 +2563,7 @@ def _db_suggest(clean: str, limit=6):
             break
     return out
 
+
 def _make_lesson_card(entry: dict):
     """
     Build a small “teacher style” response.
@@ -2500,21 +2572,20 @@ def _make_lesson_card(entry: dict):
     om = entry["oromo"]
 
     # very lightweight “lesson”
-    examples = []
     if entry["type"] == "word":
         examples = [
             f"Example (EN): I use **{en}** in a sentence.",
-            f"Example (OM): Ani jecha **{om}** keessatti fayyadama."
+            f"Example (OM): Ani jecha **{om}** keessatti fayyadama.",
         ]
     else:
         examples = [
             f"Example (EN): **{en}**",
-            f"Example (OM): **{om}**"
+            f"Example (OM): **{om}**",
         ]
 
     quiz = [
         f"Quick quiz: What is the Oromo for **{en}**?",
-        f"Answer: **{om}**"
+        f"Answer: **{om}**",
     ]
 
     return {
@@ -2523,13 +2594,15 @@ def _make_lesson_card(entry: dict):
         "oromo": om,
         "examples": examples,
         "quiz": quiz,
-        "audio": get_approved_audio(entry["type"], entry["id"])  # shows Oromo if exists
+        "audio": get_approved_audio(entry["type"], entry["id"]),  # shows Oromo if exists
     }
+
 
 @app.route("/gadaa-ai", methods=["GET"])
 def gadaa_ai_page():
     trending = get_trending(limit=12)
     return render_template("gadaa_ai.html", trending=trending)
+
 
 @app.route("/api/gadaa-ai", methods=["POST"])
 def gadaa_ai_api():
@@ -2581,7 +2654,10 @@ def gadaa_ai_api():
         if entry:
             card = _make_lesson_card(entry)
             return jsonify({"ok": True, "reply": {"type": "card", "card": card}})
-        return jsonify({"ok": True, "reply": {"type": "text", "text": "I need more approved words/phrases to quiz you."}})
+        return jsonify({
+            "ok": True,
+            "reply": {"type": "text", "text": "I need more approved words/phrases to quiz you."}
+        })
 
     # Normal: try dictionary lookup
     entry = _db_lookup_word_or_phrase(msg)
@@ -2610,7 +2686,6 @@ def gadaa_ai_api():
             )
         }
     })
-
 
 
 # ------------------ RUN ------------------
