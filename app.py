@@ -99,15 +99,13 @@ DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
 
-
 @app.before_request
 def force_primary_domain():
     if request.path.startswith("/.well-known/"):
         return None
-    if request.host == "gadaoromo.onrender.com":
+    if request.host.startswith("gadaoromo.onrender.com"):
         return redirect("https://gadaadictionary.com" + request.full_path, code=301)
     return None
-
 
 def _safe_url(u: str) -> str:
     if not u:
@@ -117,9 +115,7 @@ def _safe_url(u: str) -> str:
         return u
     return ""
 
-
 DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
-
 
 def _site_base_url() -> str:
     """
@@ -134,8 +130,7 @@ def _site_base_url() -> str:
         return root
     except Exception:
         return "https://gadaadictionary.com"
-
-
+    
 @app.context_processor
 def inject_globals():
     return dict(
@@ -145,7 +140,6 @@ def inject_globals():
         WEBSITE_URL=WEBSITE_URL,
         API_URL=API_URL,
     )
-
 
 @app.route("/debug-vars")
 def debug_vars():
@@ -176,7 +170,6 @@ def robots_txt():
     resp.headers["Content-Type"] = "text/plain; charset=utf-8"
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
-
 
 @app.route("/sitemap.xml")
 def sitemap_xml():
@@ -221,7 +214,6 @@ def assetlinks():
         mimetype="application/json",
     )
 
-
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
 IS_RENDER_DISK = os.path.isdir("/var/data")
@@ -237,7 +229,6 @@ ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
 MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "100"))
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
-
 
 # ------------------ PWA ROUTES ------------------
 
@@ -266,7 +257,6 @@ def service_worker():
 def offline():
     return render_template("offline.html")
 
-
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory(
@@ -274,7 +264,6 @@ def favicon():
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
     )
-
 
 # ------------------ GOOGLE VERIFICATION ------------------
 
@@ -369,7 +358,6 @@ def parse_csv_pairs_from_path(path: str):
             continue
 
     raise ValueError("Could not decode CSV file.")
-
 
 def parse_xlsx_pairs_from_path(path: str):
     wb = load_workbook(path, read_only=True, data_only=True)
