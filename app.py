@@ -1833,19 +1833,23 @@ def admin_login():
     return render_template("admin_login.html")
 
 # ------------------ ADMIN MANAGEMENT UNLOCK ------------------
+
 @app.route("/admin/manage/unlock", methods=["GET", "POST"])
 def admin_manage_unlock():
     if not require_admin():
         return redirect("/admin")
 
     msg = None
+    real_pw = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 
     if request.method == "POST":
-        entered = request.form.get("manage_password") or ""
-        real_pw = os.environ.get("ADMIN_MANAGE_PASSWORD")
+        entered = (request.form.get("manage_password") or "").strip()
 
-        if entered == real_pw:
+        if not real_pw:
+            msg = "ADMIN_MANAGE_PASSWORD is not set on the server."
+        elif entered == real_pw:
             session["manage_unlocked"] = True
+            session.permanent = False
             return redirect("/admin/manage")
         else:
             msg = "Wrong management password."
@@ -1904,6 +1908,8 @@ def admin_manage():
 
     if not session.get("manage_unlocked"):
         return redirect("/admin/manage/unlock")
+
+    session.pop("manage_unlocked", None)
 
     msg = None
 
