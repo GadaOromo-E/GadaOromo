@@ -60,6 +60,11 @@ from openpyxl import load_workbook
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
 
+@app.route("/health")
+def health():
+    return "ok", 200
+
+
 BASE_DIR = "/var/data" if os.path.exists("/var/data") else os.getcwd()
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -991,10 +996,6 @@ def home():
         trending=trending,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
     )
-
-@app.route("/health")
-def health():
-    return "ok", 200
 
 
 # ------------------ TRANSLATE ------------------
