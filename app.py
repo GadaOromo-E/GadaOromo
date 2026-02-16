@@ -59,8 +59,17 @@ from openpyxl import load_workbook
 # ------------------ APP SETUP ------------------
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev_only_change_me")
+app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
+ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
+
+from datetime import timedelta
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=True,
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
 
 @app.route("/health")
 def health():
@@ -101,11 +110,16 @@ DONATE_URLS = {
 
 @app.before_request
 def force_primary_domain():
-    if request.path.startswith("/.well-known/"):
+    # Do NOT redirect Render health checks or well-known routes
+    if request.path == "/health" or request.path.startswith("/.well-known/"):
         return None
-    if request.host.startswith("gadaoromo.onrender.com"):
+
+    host = (request.host or "")
+    if host.startswith("gadaoromo.onrender.com"):
         return redirect("https://gadaadictionary.com" + request.full_path, code=301)
+
     return None
+
 
 def _safe_url(u: str) -> str:
     if not u:
