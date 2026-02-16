@@ -1107,9 +1107,63 @@ def home():
         suggestions=suggestions,
         trending=trending,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
+        
     )
-
 # ------------------ TRANSLATE ------------------
+
+
+# Make sure these exist somewhere in your file/module:
+# - DB_NAME
+# - normalize_text
+# - make_search_key
+# - detect_direction_auto
+# - _strip_edge_punct
+# - translate_multipart_text
+# - record_search
+# - suggest_terms
+# - get_trending
+# - get_approved_audio
+# - get_approved_oromo_audio_ids
+
+# Tokenizer used for "single-word" detection (keeps punctuation separate)
+_TOKEN_RE = re.compile(r"\s+|[^\w\s]+|[\w']+", re.UNICODE)
+
+
+def build_key_candidates(s: str):
+    """Same key strategy as translate_text(): robust vs punctuation/spacing mismatch."""
+    s = normalize_text(s)
+    cands = []
+
+    k1 = make_search_key(s)
+    if k1:
+        cands.append(k1)
+
+    s2 = _strip_edge_punct(s)
+    k2 = make_search_key(s2)
+    if k2 and k2 not in cands:
+        cands.append(k2)
+
+    s3 = re.sub(r"\s+", " ", s2).strip()
+    k3 = make_search_key(s3)
+    if k3 and k3 not in cands:
+        cands.append(k3)
+
+    return cands
+
+def phrase_key_candidates(s: str):
+    s = normalize_text(s)
+    cands = []
+    k1 = make_search_key(s)                       # keep punctuation if present
+    if k1:
+        cands.append(k1)
+
+    s2 = _strip_edge_punct(s)                     # remove edge punctuation
+    k2 = make_search_key(s2)
+    if k2 and k2 not in cands:
+        cands.append(k2)
+
+    return cands
+
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
@@ -1128,44 +1182,72 @@ def translate():
             direction = detect_direction_auto(text)
 
         clean_exact = normalize_text(text)
-        clean_key = make_search_key(clean_exact)
+        key_candidates = build_key_candidates(text)
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
 
         # --- exact phrase match (case-insensitive via *_key) ---
-        if clean_key:
+        if key_candidates:
             if direction == "om_en":
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo_key=?", (clean_key,))
+                for k in key_candidates:
+                    pr = c.execute(
+                        "SELECT id FROM phrases WHERE status='approved' AND oromo_key=? LIMIT 1",
+                        (k,)
+                    ).fetchone()
+                    if pr:
+                        matched = {"type": "phrase", "id": pr[0]}
+                        audio = get_approved_audio("phrase", pr[0])
+                        break
             else:
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND english_key=?", (clean_key,))
-            pr = c.fetchone()
-            if pr:
-                matched = {"type": "phrase", "id": pr[0]}
-                audio = get_approved_audio("phrase", pr[0])
+                for k in key_candidates:
+                    pr = c.execute(
+                        "SELECT id FROM phrases WHERE status='approved' AND english_key=? LIMIT 1",
+                        (k,)
+                    ).fetchone()
+                    if pr:
+                        matched = {"type": "phrase", "id": pr[0]}
+                        audio = get_approved_audio("phrase", pr[0])
+                        break
 
-        # --- exact word match (single token) ---
-        if not matched and clean_key and len(clean_exact.split()) == 1:
-            if direction == "om_en":
-                c.execute("SELECT id FROM words WHERE status='approved' AND oromo_key=?", (clean_key,))
-            else:
-                c.execute("SELECT id FROM words WHERE status='approved' AND english_key=?", (clean_key,))
-            wr = c.fetchone()
-            if wr:
-                matched = {"type": "word", "id": wr[0]}
-                audio = get_approved_audio("word", wr[0])
+        # --- exact word match (only if input is truly a single word-like token) ---
+        if not matched:
+            tokens = [t for t in _TOKEN_RE.findall(clean_exact) if not t.isspace()]
+            word_tokens = [t for t in tokens if re.fullmatch(r"[\w']+", t)]
+            # exactly one word token, and nothing else word-like
+            if len(word_tokens) == 1 and len([t for t in tokens if re.fullmatch(r"[\w']+", t)]) == 1:
+                wkey = make_search_key(word_tokens[0])
+                if wkey:
+                    if direction == "om_en":
+                        wr = c.execute(
+                            "SELECT id FROM words WHERE status='approved' AND oromo_key=? LIMIT 1",
+                            (wkey,)
+                        ).fetchone()
+                    else:
+                        wr = c.execute(
+                            "SELECT id FROM words WHERE status='approved' AND english_key=? LIMIT 1",
+                            (wkey,)
+                        ).fetchone()
+
+                    if wr:
+                        matched = {"type": "word", "id": wr[0]}
+                        audio = get_approved_audio("word", wr[0])
 
         conn.close()
 
-        # ✅ IMPORTANT: use multipart translator (handles commas + sentences)
+        # ✅ IMPORTANT: use multipart translator (handles commas + sentences correctly)
         translated, is_exact, is_phrase = translate_multipart_text(text, direction)
 
         record_search(text, direction, is_phrase, is_exact)
         result = translated
 
         # suggestions only for single word not exact
-        if clean_key and not is_exact and len(clean_exact.split()) == 1:
-            suggestions = suggest_terms(clean_exact, direction)
+        # (use improved single-word detection rather than split())
+        if not is_exact:
+            tokens = [t for t in _TOKEN_RE.findall(clean_exact) if not t.isspace()]
+            word_tokens = [t for t in tokens if re.fullmatch(r"[\w']+", t)]
+            if len(word_tokens) == 1:
+                suggestions = suggest_terms(word_tokens[0], direction)
 
     trending = get_trending(limit=15)
     approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
@@ -1184,63 +1266,83 @@ def translate():
         approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
+
 # ------------------ MULTI-SENTENCE TRANSLATION ------------------
 
-_SPLIT_RE = re.compile(r"([.!?]+)")
+_BOUNDARY_RE = re.compile(r"[.!?,;:]")
 
 def split_segments(text: str):
+    """
+    Returns list of tuples:
+      (segment_text, punctuation, trailing_whitespace)
+
+    Preserves original punctuation and spacing.
+    """
     t = normalize_text(text)
     if not t:
         return []
 
-    # Split on ., !, ? but ALSO keep commas as separators for user inputs like:
-    # "I need a taxi, can you show me the way?"
-    # We'll split by comma too (lightweight).
-    raw_parts = []
-    for chunk in t.split(","):
-        chunk = chunk.strip()
-        if chunk:
-            raw_parts.append(chunk)
-
     segments = []
-    for part in raw_parts:
-        parts = _SPLIT_RE.split(part)
-        buf = ""
-        for p in parts:
-            if not p:
-                continue
-            if _SPLIT_RE.fullmatch(p):
-                buf = (buf + p).strip()
-                if buf:
-                    segments.append(buf)
-                buf = ""
-            else:
-                buf = (buf + " " + p).strip() if buf else p.strip()
-        if buf:
-            segments.append(buf)
+    buf = []
+    i = 0
+    n = len(t)
 
-    # clean empty
-    segments = [s.strip() for s in segments if s.strip()]
+    while i < n:
+        ch = t[i]
+
+        if _BOUNDARY_RE.match(ch):
+            # flush text before punctuation
+            seg = "".join(buf).strip()
+            buf = []
+
+            # collect punctuation run
+            punct = []
+            while i < n and _BOUNDARY_RE.match(t[i]):
+                punct.append(t[i])
+                i += 1
+
+            # collect whitespace after punctuation
+            ws = []
+            while i < n and t[i].isspace():
+                ws.append(t[i])
+                i += 1
+
+            segments.append((seg, "".join(punct), "".join(ws)))
+            continue
+
+        else:
+            buf.append(ch)
+            i += 1
+
+    # tail
+    tail = "".join(buf).strip()
+    if tail:
+        segments.append((tail, "", ""))
+
     return segments
 
-
 def translate_multipart_text(text: str, direction: str):
-    segments = split_segments(text)
-    if not segments:
+    parts = split_segments(text)
+    if not parts:
         return "", 0, 0
 
-    results = []
+    out = []
     any_exact = 0
     any_phrase = 0
 
-    for seg in segments:
-        tr, ex, ph = translate_text(seg, direction)
-        results.append(tr)
-        any_exact = any_exact or ex
-        any_phrase = any_phrase or ph
+    for seg_text, punct, ws in parts:
+        if seg_text:
+            tr, ex, ph = translate_text(seg_text, direction)
+            out.append(tr)
+            any_exact |= ex
+            any_phrase |= ph
+        else:
+            out.append(seg_text)
 
-    # Join with comma + space (what you asked)
-    return ", ".join(results), int(any_exact), int(any_phrase)
+        out.append(punct)
+        out.append(ws)
+
+    return "".join(out), int(any_exact), int(any_phrase)
 
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
