@@ -55,32 +55,22 @@ from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 from openpyxl import load_workbook
 
-
 # ------------------ APP SETUP ------------------
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
-ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
-
 from datetime import timedelta
+
+# True i produksjon/https (Render + Cloudflare). False lokalt på http.
+IS_PROD = (os.environ.get("FLASK_ENV") == "production") or bool(os.environ.get("RENDER"))
+
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=IS_PROD,
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
-
-@app.route("/health")
-def health():
-    return "ok", 200
-
-
-BASE_DIR = "/var/data" if os.path.exists("/var/data") else os.getcwd()
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 # ✅ IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
@@ -88,15 +78,26 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
+@app.route("/health")
+def health():
+    return "ok", 200
 
-DB_NAME = os.environ.get("DB_PATH", "").strip() or DEFAULT_DB
+# Base directory for uploads/db
+BASE_DIR = "/var/data" if os.path.exists("/var/data") else os.path.abspath(os.path.dirname(__file__))
+
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Upload limit (total request size)
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
+DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
+DB_NAME = (os.environ.get("DB_PATH", "").strip() or DEFAULT_DB)
 app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
 
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 
-ADMIN_MANAGE_PASSWORD = os.environ.get("ADMIN_MANAGE_PASSWORD", "")
+ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
@@ -108,42 +109,31 @@ DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
 
-@app.before_request
-def force_primary_domain():
-    # Do NOT redirect Render health checks or well-known routes
-    if request.path == "/health" or request.path.startswith("/.well-known/"):
-        return None
-
-    host = (request.host or "")
-    if host.startswith("gadaoromo.onrender.com"):
-        return redirect("https://gadaadictionary.com" + request.full_path, code=301)
-
-    return None
-
-
 def _safe_url(u: str) -> str:
-    if not u:
-        return ""
-    u = u.strip()
+    u = (u or "").strip()
     if u.startswith("https://") or u.startswith("http://"):
         return u
     return ""
 
 DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
 
+@app.before_request
+def force_primary_domain():
+    if request.path.startswith("/.well-known/"):
+        return None
+    if request.host == "gadaoromo.onrender.com":
+        return redirect("https://gadaadictionary.com" + request.full_path, code=301)
+
+    return None
+
 def _site_base_url() -> str:
-    """
-    Base URL for sitemap/SEO. Priority:
-    1) WEBSITE_URL env var (recommended)
-    2) request.url_root (auto from current request; ProxyFix ensures correct https on Render)
-    """
     if WEBSITE_URL:
         return WEBSITE_URL.rstrip("/")
     try:
-        root = (request.url_root or "").rstrip("/")
-        return root
+        return (request.url_root or "").rstrip("/")
     except Exception:
         return "https://gadaadictionary.com"
+
     
 @app.context_processor
 def inject_globals():
@@ -725,39 +715,6 @@ def init_db():
     conn.close()
 
 
-init_db()
-
-def ensure_phrase_keys():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
-    # add columns if missing
-    try:
-        c.execute("ALTER TABLE phrases ADD COLUMN english_key TEXT")
-    except sqlite3.OperationalError:
-        pass
-
-    try:
-        c.execute("ALTER TABLE phrases ADD COLUMN oromo_key TEXT")
-    except sqlite3.OperationalError:
-        pass
-
-    # backfill keys
-    c.execute("SELECT id, english, oromo FROM phrases")
-    rows = c.fetchall()
-    for pid, en, om in rows:
-        en_key = make_search_key(en or "")
-        om_key = make_search_key(om or "")
-        c.execute(
-            "UPDATE phrases SET english_key=?, oromo_key=? WHERE id=?",
-            (en_key, om_key, pid)
-        )
-
-    conn.commit()
-    conn.close()
-
-ensure_phrase_keys()
-
 def ensure_key_columns():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -784,14 +741,14 @@ def backfill_keys():
     for wid, en, om in c.fetchall():
         c.execute(
             "UPDATE words SET english_key=?, oromo_key=? WHERE id=?",
-            (make_search_key(en), make_search_key(om), wid)
+            (make_search_key(en or ""), make_search_key(om or ""), wid)
         )
 
     c.execute("SELECT id, english, oromo FROM phrases")
     for pid, en, om in c.fetchall():
         c.execute(
             "UPDATE phrases SET english_key=?, oromo_key=? WHERE id=?",
-            (make_search_key(en), make_search_key(om), pid)
+            (make_search_key(en or ""), make_search_key(om or ""), pid)
         )
 
     conn.commit()
@@ -807,6 +764,13 @@ def ensure_key_indexes():
     c.execute("CREATE INDEX IF NOT EXISTS idx_phrases_oromo_key ON phrases(oromo_key)")
     conn.commit()
     conn.close()
+
+
+# ✅ Run DB init + migrations at startup
+init_db()
+ensure_key_columns()
+backfill_keys()
+ensure_key_indexes()
 
 
 # ------------------ ANALYTICS HELPERS ------------------
@@ -2734,3 +2698,4 @@ def gadaa_ai_api():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
