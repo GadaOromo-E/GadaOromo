@@ -2795,10 +2795,19 @@ def gadaa_ai_api():
         }
     })
 
-
-# ------------------ RUN ------------------
+# ------------------ RUN / MIGRATE ------------------
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    import sys
+
+    # Render pre-deploy: python app.py migrate
+    if len(sys.argv) > 1 and sys.argv[1] == "migrate":
+        ensure_key_columns()
+        backfill_keys()
+        ensure_key_indexes()
+        print("DB migration done")
+    else:
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port)
+
 
