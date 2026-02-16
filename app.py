@@ -823,42 +823,69 @@ def get_trending(limit=20):
     conn.close()
     return rows
 
-# ------------------ SUGGESTIONS ------------------
+# ------------------ SUGGESTIONS (KEY-BASED, CASE-INSENSITIVE) ------------------
 
 def suggest_terms(term: str, direction: str, limit: int = 8):
-    t = normalize_text(term)
-    if not t:
+    """
+    Returns suggestions for the user's input.
+    Uses *_key columns => case-insensitive + normalized.
+    """
+    raw = normalize_text(term)
+    if not raw:
         return {"closest": [], "prefix": [], "partial": []}
 
-    col = "oromo" if direction == "om_en" else "english"
+    tkey = make_search_key(raw)
+    if not tkey:
+        return {"closest": [], "prefix": [], "partial": []}
+
+    # which table columns to use
+    key_col = "oromo_key" if direction == "om_en" else "english_key"
+    text_col = "oromo" if direction == "om_en" else "english"
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
+    # prefix match
     c.execute(f"""
-        SELECT {col} FROM words
-        WHERE status='approved' AND {col} LIKE ?
+        SELECT {text_col}
+        FROM words
+        WHERE status='approved' AND {key_col} LIKE ?
         LIMIT ?
-    """, (t + "%", limit))
-    prefix = [r[0] for r in c.fetchall()]
+    """, (tkey + "%", limit))
+    prefix = [r[0] for r in c.fetchall() if r and r[0]]
 
+    # partial match
     c.execute(f"""
-        SELECT {col} FROM words
-        WHERE status='approved' AND {col} LIKE ?
+        SELECT {text_col}
+        FROM words
+        WHERE status='approved' AND {key_col} LIKE ?
         LIMIT ?
-    """, ("%" + t + "%", limit))
-    partial = [r[0] for r in c.fetchall()]
+    """, ("%" + tkey + "%", limit))
+    partial = [r[0] for r in c.fetchall() if r and r[0]]
 
+    # candidates for "closest" (use last 3000 for speed)
     c.execute(f"""
-        SELECT {col} FROM words
+        SELECT {text_col}
+        FROM words
         WHERE status='approved'
         ORDER BY id DESC
         LIMIT 3000
     """)
-    candidates = [r[0] for r in c.fetchall()]
+    candidates = [r[0] for r in c.fetchall() if r and r[0]]
     conn.close()
 
-    closest = get_close_matches(t, candidates, n=limit, cutoff=0.75)
+    # closest match (run on normalized form to be fair)
+    # map: normalized -> original
+    norm_map = {}
+    norm_list = []
+    for cand in candidates:
+        nk = make_search_key(cand)
+        if nk and nk not in norm_map:
+            norm_map[nk] = cand
+            norm_list.append(nk)
+
+    closest_norm = get_close_matches(tkey, norm_list, n=limit, cutoff=0.75)
+    closest = [norm_map[n] for n in closest_norm if n in norm_map]
 
     def dedup(seq):
         seen = set()
@@ -872,17 +899,29 @@ def suggest_terms(term: str, direction: str, limit: int = 8):
     return {"closest": dedup(closest), "prefix": dedup(prefix), "partial": dedup(partial)}
 
 
-# ------------------ AUTO LANGUAGE DETECT ------------------
+# ------------------ AUTO LANGUAGE DETECT (KEY-BASED, PUNCT-SAFE) ------------------
+
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
 
 def detect_direction_auto(text: str) -> str:
+    """
+    Decides whether user typed Oromo or English.
+    Uses *_key columns for matching (case-insensitive).
+    """
     t = normalize_text(text)
-    tokens = t.split()
+    if not t:
+        return "en_om"
+
+    # extract "word tokens" without punctuation
+    tokens = _WORD_RE.findall(t)
     if not tokens:
         return "en_om"
 
-    filtered = [w for w in tokens if w not in EN_STOP and w not in OROMO_STOP]
+    filtered = [w for w in tokens if w.casefold() not in EN_STOP and w.casefold() not in OROMO_STOP]
     if not filtered:
         filtered = tokens
+
+    full_key = make_search_key(t)
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -890,20 +929,24 @@ def detect_direction_auto(text: str) -> str:
     or_score = 0
     en_score = 0
 
+    # token scoring via keys
     for w in filtered:
-        c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo=?", (w,))
+        wk = make_search_key(w)
+
+        c.execute("SELECT 1 FROM words WHERE status='approved' AND oromo_key=? LIMIT 1", (wk,))
         if c.fetchone():
             or_score += 1
 
-        c.execute("SELECT 1 FROM words WHERE status='approved' AND english=?", (w,))
+        c.execute("SELECT 1 FROM words WHERE status='approved' AND english_key=? LIMIT 1", (wk,))
         if c.fetchone():
             en_score += 1
 
-    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo=?", (t,))
+    # phrase scoring via keys (stronger weight)
+    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND oromo_key=? LIMIT 1", (full_key,))
     if c.fetchone():
         or_score += 4
 
-    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND english=?", (t,))
+    c.execute("SELECT 1 FROM phrases WHERE status='approved' AND english_key=? LIMIT 1", (full_key,))
     if c.fetchone():
         en_score += 4
 
@@ -915,58 +958,82 @@ def detect_direction_auto(text: str) -> str:
         return "en_om"
     return "en_om"
 
-
 # ------------------ TRANSLATION LOGIC ------------------
 
+import re
+
+_WORD_RE = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9']+")
+
+def _strip_for_phrase_match(s: str) -> str:
+    """
+    Make phrase matching tolerant:
+    - normalize spaces/quotes
+    - remove sentence punctuation
+    - keep letters/numbers/apostrophes
+    """
+    s = normalize_text(s)
+    if not s:
+        return ""
+    tokens = _WORD_RE.findall(s)
+    return " ".join(tokens).strip()
+
 def translate_text(text: str, direction: str = "om_en"):
-    t = normalize_text(text)
-    if not t:
+    # 1) prepare clean strings
+    raw = normalize_text(text)
+    if not raw:
         return "", 0, 0
-    key = make_search_key(t)
+
+    # phrase key ignores punctuation and case
+    phrase_clean = _strip_for_phrase_match(raw)
+    phrase_key = make_search_key(phrase_clean)
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    if direction == "om_en":
-        c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo_key=?", (key,))
-        row = c.fetchone()
-        if row:
-            conn.close()
-            return row[1], 1, 1
-    else:
-        c.execute("SELECT id, oromo FROM phrases WHERE status='approved' AND english_key=?", (key,))
+    # 2) PHRASE exact match using *_key (case-insensitive) + punctuation-safe
+    if phrase_key:
+        if direction == "om_en":
+            c.execute("""
+                SELECT id, english
+                FROM phrases
+                WHERE status='approved' AND oromo_key=?
+                LIMIT 1
+            """, (phrase_key,))
+        else:
+            c.execute("""
+                SELECT id, oromo
+                FROM phrases
+                WHERE status='approved' AND english_key=?
+                LIMIT 1
+            """, (phrase_key,))
         row = c.fetchone()
         if row:
             conn.close()
             return row[1], 1, 1
 
-    tokens = t.split()
+    # 3) WORD exact match if single token
+    tokens = _WORD_RE.findall(raw)
     if len(tokens) == 1:
         wkey = make_search_key(tokens[0])
         if direction == "om_en":
-            c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo_key=?", (wkey,))
-            row = c.fetchone()
-            if row:
-                conn.close()
-                return row[1], 1, 0
+            c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo_key=? LIMIT 1", (wkey,))
         else:
-            c.execute("SELECT id, oromo FROM words WHERE status='approved' AND english_key=?", (wkey,))
-            row = c.fetchone()
-            if row:
-                conn.close()
-                return row[1], 1, 0
+            c.execute("SELECT id, oromo FROM words WHERE status='approved' AND english_key=? LIMIT 1", (wkey,))
+        row = c.fetchone()
+        if row:
+            conn.close()
+            return row[1], 1, 0
 
+    # 4) fallback: word-by-word (ignores punctuation)
     out = []
     for w in tokens:
         wk = make_search_key(w)
         if direction == "om_en":
-            c.execute("SELECT english FROM words WHERE status='approved' AND oromo_key=?", (wk,))
-            r = c.fetchone()
-            out.append(r[0] if r else w)
+            c.execute("SELECT english FROM words WHERE status='approved' AND oromo_key=? LIMIT 1", (wk,))
         else:
-            c.execute("SELECT oromo FROM words WHERE status='approved' AND english_key=?", (wk,))
-            r = c.fetchone()
-            out.append(r[0] if r else w)
+            c.execute("SELECT oromo FROM words WHERE status='approved' AND english_key=? LIMIT 1", (wk,))
+        r = c.fetchone()
+        out.append(r[0] if r else w)
 
     conn.close()
     return " ".join(out), 0, 0
@@ -1297,7 +1364,7 @@ def submit():
                 f"Waiting for admin approval."
             )
             return render_template("submit.html", msg=msg)
-
+        
         # ---------- TEXT MODE ----------
         english_raw = (request.form.get("english") or "").strip()
         oromo_raw = (request.form.get("oromo") or "").strip()
@@ -1335,6 +1402,8 @@ def submit():
         return render_template("submit.html", msg=msg)
 
     return render_template("submit.html", msg=msg)
+
+        
 
 
 # ------------------ PUBLIC SUBMISSION (PHRASES) ------------------
@@ -2795,19 +2864,19 @@ def gadaa_ai_api():
         }
     })
 
+
 # ------------------ RUN / MIGRATE ------------------
 
 if __name__ == "__main__":
     import sys
 
-    # Render pre-deploy: python app.py migrate
     if len(sys.argv) > 1 and sys.argv[1] == "migrate":
         ensure_key_columns()
         backfill_keys()
         ensure_key_indexes()
         print("DB migration done")
-    else:
-        port = int(os.environ.get("PORT", 5000))
-        app.run(host="0.0.0.0", port=port)
+        sys.exit(0)   # ✅ VERY IMPORTANT → stop here
 
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
