@@ -727,6 +727,36 @@ def init_db():
 
 init_db()
 
+def ensure_phrase_keys():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # add columns if missing
+    try:
+        c.execute("ALTER TABLE phrases ADD COLUMN english_key TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute("ALTER TABLE phrases ADD COLUMN oromo_key TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    # backfill keys
+    c.execute("SELECT id, english, oromo FROM phrases")
+    rows = c.fetchall()
+    for pid, en, om in rows:
+        en_key = make_search_key(en or "")
+        om_key = make_search_key(om or "")
+        c.execute(
+            "UPDATE phrases SET english_key=?, oromo_key=? WHERE id=?",
+            (en_key, om_key, pid)
+        )
+
+    conn.commit()
+    conn.close()
+
+ensure_phrase_keys()
 
 def ensure_key_columns():
     conn = sqlite3.connect(DB_NAME)
@@ -1067,22 +1097,25 @@ def translate():
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-
-        if clean_exact:
+        
+          
+            # --- PHRASE exact match (case-insensitive via *_key) ---
+        if clean_key:
             if direction == "om_en":
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo=?", (clean_exact,))
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo_key=?", (clean_key,))
             else:
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND english=?", (clean_exact,))
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo_key=?", (clean_key,))
             pr = c.fetchone()
             if pr:
                 matched = {"type": "phrase", "id": pr[0]}
                 audio = get_approved_audio("phrase", pr[0])
-
-        if not matched and clean_exact and len(clean_exact.split()) == 1:
+                
+           # --- WORD exact match (single token) ---
+        if not matched and clean_key and len(clean_exact.split()) == 1:
             if direction == "om_en":
-                c.execute("SELECT id FROM words WHERE status='approved' AND oromo=?", (clean_exact,))
+                c.execute("SELECT id FROM words WHERE status='approved' AND oromo_key=?", (clean_key,))
             else:
-                c.execute("SELECT id FROM words WHERE status='approved' AND english=?", (clean_exact,))
+               c.execute("SELECT id FROM words WHERE status='approved' AND english_key=?", (clean_key,))
             wr = c.fetchone()
             if wr:
                 matched = {"type": "word", "id": wr[0]}
@@ -1199,28 +1232,34 @@ def submit():
             return render_template("submit.html", msg=msg)
 
         # ---------- TEXT MODE ----------
-        english = normalize_text(request.form.get("english", ""))
-        oromo = normalize_text(request.form.get("oromo", ""))
+        english_raw = (request.form.get("english") or "").strip()
+        oromo_raw = (request.form.get("oromo") or "").strip()
+        
+        english_key = make_search_key(english_raw)
+        oromo_key = make_search_key(oromo_raw)
 
-        if not english or not oromo:
+        if not english_key or not oromo_key:
             msg = "Please provide both English and Oromo."
             return render_template("submit.html", msg=msg)
+        
 
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-
+        
+        # duplicate check via *_key (case-insensitive)
         c.execute(
-            "SELECT 1 FROM words WHERE english=? OR oromo=?",
-            (english, oromo),
+            "SELECT 1 FROM words WHERE english_key=? OR oromo_key=?",
+            (english_key, oromo_key),
         )
         if c.fetchone():
             conn.close()
             msg = "This word already exists (or is pending). Try another."
             return render_template("submit.html", msg=msg)
-
+        
+         # insert original + key
         c.execute(
-            "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
-            (english, oromo),
+            "INSERT INTO words (english, oromo,english_key, oromo_key, status) VALUES (?, ?, ?, ?, 'pending')",
+            (english_raw, oromo_raw, english_key, oromo_key),
         )
         conn.commit()
         conn.close()
