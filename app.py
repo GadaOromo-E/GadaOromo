@@ -922,18 +922,19 @@ def translate_text(text: str, direction: str = "om_en"):
     t = normalize_text(text)
     if not t:
         return "", 0, 0
+    key = make_search_key(t)
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     if direction == "om_en":
-        c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo=?", (t,))
+        c.execute("SELECT id, english FROM phrases WHERE status='approved' AND oromo_key=?", (key,))
         row = c.fetchone()
         if row:
             conn.close()
             return row[1], 1, 1
     else:
-        c.execute("SELECT id, oromo FROM phrases WHERE status='approved' AND english=?", (t,))
+        c.execute("SELECT id, oromo FROM phrases WHERE status='approved' AND english_key=?", (key,))
         row = c.fetchone()
         if row:
             conn.close()
@@ -941,14 +942,15 @@ def translate_text(text: str, direction: str = "om_en"):
 
     tokens = t.split()
     if len(tokens) == 1:
+        wkey = make_search_key(tokens[0])
         if direction == "om_en":
-            c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo=?", (t,))
+            c.execute("SELECT id, english FROM words WHERE status='approved' AND oromo_key=?", (wkey,))
             row = c.fetchone()
             if row:
                 conn.close()
                 return row[1], 1, 0
         else:
-            c.execute("SELECT id, oromo FROM words WHERE status='approved' AND english=?", (t,))
+            c.execute("SELECT id, oromo FROM words WHERE status='approved' AND english_key=?", (wkey,))
             row = c.fetchone()
             if row:
                 conn.close()
@@ -956,12 +958,13 @@ def translate_text(text: str, direction: str = "om_en"):
 
     out = []
     for w in tokens:
+        wk = make_search_key(w)
         if direction == "om_en":
-            c.execute("SELECT english FROM words WHERE status='approved' AND oromo=?", (w,))
+            c.execute("SELECT english FROM words WHERE status='approved' AND oromo_key=?", (wk,))
             r = c.fetchone()
             out.append(r[0] if r else w)
         else:
-            c.execute("SELECT oromo FROM words WHERE status='approved' AND english=?", (w,))
+            c.execute("SELECT oromo FROM words WHERE status='approved' AND english_key=?", (wk,))
             r = c.fetchone()
             out.append(r[0] if r else w)
 
@@ -1068,7 +1071,7 @@ def translate():
             if direction == "om_en":
                 c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo_key=?", (clean_key,))
             else:
-                c.execute("SELECT id FROM phrases WHERE status='approved' AND oromo_key=?", (clean_key,))
+                c.execute("SELECT id FROM phrases WHERE status='approved' AND english_key=?", (clean_key,))
             pr = c.fetchone()
             if pr:
                 matched = {"type": "phrase", "id": pr[0]}
@@ -1087,7 +1090,7 @@ def translate():
 
         conn.close()
 
-        translated, is_exact, is_phrase = translate_text(text, direction)
+        translated, is_exact, is_phrase = translate_multipart_text(text, direction)
         record_search(text, direction, is_phrase, is_exact)
         result = translated
 
@@ -1111,6 +1114,106 @@ def translate():
         approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
+# ------------------ MULTI-SENTENCE / MULTI-PHRASE TRANSLATION ------------------
+
+# Split by sentence OR comma
+_SPLIT_RE = re.compile(r"[.!?,]+")
+
+
+def normalize_for_match(s: str) -> str:
+    """
+    Normalize text for DB matching:
+    - lowercase
+    - remove punctuation
+    - collapse spaces
+    """
+    if not s:
+        return ""
+    s = s.lower()
+    s = re.sub(r"[.!?,]", " ", s)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip()
+
+
+def split_segments(text: str):
+    """
+    Split text into logical phrases using:
+    ., ?, !, ,
+    Example:
+      "I need a taxi, can you show me the way?"
+      -> ["I need a taxi", "can you show me the way"]
+    """
+    t = normalize_text(text)
+    if not t:
+        return []
+
+    parts = _SPLIT_RE.split(t)
+    segments = []
+
+    for p in parts:
+        p = p.strip()
+        if p:
+            segments.append(p)
+
+    return segments
+
+
+def translate_segment_best(seg: str, direction: str):
+    """
+    Try best phrase match first using keys.
+    If not found → fallback to translate_text().
+    """
+    key = make_search_key(normalize_for_match(seg))
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    if direction == "om_en":
+        c.execute(
+            "SELECT english FROM phrases WHERE status='approved' AND oromo_key=?",
+            (key,),
+        )
+    else:
+        c.execute(
+            "SELECT oromo FROM phrases WHERE status='approved' AND english_key=?",
+            (key,),
+        )
+
+    row = c.fetchone()
+    conn.close()
+
+    if row:
+        return row[0], 1, 1
+
+    # fallback → word/partial translation
+    return translate_text(seg, direction)
+
+
+def translate_multipart_text(text: str, direction: str):
+    """
+    Translate multi-phrase input intelligently:
+    - splits by comma or sentence
+    - matches DB phrases even if punctuation differs
+    - joins using comma
+    """
+    segments = split_segments(text)
+    if not segments:
+        return "", 0, 0
+
+    results = []
+    any_exact = 0
+    any_phrase = 0
+
+    for seg in segments:
+        tr, ex, ph = translate_segment_best(seg, direction)
+        results.append(tr)
+        any_exact = any_exact or ex
+        any_phrase = any_phrase or ph
+
+    # join phrases naturally with comma
+    final = ", ".join(results)
+
+    return final, int(any_exact), int(any_phrase)
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
 
