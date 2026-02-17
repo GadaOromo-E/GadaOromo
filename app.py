@@ -1222,6 +1222,34 @@ def suggest_phrases_from_text(text: str, direction: str, limit: int = 8, min_wor
     ))
 
     return suggestions[:limit]
+EN_DROP_WORDS = {"the", "a", "an"}         # safe to drop in Oromo output
+EN_SOFT_WORDS = {"please"}                # optional: skip in fallback if not part of a matched phrase
+
+def postprocess_segment(text_out: str, direction: str) -> str:
+    s = (text_out or "").strip()
+    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"\s+([?.!,;:])", r"\1", s)        # no space before punctuation
+    s = re.sub(r"([?.!,;:])\1+", r"\1", s)        # collapse repeated punctuation
+    if direction == "en_om":
+        # remove any leftover English articles that slipped through
+        s = re.sub(r"\b(the|a|an)\b", "", s, flags=re.I)
+        s = re.sub(r"\s+", " ", s).strip()
+        s = re.sub(r"\s+([?.!,;:])", r"\1", s)
+    return s
+def apply_grammar_templates(output_text: str, direction: str) -> str:
+    if direction != "en_om":
+        return output_text
+
+    s = normalize_text(output_text)
+
+    # Clean common artifacts from word fallback
+    s = re.sub(r"\bthe\b", "", s, flags=re.I)
+    s = re.sub(r"\s+", " ", s).strip()
+
+    # Fix spacing before punctuation
+    s = re.sub(r"\s+([?.!,;:])", r"\1", s)
+
+    return s
 
 
 # ------------------ LEARN ------------------
@@ -1718,8 +1746,9 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
         best_tr = None
         best_len = 0
 
+        # Try phrases first (length >= 2)
         Lmax = min(max_phrase_words, len(words) - i)
-        for L in range(Lmax, 1, -1):  # phrase length >= 2
+        for L in range(Lmax, 1, -1):
             phrase_text = " ".join(words[i:i+L])
             k = key_for(phrase_text)
             if not k:
@@ -1737,17 +1766,28 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
             i += best_len
             continue
 
-        # word fallback
-        wk = key_for(words[i])
+        # ---- word fallback ----
+        w = words[i]
+        w_cf = w.casefold()
+
+        # Drop safe English filler words in English->Oromo fallback
+        if direction == "en_om" and (w_cf in EN_DROP_WORDS or w_cf in EN_SOFT_WORDS):
+            i += 1
+            continue
+
+        wk = key_for(w)
         trw = lookup_word(cur, direction, wk) if wk else None
         if trw:
             out.append(trw)
             any_exact = 1
         else:
-            out.append(words[i])
+            out.append(w)
+
         i += 1
 
-    return " ".join(out), int(any_exact), int(any_phrase)
+    result = " ".join(out)
+    result = postprocess_segment(result, direction)
+    return result, int(any_exact), int(any_phrase)
 
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
