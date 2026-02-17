@@ -71,32 +71,30 @@
 
 <div class="container">
 
- <header class="topbar">
-  <div class="brand">
-    <h1>{{ APP_NAME }}</h1>
-    <p class="tagline">Your global Oromo ↔ English community dictionary</p>
-  </div>
+  <!-- ✅ FIXED HEADER STRUCTURE (no extra closing divs) -->
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Your global Oromo ↔ English community dictionary</p>
+    </div>
 
-  <div class="mini-copy">
-  <span class="copy-year">© 2026</span>
-  <span class="copy-name">Gadaa</span>
-</div>
+    <div class="mini-copy">
+      <span class="copy-year">© 2026</span>
+      <span class="copy-name">Gadaa</span>
+    </div>
 
+    <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
+      <a class="btn primary" href="/">🏠 Home</a>
+      <a class="btn" href="/translate">🌍 Translate</a>
+      <a class="btn" href="/learn">📚 Learn language</a>
+      <a class="btn danger" href="/support">❤️ Support the project</a>
 
-
-
-      <div class="small-actions" style="margin-top:10px; display:flex; flex-wrap:wrap; gap:8px;">
-        <a class="btn primary" href="/">🏠 Home</a>
-        <a class="btn" href="/translate">🌍 Translate</a>
-        <a class="btn" href="/learn">📚 Learn language</a>
-        <a class="btn danger" href="/support">❤️ Support the project</a>
-
-        <!-- ✅ Install button (Android/desktop only; iOS shows instructions box above) -->
-        <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
-      </div>
+      <!-- ✅ Install button (Android/desktop only; iOS shows instructions box above) -->
+      <button id="installBtn" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
     </div>
   </header>
 
+  <!-- ✅ KEEP THIS NAV (pills) -->
   <nav class="nav">
     <a class="nav-link" href="/">Home</a>
     <a class="nav-link" href="/translate">Translate</a>
@@ -150,35 +148,34 @@
                 class="btn"
                 style="padding:8px 10px; display:none;"
                 data-stop-btn
-                 data-entry-type="word"
-                 data-entry-id="{{ result_id }}"
-                 data-lang="oromo"
-              >⏹ Stop</button>  
-<audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+                data-entry-type="word"
+                data-entry-id="{{ result_id }}"
+                data-lang="oromo"
+              >⏹ Stop</button>
 
-<div style="margin-top:8px;">
-  <button
-    type="button"
-    class="btn primary"
-    data-submit-btn
-    data-entry-type="word"
-    data-entry-id="{{ result_id }}"
-    data-lang="oromo"
-    style="display:none;"
-  >✅ Submit</button>
+              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
 
-  <button
-    type="button"
-    class="btn"
-    data-rerecord-btn
-    data-entry-type="word"
-    data-entry-id="{{ result_id }}"
-    data-lang="oromo"
-    style="display:none;"
-  >🔁 Re-record</button>
-</div>
+              <div style="margin-top:8px;">
+                <button
+                  type="button"
+                  class="btn primary"
+                  data-submit-btn
+                  data-entry-type="word"
+                  data-entry-id="{{ result_id }}"
+                  data-lang="oromo"
+                  style="display:none;"
+                >✅ Submit</button>
 
-<span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
+                <button
+                  type="button"
+                  class="btn"
+                  data-rerecord-btn
+                  data-entry-type="word"
+                  data-entry-id="{{ result_id }}"
+                  data-lang="oromo"
+                  style="display:none;"
+                >🔁 Re-record</button>
+              </div>
 
               <!-- keep your old one too (compat) -->
               <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
@@ -225,10 +222,11 @@
       </div>
 
     {% elif result is not none %}
-     <div class="result-box" style="margin-top:14px;"
-     data-entry-type="word"
-     data-entry-id="{{ result_id }}"
-     data-lang="oromo">
+      <div class="result-box" style="margin-top:14px;"
+           data-entry-type="word"
+           data-entry-id="{{ result_id }}"
+           data-lang="oromo">
+      </div>
     {% endif %}
 
     {% if suggestions %}
@@ -269,7 +267,9 @@
       <h2>🔥 Trending Searches</h2>
       <div class="chips">
         {% for t in trending %}
-          <span class="chip" onclick="useSuggestion('{{ t[0]|e }}')">{{ t[0] }} <span class="muted">({{ t[1] }})</span></span>
+          <span class="chip" onclick="useSuggestion('{{ t[0]|e }}')">
+            {{ t[0] }} <span class="muted">({{ t[1] }})</span>
+          </span>
         {% endfor %}
       </div>
       <div class="subtle" style="margin-top:8px;">Tap a trending word to search it.</div>
@@ -319,17 +319,6 @@
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260125-4" defer></script>
+
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-

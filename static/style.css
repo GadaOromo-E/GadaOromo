@@ -37,64 +37,133 @@ a:hover{ color: var(--redHover); }
   padding: 14px;
 }
 
-/* Topbar (professional black header with red accent line) */
+/* =======================================================
+   TOPBAR — FULL SCREEN (edge-to-edge) + red line corners
+   HTML you already have:
+   <header class="topbar">
+     <div class="brand">...</div>
+     <div class="mini-copy">...</div>
+     <div class="small-actions">...</div>
+   </header>
+======================================================= */
+
+/* Full width bar */
 .topbar{
   position: sticky;
   top: 0;
   z-index: 60;
+
+  /* edge-to-edge */
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+
   background: var(--black);
   color: #fff;
-  padding: 14px 0;
-  border-bottom: 3px solid var(--red);
-.topbar {
-  position: relative;
+
+  /* IMPORTANT: no border-bottom here (we draw red line with ::after) */
+  padding: 16px 20px 14px 20px;
+
+  /* layout like screenshot */
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+
+  /* for ::after */
+  position: sticky;
 }
 
-.mini-copy {
+/* Red line touches BOTH corners */
+.topbar::after{
+  content: "";
   position: absolute;
-  top: 6px;
-  right: 12px;
-  font-size: 10px;
-  letter-spacing: 0.4px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: var(--red);
+}
+
+/* Left block (title + tagline) */
+.brand h1{
+  margin: 0;
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: .2px;
+}
+
+.tagline{
+  margin-top: 6px;
+  color: rgba(255,255,255,0.75);
+  font-size: 1rem;
+}
+
+/* Right block copyright */
+.mini-copy{
+  font-size: 13px;
+  font-weight: 600;
   white-space: nowrap;
-  font-weight: 500;
+  margin-top: 6px;
+  letter-spacing: .6px;
 }
 
-.copy-year {
-  color: #c40000;   /* your brand red */
-}
+.copy-year{ color: var(--red); }
+.copy-name{ color: #ffffff; }
 
-.copy-name {
-  color: #ffffff;   /* white */
-}
-
-}
-
-.title-row{
+/* Your small actions row stays inside header */
+.small-actions{
+  width: 100%;
   display:flex;
-  align-items:center;
-  justify-content:space-between;
-  gap: 12px;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap:wrap;
+}
+.small-actions > *{ flex: 1; }
+
+/* Make header wrap nicely on small screens */
+@media (max-width: 640px){
+  .topbar{
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .mini-copy{
+    margin-top: 0;
+  }
+  .small-actions > *{
+    flex: unset;
+  }
 }
 
-.brand h1{ margin:0; font-size: 1.7rem; color:#fff; }
-.tagline{ margin-top: 6px; color: rgba(255,255,255,0.75); }
-
+/* Subtle text helpers */
 .subtle{ color: var(--muted); font-size: 0.95rem; }
 .muted{ color: var(--muted); }
 
-/* Nav pills (white background, red/black styling) */
+/* =======================================================
+   NAV PILLS (stays like your screenshot)
+======================================================= */
 .nav{
   display:flex;
   gap: 10px;
   overflow-x:auto;
   padding: 12px 0;
+
   position: sticky;
-  top: 72px;
+  top: 104px; /* header is a bit taller now */
   z-index: 55;
+
   background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
+
+/* OPTIONAL: if you want nav full-width too, UNCOMMENT this:
+.nav{
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  padding-left: 16px;
+  padding-right: 16px;
+}
+*/
 
 .nav-link{
   white-space: nowrap;
@@ -265,9 +334,6 @@ button:disabled,
 .bottom-actions{ display:flex; gap: 10px; }
 .bottom-actions > *{ flex: 1; }
 
-.small-actions{ display:flex; gap: 10px; margin-top: 10px; flex-wrap:wrap; }
-.small-actions > *{ flex: 1; }
-
 /* Admin layout grid */
 .grid{
   display:grid;
@@ -291,26 +357,23 @@ button:disabled,
 /* Mobile tweaks */
 @media (min-width: 800px){
   .container{ padding: 18px; }
-  .nav{ top: 78px; }
+  .nav{ top: 112px; }
 }
 
 /* =======================================================
    NEW: File submission / multi-section forms improvements
 ======================================================= */
 
-/* Make section titles (h3) look consistent inside cards */
 h3{
   margin: 0 0 10px;
   font-size: 1.05rem;
 }
 
-/* Make labels consistent */
 label{
   font-weight: 700;
   color: var(--black);
 }
 
-/* File input styling */
 input[type="file"]{
   background: #fff;
   border: 1px dashed rgba(0,0,0,0.22);
@@ -318,7 +381,6 @@ input[type="file"]{
   padding: 12px;
 }
 
-/* Code examples (CSV format blocks) */
 code{
   display: inline-block;
   padding: 4px 8px;
@@ -330,7 +392,6 @@ code{
   margin-top: 4px;
 }
 
-/* Optional: a soft divider if you want it in templates */
 .divider{
   height: 1px;
   background: rgba(0,0,0,0.10);
@@ -368,24 +429,20 @@ audio{
   margin-top: 6px;
 }
 
-/* Make tiny mic buttons in list not huge */
 .word-row .btn[style*="padding:6px"]{
   width: auto;
 }
 
-/* Compact buttons inside mixed rows */
 .word-row button,
 .word-row .btn{
   width: auto;
 }
 
-/* Status text spacing */
 [data-status-for]{
   min-height: 18px;
   display: inline-block;
 }
 
-/* Recording state (we used .danger class in JS) */
 button.danger{
   border: 1px solid rgba(179,0,0,0.35);
   background: #fff;
@@ -397,10 +454,8 @@ button.danger:hover{
   border-color: rgba(179,0,0,0.55);
 }
 
-/* Responsive: recorder controls stack nicely */
 @media (max-width: 560px){
   .row{ flex-direction: column; align-items: stretch; }
-  .small-actions > *{ flex: unset; }
   .trim label{ display:flex; margin-top: 8px; }
   .trim input[type="number"]{ width: 100%; }
 }
@@ -427,11 +482,9 @@ a:active, button:active, .chip:active {
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* Reduce motion for accessibility */
 @media (prefers-reduced-motion: reduce) {
   a, button, .chip, .card {
     transition: none !important;
     animation: none !important;
   }
 }
-
