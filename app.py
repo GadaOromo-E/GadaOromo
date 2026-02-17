@@ -1129,6 +1129,101 @@ def generate_oromo_alias_texts(oromo: str) -> list[str]:
     s = normalize_text(oromo)
     return [s] if s else []
 
+def suggest_phrases_from_text(text: str, direction: str, limit: int = 8, min_words: int = 2, max_words: int = 6):
+    """
+    Suggest approved phrases found inside the user's text using phrase_aliases.
+    Returns a list of dicts:
+      { "phrase_id": int, "source_text": str, "english": str, "oromo": str, "matched_ngram": str }
+    direction:
+      - 'en_om' means user typed English, target Oromo
+      - 'om_en' means user typed Oromo, target English
+    """
+    parts = split_segments(text)
+    if not parts:
+        return []
+
+    # Extract segments, normalize, split to words
+    segments_words = []
+    for seg_text, _, _ in parts:
+        seg = normalize_text(seg_text)
+        if not seg:
+            continue
+        words = seg.split()
+        if words:
+            segments_words.append(words)
+
+    if not segments_words:
+        return []
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # For scoring and de-dup
+    best_by_phrase_id = {}  # phrase_id -> (score, payload)
+
+    # Decide which alias column to search
+    alias_col = "english_alias_key" if direction == "en_om" else "oromo_alias_key"
+
+    # We will do lookups for each n-gram key.
+    # To keep it efficient, we can cache alias lookups in a dict
+    alias_cache = {}  # key -> row
+
+    for words in segments_words:
+        n = len(words)
+        for i in range(n):
+            for L in range(max_words, min_words - 1, -1):
+                if i + L > n:
+                    continue
+                ngram = " ".join(words[i:i+L])
+                k = key_for(ngram)
+                if not k:
+                    continue
+
+                # Cache DB lookups for speed
+                if k in alias_cache:
+                    row = alias_cache[k]
+                else:
+                    row = c.execute(f"""
+                        SELECT a.phrase_id, p.english, p.oromo
+                        FROM phrase_aliases a
+                        JOIN phrases p ON p.id = a.phrase_id
+                        WHERE p.status='approved' AND a.{alias_col}=? 
+                        LIMIT 1
+                    """, (k,)).fetchone()
+                    alias_cache[k] = row
+
+                if not row:
+                    continue
+
+                phrase_id, en, om = row
+                # Score: prefer longer phrase, earlier in sentence
+                score = (L * 1000) - i
+
+                payload = {
+                    "phrase_id": phrase_id,
+                    "source_text": ngram,
+                    "matched_ngram": ngram,
+                    "english": en,
+                    "oromo": om,
+                }
+
+                prev = best_by_phrase_id.get(phrase_id)
+                if (prev is None) or (score > prev[0]):
+                    best_by_phrase_id[phrase_id] = (score, payload)
+
+    conn.close()
+
+    # Sort by score descending
+    suggestions = [v[1] for v in best_by_phrase_id.values()]
+    suggestions.sort(key=lambda d: (
+        -len(normalize_text(d["matched_ngram"]).split()),
+        -len(normalize_text(d["matched_ngram"])),
+        d["matched_ngram"].lower()
+    ))
+
+    return suggestions[:limit]
+
+
 # ------------------ LEARN ------------------
 
 @app.route("/learn", methods=["GET"])

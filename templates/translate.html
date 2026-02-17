@@ -266,6 +266,33 @@
       </div>
     {% endif %}
 
+{% if phrase_suggestions and phrase_suggestions|length > 0 %}
+  <div style="margin-top:14px;">
+    <h2>✅ Phrase suggestions found in your input</h2>
+    <div class="muted" style="margin-top:6px;">
+      These are approved phrases that match parts of what you typed.
+    </div>
+
+    <div style="margin-top:10px;">
+      {% for s in phrase_suggestions %}
+        <div class="card" style="margin-top:10px;">
+          <div class="subtle"><b>Matched:</b> "{{ s.matched_ngram }}"</div>
+
+          <div style="margin-top:6px;">
+            <div><b>English:</b> {{ s.english }}</div>
+            <div style="margin-top:4px;"><b>Oromo:</b> {{ s.oromo }}</div>
+          </div>
+
+          <div class="small-actions" style="margin-top:10px;">
+            <button type="button" class="btn" onclick="useSuggestion('{{ s.english|e }}')">Use English</button>
+            <button type="button" class="btn" onclick="useSuggestion('{{ s.oromo|e }}')">Use Oromo</button>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
     {% if trending %}
       <div style="margin-top:14px;">
         <h2>🔥 Trending</h2>
@@ -298,7 +325,6 @@ function copyResult(){
   if(!txt) return alert("Nothing to copy.");
   navigator.clipboard.writeText(txt).then(()=>alert("Copied!")).catch(()=>alert("Copy failed."));
 }
-
 let cachedVoices = [];
 function loadVoices(){ cachedVoices = window.speechSynthesis ? window.speechSynthesis.getVoices() : []; }
 if ('speechSynthesis' in window) {
