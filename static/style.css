@@ -413,3 +413,203 @@ a:active, button:active, .chip:active {
   }
 }
 
+/* ==========================================
+   ✅ Option 1 — CSS-only modern visual upgrade
+   No HTML changes required
+   Keeps your existing red/black branding
+   Paste this at the END of static/style.css
+   ========================================== */
+
+:root{
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --text: #111827;
+  --muted: #6b7280;
+
+  /* keep your brand red */
+  --brand: #b30000;
+  --brand-dark: #8f0000;
+
+  --border: rgba(17,24,39,0.10);
+  --shadow: 0 10px 30px rgba(0,0,0,0.08);
+  --shadow-soft: 0 6px 18px rgba(0,0,0,0.06);
+
+  --radius: 16px;
+  --radius-sm: 12px;
+  --gap: 12px;
+
+  --font: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+}
+
+html, body{
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Container spacing */
+.container{
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 18px 14px 40px;
+}
+
+/* Headings */
+h1,h2,h3{
+  letter-spacing: -0.02em;
+}
+
+.subtle, .muted{
+  color: var(--muted) !important;
+}
+
+/* Top header / banner */
+.topbar{
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+/* If your topbar already has dark background, keep text readable */
+.topbar h1, .topbar h2, .topbar h3{
+  margin-top: 0;
+}
+
+/* Card style */
+.card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-soft);
+  padding: 16px;
+}
+
+/* Inputs */
+textarea, input[type="text"], input[type="password"], select{
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 12px;
+  outline: none;
+  transition: box-shadow .15s ease, border-color .15s ease;
+  font-size: 16px;
+}
+
+textarea{
+  min-height: 140px;
+  resize: vertical;
+}
+
+textarea:focus, input:focus, select:focus{
+  border-color: rgba(179,0,0,0.50);
+  box-shadow: 0 0 0 4px rgba(179,0,0,0.12);
+}
+
+/* Buttons & links-as-buttons */
+button, .btn{
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform .05s ease, box-shadow .15s ease, background .15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  user-select: none;
+}
+
+button:hover, .btn:hover{
+  box-shadow: 0 10px 22px rgba(0,0,0,0.10);
+  transform: translateY(-1px);
+}
+
+button:active, .btn:active{
+  transform: translateY(0px);
+  box-shadow: none;
+}
+
+/* Keep your red primary style */
+.btn.primary, button.primary, button[type="submit"]{
+  background: var(--brand);
+  color: #fff;
+  border-color: rgba(0,0,0,0.12);
+}
+
+.btn.primary:hover, button.primary:hover, button[type="submit"]:hover{
+  background: var(--brand-dark);
+}
+
+/* Danger button (keeps theme) */
+.btn.danger{
+  background: #fff;
+  border-color: rgba(239,68,68,0.35);
+  color: #b91c1c;
+}
+
+/* Flexible rows (many pages use .row already) */
+.row{
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+}
+.row > *{ flex: 1; }
+
+/* Actions bar */
+.small-actions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Result box looks modern */
+.result-box{
+  margin-top: 14px;
+  padding: 14px;
+  background: rgba(179,0,0,0.05);
+  border: 1px solid rgba(179,0,0,0.16);
+  border-radius: var(--radius);
+}
+
+/* Chips (Trending + suggestions) */
+.chips{
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.chip{
+  padding: 9px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+  font-weight: 800;
+  transition: transform .05s ease, box-shadow .15s ease;
+}
+
+.chip:hover{
+  box-shadow: 0 10px 22px rgba(0,0,0,0.10);
+  transform: translateY(-1px);
+}
+
+/* Audio blocks */
+audio{
+  border-radius: 12px;
+}
+
+/* Mobile friendly */
+@media (max-width: 760px){
+  .row{ flex-direction: column; }
+  textarea{ min-height: 160px; }
+  .container{ padding: 14px 10px 32px; }
+}
