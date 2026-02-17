@@ -776,6 +776,32 @@ def ensure_key_indexes():
     c.execute("CREATE INDEX IF NOT EXISTS idx_phrases_oromo_key ON phrases(oromo_key)")
     conn.commit()
     conn.close()
+    
+def ensure_phrase_aliases_table():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS phrase_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        phrase_id INTEGER NOT NULL,
+        english_alias_key TEXT,
+        oromo_alias_key TEXT,
+        source TEXT DEFAULT 'auto',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(phrase_id) REFERENCES phrases(id) ON DELETE CASCADE
+    )
+    """)
+
+    # Unique indexes (SQLite allows multiple NULLs; fine)
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_alias_en ON phrase_aliases(english_alias_key)")
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_alias_om ON phrase_aliases(oromo_alias_key)")
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alias_en ON phrase_aliases(english_alias_key)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_alias_om ON phrase_aliases(oromo_alias_key)")
+
+    conn.commit()
+    conn.close()
 
 
 # ✅ Run DB init + migrations at startup
@@ -1049,6 +1075,59 @@ def translate_text(text: str, direction: str = "om_en"):
     return " ".join(out), 0, 0
 
 
+import re
+
+EN_FILLERS = {"please"}
+EN_ARTICLES = {"a", "an", "the"}
+
+def key_for(text: str) -> str:
+    """One key rule everywhere."""
+    return make_search_key(_strip_edge_punct(normalize_text(text)))
+
+def generate_english_alias_texts(english: str) -> list[str]:
+    """
+    Generate a small set of safe aliases (not too aggressive).
+    You can expand later.
+    """
+    s = normalize_text(english)
+    if not s:
+        return []
+
+    toks = s.split()
+    aliases = {s}
+
+    # Remove trailing "please"
+    if toks and toks[-1].casefold() in EN_FILLERS:
+        aliases.add(" ".join(toks[:-1]))
+
+    # Remove articles (a/an/the) - lightweight
+    no_articles = [t for t in toks if t.casefold() not in EN_ARTICLES]
+    if no_articles and no_articles != toks:
+        aliases.add(" ".join(no_articles))
+
+    # Remove both: articles + trailing please
+    toks2 = no_articles
+    if toks2 and toks2[-1].casefold() in EN_FILLERS:
+        aliases.add(" ".join(toks2[:-1]))
+
+    # De-dup, keep non-empty
+    out = []
+    seen = set()
+    for a in aliases:
+        a = normalize_text(a)
+        if a and a not in seen:
+            seen.add(a)
+            out.append(a)
+    return out
+
+def generate_oromo_alias_texts(oromo: str) -> list[str]:
+    """
+    Oromo aliases: keep conservative.
+    For now, just the original normalized text.
+    You can add Oromo-specific variants later.
+    """
+    s = normalize_text(oromo)
+    return [s] if s else []
 
 # ------------------ LEARN ------------------
 
@@ -1286,9 +1365,39 @@ def _strip_trailing_punct(s: str) -> str:
     # remove trailing boundary punctuation only (.,!?;:)
     return re.sub(r"[.!?,;:]+$", "", (s or "").strip())
 
+def upsert_phrase_aliases(phrase_id: int, english: str, oromo: str, source: str = "auto"):
+    """
+    Insert alias keys for a phrase. Safe to call multiple times.
+    """
+    en_aliases = generate_english_alias_texts(english)
+    om_aliases = generate_oromo_alias_texts(oromo)
 
-def key_for(text: str) -> str:
-    return make_search_key(_strip_edge_punct(normalize_text(text)))
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    # Clear old aliases for this phrase (simple & safe)
+    c.execute("DELETE FROM phrase_aliases WHERE phrase_id=?", (phrase_id,))
+
+    # Insert new aliases
+    for a in en_aliases:
+        k = key_for(a)
+        if k:
+            c.execute("""
+                INSERT OR IGNORE INTO phrase_aliases (phrase_id, english_alias_key, source)
+                VALUES (?, ?, ?)
+            """, (phrase_id, k, source))
+
+    for a in om_aliases:
+        k = key_for(a)
+        if k:
+            c.execute("""
+                INSERT OR IGNORE INTO phrase_aliases (phrase_id, oromo_alias_key, source)
+                VALUES (?, ?, ?)
+            """, (phrase_id, k, source))
+
+    conn.commit()
+    conn.close()
+
 
 def split_segments(text: str):
     """Return list of (segment_text, punctuation, trailing_ws)."""
@@ -1465,6 +1574,85 @@ def translate_multipart_text(text: str, direction: str):
 
     return "".join(out), int(any_exact), int(any_phrase)
 
+def lookup_phrase_via_alias(cur, direction: str, alias_key: str):
+    if direction == "om_en":
+        row = cur.execute("""
+            SELECT p.english
+            FROM phrase_aliases a
+            JOIN phrases p ON p.id = a.phrase_id
+            WHERE p.status='approved' AND a.oromo_alias_key=?
+            LIMIT 1
+        """, (alias_key,)).fetchone()
+    else:
+        row = cur.execute("""
+            SELECT p.oromo
+            FROM phrase_aliases a
+            JOIN phrases p ON p.id = a.phrase_id
+            WHERE p.status='approved' AND a.english_alias_key=?
+            LIMIT 1
+        """, (alias_key,)).fetchone()
+    return row[0] if row else None
+
+def lookup_word(cur, direction: str, w_key: str):
+    if direction == "om_en":
+        row = cur.execute("""
+            SELECT english FROM words WHERE status='approved' AND oromo_key=? LIMIT 1
+        """, (w_key,)).fetchone()
+    else:
+        row = cur.execute("""
+            SELECT oromo FROM words WHERE status='approved' AND english_key=? LIMIT 1
+        """, (w_key,)).fetchone()
+    return row[0] if row else None
+
+def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max_phrase_words: int = 12):
+    """
+    Greedy longest-phrase-first over words in the segment.
+    Returns (translated_segment, any_exact, any_phrase).
+    """
+    seg = normalize_text(segment_text)
+    if not seg:
+        return "", 0, 0
+
+    words = seg.split()
+    out = []
+    i = 0
+    any_exact = 0
+    any_phrase = 0
+
+    while i < len(words):
+        best_tr = None
+        best_len = 0
+
+        Lmax = min(max_phrase_words, len(words) - i)
+        for L in range(Lmax, 1, -1):  # phrase length >= 2
+            phrase_text = " ".join(words[i:i+L])
+            k = key_for(phrase_text)
+            if not k:
+                continue
+            tr = lookup_phrase_via_alias(cur, direction, k)
+            if tr:
+                best_tr = tr
+                best_len = L
+                break
+
+        if best_tr:
+            out.append(best_tr)
+            any_exact = 1
+            any_phrase = 1
+            i += best_len
+            continue
+
+        # word fallback
+        wk = key_for(words[i])
+        trw = lookup_word(cur, direction, wk) if wk else None
+        if trw:
+            out.append(trw)
+            any_exact = 1
+        else:
+            out.append(words[i])
+        i += 1
+
+    return " ".join(out), int(any_exact), int(any_phrase)
 
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
