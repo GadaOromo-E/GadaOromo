@@ -46,10 +46,28 @@ a:hover{ color: var(--redHover); }
   color: #fff;
   padding: 14px 0;
   border-bottom: 3px solid var(--red);
-<div class="mini-copy">
-  <span class="copy-year">© 2026</span>
-  <span class="copy-name">Gadaa</span>
-</div>
+.topbar {
+  position: relative;
+}
+
+.mini-copy {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.copy-year {
+  color: #c40000;   /* your brand red */
+}
+
+.copy-name {
+  color: #ffffff;   /* white */
+}
+
 }
 
 .title-row{
