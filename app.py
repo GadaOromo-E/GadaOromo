@@ -1282,6 +1282,11 @@ _WORDLIKE_RE = re.compile(r"[\w']+", re.UNICODE)
 _TOKEN_RE = re.compile(r"\s+|[^\w\s]+|[\w']+", re.UNICODE)
 _BOUNDARY_RE = re.compile(r"[.!?,;:]")
 
+def _strip_trailing_punct(s: str) -> str:
+    # remove trailing boundary punctuation only (.,!?;:)
+    return re.sub(r"[.!?,;:]+$", "", (s or "").strip())
+
+
 def key_for(text: str) -> str:
     return make_search_key(_strip_edge_punct(normalize_text(text)))
 
@@ -1436,23 +1441,30 @@ def translate_multipart_text(text: str, direction: str):
     if not parts:
         return "", 0, 0
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-
     out = []
     any_exact = 0
     any_phrase = 0
 
-    for seg, punct, ws in parts:
-        tr, ex, ph = translate_segment_best(seg, direction, cur)
-        out.append(tr)
+    for seg_text, punct, ws in parts:
+        if seg_text:
+            tr, ex, ph = translate_text(seg_text, direction)
+
+            # ✅ IMPORTANT: avoid doubled punctuation when phrase already ends with . or ?
+            # If input has punctuation, input punctuation should win.
+            if ph and punct:
+                tr = _strip_trailing_punct(tr)
+
+            out.append(tr)
+            any_exact |= ex
+            any_phrase |= ph
+        else:
+            out.append(seg_text)
+
         out.append(punct)
         out.append(ws)
-        any_exact |= ex
-        any_phrase |= ph
 
-    conn.close()
     return "".join(out), int(any_exact), int(any_phrase)
+
 
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
