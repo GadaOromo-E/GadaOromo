@@ -998,7 +998,6 @@ def detect_direction_auto(text: str) -> str:
 
 # ------------------ TRANSLATION LOGIC ------------------
 
-
 def translate_text(text: str, direction: str = "om_en"):
     t = normalize_text(text)
     if not t:
@@ -1252,6 +1251,23 @@ def apply_grammar_templates(output_text: str, direction: str) -> str:
     return s
 
 
+def try_simple_sov_reorder(text: str, direction: str) -> str:
+    if direction != "en_om":
+        return text
+
+    words = text.split()
+    if len(words) != 3:
+        return text
+
+    subj, verb, obj = words
+
+    # simple Oromo pronoun subjects
+    if subj.casefold() in {"ani", "ati", "inni", "isheen", "nuti", "isin"}:
+        return f"{subj} {obj} {verb}"
+
+    return text
+
+
 # ------------------ LEARN ------------------
 
 @app.route("/learn", methods=["GET"])
@@ -1487,6 +1503,7 @@ _BOUNDARY_RE = re.compile(r"[.!?,;:]")
 def _strip_trailing_punct(s: str) -> str:
     # remove trailing boundary punctuation only (.,!?;:)
     return re.sub(r"[.!?,;:]+$", "", (s or "").strip())
+
 
 def upsert_phrase_aliases(phrase_id: int, english: str, oromo: str, source: str = "auto"):
     """
@@ -1735,7 +1752,7 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
     seg = normalize_text(segment_text)
     if not seg:
         return "", 0, 0
-
+    
     words = seg.split()
     out = []
     i = 0
