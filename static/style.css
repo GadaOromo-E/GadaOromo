@@ -46,6 +46,18 @@ a:hover{ color: var(--redHover); }
   color: #fff;
   padding: 14px 0;
   border-bottom: 3px solid var(--red);
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.copyright-mini {
+  font-size: 12px;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
 }
 
 .title-row{
