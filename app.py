@@ -1266,6 +1266,19 @@ def try_simple_sov_reorder(text: str, direction: str) -> str:
         return f"{subj} {obj} {verb}"
 
     return text
+EN_OM_TEMPLATES = [
+    # can you (please) show me the way
+    (
+        re.compile(r"^(please\s+)?can\s+you\s+show\s+me\s+the\s+way\??$", re.I),
+        "Karaa natti agarsiisuu dandeessaa?"
+    ),
+
+    (
+        re.compile(r"^(please\s+)?can\s+you\s+show\s+me\s+the\s+way\?$", re.I),
+        "Karaa natti agarsiisuu dandeessaa?"
+    ),
+]
+
 
 
 # ------------------ LEARN ------------------
@@ -1752,6 +1765,13 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
     seg = normalize_text(segment_text)
     if not seg:
         return "", 0, 0
+
+    # ✅ Grammar template check FIRST
+    if direction == "en_om":
+        for pattern, replacement in EN_OM_TEMPLATES:
+            if pattern.match(seg):
+                return replacement, 1, 1
+
     
     words = seg.split()
     out = []
@@ -1805,6 +1825,7 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
     result = " ".join(out)
     result = postprocess_segment(result, direction)
     return result, int(any_exact), int(any_phrase)
+
 
 
 # ------------------ PUBLIC SUBMISSION (WORDS) ------------------
