@@ -713,6 +713,9 @@ def init_db():
 
     conn.commit()
     conn.close()
+    
+def _strip_edge_punct(s: str) -> str:
+    return re.sub(r"^[\s\"'“”‘’`]+|[.!?,;:\s\"'“”‘’`]+$", "", s or "").strip()
 
 
 def ensure_key_columns():
@@ -732,23 +735,32 @@ def ensure_key_columns():
     conn.commit()
     conn.close()
 
-
 def backfill_keys():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
+    # words
     c.execute("SELECT id, english, oromo FROM words")
     for wid, en, om in c.fetchall():
+        en_norm = normalize_text(en or "")
+        om_norm = normalize_text(om or "")
+        en_key = make_search_key(_strip_edge_punct(en_norm))
+        om_key = make_search_key(_strip_edge_punct(om_norm))
         c.execute(
             "UPDATE words SET english_key=?, oromo_key=? WHERE id=?",
-            (make_search_key(en or ""), make_search_key(om or ""), wid)
+            (en_key, om_key, wid)
         )
 
+    # phrases
     c.execute("SELECT id, english, oromo FROM phrases")
     for pid, en, om in c.fetchall():
+        en_norm = normalize_text(en or "")
+        om_norm = normalize_text(om or "")
+        en_key = make_search_key(_strip_edge_punct(en_norm))
+        om_key = make_search_key(_strip_edge_punct(om_norm))
         c.execute(
             "UPDATE phrases SET english_key=?, oromo_key=? WHERE id=?",
-            (make_search_key(en or ""), make_search_key(om or ""), pid)
+            (en_key, om_key, pid)
         )
 
     conn.commit()
@@ -921,7 +933,7 @@ def detect_direction_auto(text: str) -> str:
     if not filtered:
         filtered = tokens
 
-    full_key = make_search_key(t)
+    full_key = make_search_key(_strip_edge_punct(t))
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -960,9 +972,6 @@ def detect_direction_auto(text: str) -> str:
 
 # ------------------ TRANSLATION LOGIC ------------------
 
-def _strip_edge_punct(s: str) -> str:
-    # removes punctuation at start/end only, keeps inner punctuation
-    return re.sub(r"^[\s\"'“”‘’`]+|[.!?,;:\s\"'“”‘’`]+$", "", s or "").strip()
 
 def translate_text(text: str, direction: str = "om_en"):
     t = normalize_text(text)
@@ -1269,79 +1278,180 @@ def translate():
 
 # ------------------ MULTI-SENTENCE TRANSLATION ------------------
 
+_WORDLIKE_RE = re.compile(r"[\w']+", re.UNICODE)
+_TOKEN_RE = re.compile(r"\s+|[^\w\s]+|[\w']+", re.UNICODE)
 _BOUNDARY_RE = re.compile(r"[.!?,;:]")
 
-def split_segments(text: str):
-    """
-    Returns list of tuples:
-      (segment_text, punctuation, trailing_whitespace)
+def key_for(text: str) -> str:
+    return make_search_key(_strip_edge_punct(normalize_text(text)))
 
-    Preserves original punctuation and spacing.
-    """
+def split_segments(text: str):
+    """Return list of (segment_text, punctuation, trailing_ws)."""
     t = normalize_text(text)
     if not t:
         return []
 
-    segments = []
-    buf = []
-    i = 0
-    n = len(t)
+    out, buf = [], []
+    i, n = 0, len(t)
 
     while i < n:
         ch = t[i]
-
         if _BOUNDARY_RE.match(ch):
-            # flush text before punctuation
-            seg = "".join(buf).strip()
+            seg = "".join(buf)
             buf = []
 
-            # collect punctuation run
             punct = []
             while i < n and _BOUNDARY_RE.match(t[i]):
-                punct.append(t[i])
-                i += 1
+                punct.append(t[i]); i += 1
 
-            # collect whitespace after punctuation
             ws = []
             while i < n and t[i].isspace():
-                ws.append(t[i])
-                i += 1
+                ws.append(t[i]); i += 1
 
-            segments.append((seg, "".join(punct), "".join(ws)))
+            out.append((seg, "".join(punct), "".join(ws)))
+        else:
+            buf.append(ch); i += 1
+
+    tail = "".join(buf)
+    if tail.strip():
+        out.append((tail, "", ""))
+
+    return out
+
+def _phrase_lookup(cur, direction: str, k: str):
+    if direction == "om_en":
+        row = cur.execute(
+            "SELECT english FROM phrases WHERE status='approved' AND oromo_key=? LIMIT 1",
+            (k,)
+        ).fetchone()
+    else:
+        row = cur.execute(
+            "SELECT oromo FROM phrases WHERE status='approved' AND english_key=? LIMIT 1",
+            (k,)
+        ).fetchone()
+    return row[0] if row else None
+
+def _word_lookup(cur, direction: str, k: str):
+    if direction == "om_en":
+        row = cur.execute(
+            "SELECT english FROM words WHERE status='approved' AND oromo_key=? LIMIT 1",
+            (k,)
+        ).fetchone()
+    else:
+        row = cur.execute(
+            "SELECT oromo FROM words WHERE status='approved' AND english_key=? LIMIT 1",
+            (k,)
+        ).fetchone()
+    return row[0] if row else None
+
+def translate_segment_best(segment_text: str, direction: str, cur, max_phrase_words: int = 12):
+    """
+    Translate one segment using longest-phrase-first over word positions.
+    Preserves original spacing/punctuation inside the segment.
+    """
+    if not segment_text or not segment_text.strip():
+        return "", 0, 0
+
+    # Tokenize into pieces but we also need a word list for phrase scanning
+    tokens = _TOKEN_RE.findall(segment_text)
+
+    # Build mapping from "word index" to token positions
+    word_positions = []  # list of (token_idx, word_text)
+    for ti, tok in enumerate(tokens):
+        if _WORDLIKE_RE.fullmatch(tok):
+            word_positions.append((ti, tok))
+
+    # If no words, return as-is
+    if not word_positions:
+        return segment_text, 0, 0
+
+    # Convenience: list of word strings (in order)
+    words = [w for _, w in word_positions]
+    n_words = len(words)
+
+    out_tokens = tokens[:]  # we'll replace words/phrases in place
+    consumed_word = [False] * n_words
+    any_exact = 0
+    any_phrase = 0
+
+    i = 0
+    while i < n_words:
+        if consumed_word[i]:
+            i += 1
             continue
 
-        else:
-            buf.append(ch)
-            i += 1
+        # Try longest phrase starting at i
+        found_translation = None
+        found_len = 0
 
-    # tail
-    tail = "".join(buf).strip()
-    if tail:
-        segments.append((tail, "", ""))
+        max_len = min(max_phrase_words, n_words - i)
+        for L in range(max_len, 1, -1):  # phrases of length >= 2
+            phrase_text = " ".join(words[i:i+L])
+            k = key_for(phrase_text)
+            if not k:
+                continue
+            tr = _phrase_lookup(cur, direction, k)
+            if tr:
+                found_translation = tr
+                found_len = L
+                break
 
-    return segments
+        if found_translation:
+            any_exact = 1
+            any_phrase = 1
+
+            # Replace the first word token with translation, blank out the rest words in phrase
+            first_token_idx = word_positions[i][0]
+            out_tokens[first_token_idx] = found_translation
+
+            # Blank out the remaining word tokens and any immediate punctuation attached between them
+            for j in range(i, i + found_len):
+                consumed_word[j] = True
+                if j == i:
+                    continue
+                tok_idx = word_positions[j][0]
+                out_tokens[tok_idx] = ""  # remove word itself
+
+            i += found_len
+            continue
+
+        # No phrase found => translate single word
+        w = words[i]
+        k = key_for(w)
+        tr = _word_lookup(cur, direction, k) if k else None
+        if tr:
+            any_exact = 1
+            out_tokens[word_positions[i][0]] = tr
+        # else keep original word
+        consumed_word[i] = True
+        i += 1
+
+    # Join, then clean extra spaces caused by removed tokens (keep user punctuation)
+    result = "".join(out_tokens)
+    result = re.sub(r"\s+", " ", result).strip()
+    return result, any_exact, any_phrase
 
 def translate_multipart_text(text: str, direction: str):
     parts = split_segments(text)
     if not parts:
         return "", 0, 0
 
+    conn = sqlite3.connect(DB_NAME)
+    cur = conn.cursor()
+
     out = []
     any_exact = 0
     any_phrase = 0
 
-    for seg_text, punct, ws in parts:
-        if seg_text:
-            tr, ex, ph = translate_text(seg_text, direction)
-            out.append(tr)
-            any_exact |= ex
-            any_phrase |= ph
-        else:
-            out.append(seg_text)
-
+    for seg, punct, ws in parts:
+        tr, ex, ph = translate_segment_best(seg, direction, cur)
+        out.append(tr)
         out.append(punct)
         out.append(ws)
+        any_exact |= ex
+        any_phrase |= ph
 
+    conn.close()
     return "".join(out), int(any_exact), int(any_phrase)
 
 
@@ -1454,6 +1564,7 @@ def submit():
             return render_template("submit.html", msg=msg)
         
          # insert original + key
+         
         c.execute(
             "INSERT INTO words (english, oromo,english_key, oromo_key, status) VALUES (?, ?, ?, ?, 'pending')",
             (english_raw, oromo_raw, english_key, oromo_key),
