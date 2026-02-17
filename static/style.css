@@ -554,5 +554,61 @@ html, body{
 .nav{
   top:64px; /* match compact header */
 }
+/* ===== LEFT SIDEBAR NAV (DESKTOP) ===== */
+@media (min-width: 1000px){
+  .container{
+    max-width: 1300px;
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    gap: 18px;
+    align-items: start;
+  }
 
+  .topbar{
+    grid-column: 1 / -1;
+  }
+
+  .nav{
+    grid-column: 1;
+    position: sticky;
+    top: 70px;
+    height: calc(100vh - 90px);
+    overflow-y: auto;
+
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    padding: 12px;
+    margin: 0;
+
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .nav-link{
+    width: 100%;
+    text-align: left;
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+
+  .container > .card,
+  .container > section.card,
+  .container > footer.footer{
+    grid-column: 2;
+  }
 }
+
+/* ===== MOBILE: keep horizontal ===== */
+@media (max-width: 999px){
+  .container{ display:block; }
+  .nav{
+    display:flex;
+    flex-direction: row;
+    overflow-x: auto;
+    padding: 12px 0;
+  }
+}
+
