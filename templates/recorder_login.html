@@ -20,24 +20,26 @@
   </div>
 <header class="topbar">
   <div class="brand">
-    <h1>🎙 Recorder Login</h1>
+    <h1>{{ APP_NAME }} — 🎙 Recorder</h1>
     <p class="tagline">Private access for live audio recording</p>
   </div>
+
+  <div class="mini-copy">
+    <span class="copy-year">© 2026</span>
+    <span class="copy-name">Gadaa</span>
+  </div>
+
+  <div class="small-actions">
+    <a class="btn" href="/">🏠 Home</a>
+
+    {% if session.get("recorder_logged_in") %}
+      <a class="btn" href="/recorder/dashboard">Dashboard</a>
+      <a class="btn danger" href="/recorder/logout">Logout</a>
+    {% else %}
+      <a class="btn primary" href="/recorder">Login</a>
+    {% endif %}
+  </div>
 </header>
-
-<nav class="nav">
-  <a class="nav-link" href="/">Home</a>
-  <a class="nav-link" href="/translate">Translate</a>
-  <a class="nav-link" href="/submit">Submit Word</a>
-  <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
-  <a class="nav-link" href="/recorder">Add Voice</a>
-  <a class="nav-link" href="/learn">Learn</a>
-  <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
-  <a class="nav-link" href="/support">Donate</a>
-  <a class="nav-link" href="/admin">Admin login</a>
-</nav>
-
-<div class="card">
 
   <div class="card">
     {% if msg %}
