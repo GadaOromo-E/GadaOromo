@@ -500,20 +500,5 @@ a:active, button:active, .chip:active {
     transition: none !important;
     animation: none !important;
   }
-/* ===============================
-   Recorder pages: disable sidebar grid
-   =============================== */
-@media (min-width: 1000px){
-  .container.no-sidebar{
-    display: block !important;
-    max-width: 980px;
-  }
-
-  .container.no-sidebar > .card,
-  .container.no-sidebar > section.card,
-  .container.no-sidebar > footer.footer{
-    grid-column: auto !important;
-  }
 }
 
-}

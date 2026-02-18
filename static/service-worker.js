@@ -1,5 +1,5 @@
 /* static/service-worker.js */
-const CACHE_NAME = "gada-v6";
+const CACHE_NAME = "gada-v7"; // bump on deploy
 
 const CORE_ASSETS = [
   "/",
@@ -26,7 +26,7 @@ self.addEventListener("install", (event) => {
     caches.open(CACHE_NAME).then(async (cache) => {
       await cache.addAll(CORE_ASSETS);
 
-      // Notify pages that offline cache is ready
+      // tell open pages offline is ready
       const clients = await self.clients.matchAll({ type: "window" });
       clients.forEach((c) => c.postMessage({ type: "OFFLINE_READY" }));
     })
@@ -43,42 +43,23 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
-if (event.request.method !== "GET") return;
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
-  // ✅ NEVER intercept POST/PUT/DELETE (fix upload stuck)
+  // ✅ don't touch non-GET (uploads, forms, login)
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
 
-  // only same-origin caching
+  // ✅ only same origin
   if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      return (
-        cached ||
-        fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open("static-v1").then((cache) => cache.put(req, copy));
-          return res;
-        })
-      );
-    })
-  );
-});
-
-
-  // Only same-origin
-  if (url.origin !== self.location.origin) return;
-
-  // ✅ Never cache / intercept any API routes (public + recorder)
+  // ✅ never intercept API calls
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/recorder/api/")) {
     return;
   }
 
-  // HTML navigation: network-first
+  // ✅ navigation pages: network-first (prevents old layouts), fallback cache/offline
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -95,8 +76,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Static assets: cache-first
-  if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
+  // ✅ static assets: cache-first, then network, store in SAME cache
+  const isStatic =
+    url.pathname.startsWith("/static/") ||
+    url.pathname === "/manifest.webmanifest" ||
+    url.pathname.startsWith("/static/icons/");
+
+  if (isStatic) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;
@@ -110,8 +96,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Default: network-first fallback cache
-  event.respondWith(fetch(req).catch(() => caches.match(req)));
+  // ✅ everything else GET: cache-first, then network (your original “fast feel”)
+  event.respondWith(
+    caches.match(req).then((cached) => {
+      if (cached) return cached;
+
+      return fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        return res;
+      });
+    })
+  );
 });
 
 self.addEventListener("message", (event) => {
@@ -119,5 +115,3 @@ self.addEventListener("message", (event) => {
     self.skipWaiting();
   }
 });
-
-
