@@ -1,504 +1,518 @@
-* { margin: 0; padding: 0; box-sizing: border-box; font-family: Arial, sans-serif; }
+/* static/style.css — CLEAN (no broken braces) */
+
+/* Reset */
+*{ margin:0; padding:0; box-sizing:border-box; font-family: Arial, sans-serif; }
 
 :root{
-  --bg: #ffffff;
-  --text: #111111;
-  --muted: rgba(17,17,17,0.70);
+  /* Base */
+  --bg:#ffffff;
+  --text:#111111;
+  --muted:rgba(17,17,17,0.70);
 
-  --black: #0b0b0b;
-  --red: #b30000;
-  --redHover: #8f0000;
+  /* Brand */
+  --black:#0b0b0b;
+  --red:#b30000;
+  --redHover:#8f0000;
 
-  --card: #ffffff;
-  --card2: #fafafa;
-  --border: rgba(0,0,0,0.12);
-  --shadow: 0 10px 24px rgba(0,0,0,0.08);
+  /* Surfaces */
+  --card:#ffffff;
+  --card2:#fafafa;
+  --border:rgba(0,0,0,0.12);
+  --shadow:0 10px 24px rgba(0,0,0,0.08);
 
-  --radius: 16px;
-  --radiusSm: 12px;
-
-  --sidebarW: 260px;
-  --gap: 18px;
+  --radius:16px;
+  --radiusSm:12px;
 }
 
-html, body{ overflow-x: hidden; }
+html, body{ overflow-x:hidden; }
 
 body{
-  background: var(--bg);
-  color: var(--text);
+  background:var(--bg);
+  color:var(--text);
 }
 
 /* Links */
-a{ color: var(--red); text-decoration: none; }
-a:hover{ color: var(--redHover); }
+a{ color:var(--red); text-decoration:none; }
+a:hover{ color:var(--redHover); }
 
-/* =========================================
-   LAYOUT
-========================================= */
+/* Layout */
 .container{
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 14px;
+  max-width:980px;
+  margin:0 auto;
+  padding:14px;
 }
 
-/* =========================================
-   TOPBAR (compact, full width, red line)
+/* =======================================================
+   TOPBAR (compact, edge-to-edge, red bottom line)
    Works with:
    <header class="topbar">
      <div class="brand">...</div>
      <div class="mini-copy">...</div>
-     <div class="small-actions">...</div>  (optional)
+     <div class="small-actions">...</div>  (shown on mobile, hidden on desktop)
    </header>
-========================================= */
+======================================================= */
 .topbar{
-  position: sticky;
-  top: 0;
-  z-index: 60;
+  position:sticky;
+  top:0;
+  z-index:60;
 
-  /* Full width (edge-to-edge) */
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
+  /* edge-to-edge */
+  margin-left:calc(50% - 50vw);
+  margin-right:calc(50% - 50vw);
 
-  background: var(--black);
-  color: #fff;
+  background:var(--black);
+  color:#fff;
 
-  /* compact height */
-  padding: 12px 18px 10px 18px;
+  padding:12px 18px 10px 18px;
 
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
 
-  position: sticky;
+  position:sticky; /* keep as sticky */
 }
 
 .topbar::after{
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--red);
+  content:"";
+  position:absolute;
+  left:0; right:0; bottom:0;
+  height:3px;
+  background:var(--red);
 }
 
-/* Left title block */
 .brand h1{
-  margin: 0;
-  font-size: 34px;
-  line-height: 1.05;
-  font-weight: 800;
-  color: #fff;
+  margin:0;
+  font-size:34px;
+  line-height:1.05;
+  font-weight:800;
+  color:#fff;
+  letter-spacing:.2px;
 }
 
 .tagline{
-  margin-top: 4px;
-  font-size: 14px;
-  color: rgba(255,255,255,0.75);
+  margin-top:4px;
+  font-size:14px;
+  color:rgba(255,255,255,0.75);
 }
 
-/* Right copyright */
 .mini-copy{
-  font-size: 12px;
-  white-space: nowrap;
-  margin-top: 2px;
-  font-weight: 600;
-  letter-spacing: .6px;
+  font-size:12px;
+  margin-top:2px;
+  white-space:nowrap;
+  font-weight:600;
+  letter-spacing:.6px;
 }
+.copy-year{ color:var(--red); }
+.copy-name{ color:#fff; }
 
-.copy-year{ color: var(--red); }
-.copy-name{ color: #fff; }
-
-/* Header buttons row (if you use it) */
+/* Header action buttons (useful on mobile) */
 .small-actions{
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  width:100%;
+  display:flex;
+  gap:10px;
+  margin-top:10px;
+  flex-wrap:wrap;
 }
+.small-actions > *{ flex:1; }
 
-/* Make buttons in header not stretch weird */
-.small-actions .btn,
-.small-actions button{
-  width: auto;
-}
-
-/* Mobile header wraps nicely */
+/* Mobile header wrap */
 @media (max-width: 640px){
-  .topbar{
-    flex-direction: column;
-    align-items: flex-start;
-  }
+  .topbar{ flex-direction:column; align-items:flex-start; }
+  .small-actions > *{ flex:unset; }
 }
 
 /* Helpers */
-.subtle{ color: var(--muted); font-size: 0.95rem; }
-.muted{ color: var(--muted); }
+.subtle{ color:var(--muted); font-size:0.95rem; }
+.muted{ color:var(--muted); }
 
-/* =========================================
-   NAV
-   - Mobile: horizontal pills
-   - Desktop: LEFT vertical sidebar
-========================================= */
+/* =======================================================
+   NAV (mobile: horizontal pills; desktop: vertical sidebar)
+======================================================= */
 .nav{
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding: 12px 0;
+  display:flex;
+  gap:10px;
+  overflow-x:auto;
+  padding:12px 0;
 
-  position: sticky;
-  top: 64px;           /* matches compact header */
-  z-index: 55;
+  position:sticky;
+  top:64px; /* matches compact header */
+  z-index:55;
 
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
+  background:var(--bg);
+  border-bottom:1px solid var(--border);
 }
 
 .nav-link{
-  white-space: nowrap;
-  padding: 10px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--black);
-  font-weight: 700;
-  font-size: 0.95rem;
-  background: #fff;
+  white-space:nowrap;
+  padding:10px 12px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  color:var(--black);
+  font-weight:700;
+  font-size:0.95rem;
+  background:#fff;
 }
 
 .nav-link:hover{
-  border-color: rgba(179,0,0,0.35);
-  color: var(--red);
+  border-color:rgba(179,0,0,0.35);
+  color:var(--red);
 }
 
-/* =========================================
-   DESKTOP SIDEBAR MODE
-   Important: this works when your pages INCLUDE <nav class="nav">.
-========================================= */
-@media (min-width: 1000px){
-  .container{
-    max-width: 1300px;
-    margin: 0 auto;
-    padding: 18px;
-
-    display: grid;
-    grid-template-columns: var(--sidebarW) 1fr;
-    gap: var(--gap);
-    align-items: start;
-  }
-
-  /* Header spans full width */
-  .container > .topbar{
-    grid-column: 1 / -1;
-  }
-
-  /* Sidebar */
-  .container > .nav{
-    grid-column: 1;
-    align-self: start;
-
-    position: sticky;
-    top: 78px; /* below header */
-    height: calc(100vh - 92px);
-    overflow-y: auto;
-
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-
-    padding: 12px;
-    margin: 0;
-
-    background: #fff;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-  }
-
-  .container > .nav .nav-link{
-    width: 100%;
-    text-align: left;
-    border-radius: 12px;
-    padding: 12px 14px;
-  }
-
-  /* All content goes to the right column */
-  .container > .card,
-  .container > section.card,
-  .container > main,
-  .container > footer.footer{
-    grid-column: 2;
-  }
-}
-
-/* =========================================
-   CARDS / HEADERS
-========================================= */
+/* Cards */
 .card{
-  margin-top: 14px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 14px;
-  box-shadow: var(--shadow);
+  margin-top:14px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding:14px;
+  box-shadow:var(--shadow);
 }
 
-h2{ margin: 0 0 10px; font-size: 1.15rem; color: var(--black); }
-h3{ margin: 0 0 10px; font-size: 1.05rem; color: var(--black); }
+h2{ margin:0 0 10px; font-size:1.15rem; color:var(--black); }
+h1, h3{ color:var(--black); }
+h3{ margin:0 0 10px; font-size:1.05rem; }
 
-/* =========================================
-   FORMS
-========================================= */
-input, select, textarea, button { width: 100%; font-size: 1rem; box-sizing: border-box; }
+/* Forms */
+input, select, textarea, button{
+  width:100%;
+  font-size:1rem;
+  box-sizing:border-box;
+}
 
 input, select, textarea{
-  background: var(--card2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: var(--radiusSm);
-  padding: 12px;
-  outline: none;
+  background:var(--card2);
+  border:1px solid var(--border);
+  color:var(--text);
+  border-radius:var(--radiusSm);
+  padding:12px;
+  outline:none;
 }
 
 input:focus, select:focus, textarea:focus{
-  border-color: rgba(179,0,0,0.45);
-  box-shadow: 0 0 0 3px rgba(179,0,0,0.12);
+  border-color:rgba(179,0,0,0.45);
+  box-shadow:0 0 0 3px rgba(179,0,0,0.12);
 }
 
 textarea{
-  min-height: 120px;
-  resize: vertical;
-  line-height: 1.35;
+  min-height:120px;
+  resize:vertical;
+  line-height:1.35;
 }
 
-/* =========================================
-   BUTTONS
-========================================= */
+/* Buttons */
 button{
-  padding: 12px 14px;
-  border-radius: var(--radiusSm);
-  border: none;
-  cursor: pointer;
-  background: var(--red);
-  color: #fff;
-  font-weight: 800;
+  padding:12px 14px;
+  border-radius:var(--radiusSm);
+  border:none;
+  cursor:pointer;
+  background:var(--red);
+  color:#fff;
+  font-weight:800;
 }
-
-button:hover{ background: var(--redHover); }
+button:hover{ background:var(--redHover); }
 
 button:disabled,
 .btn[aria-disabled="true"]{
-  opacity: 0.60;
-  cursor: not-allowed;
+  opacity:.60;
+  cursor:not-allowed;
 }
 
+/* Link-buttons */
 .btn{
   display:inline-block;
-  padding: 12px 14px;
-  border-radius: var(--radiusSm);
-  border: 1px solid var(--border);
-  background: #fff;
-  color: var(--black);
-  font-weight: 800;
+  padding:12px 14px;
+  border-radius:var(--radiusSm);
+  border:1px solid var(--border);
+  background:#fff;
+  color:var(--black);
+  text-decoration:none;
+  font-weight:800;
   text-align:center;
 }
-
 .btn:hover{
-  border-color: rgba(179,0,0,0.30);
-  color: var(--red);
+  border-color:rgba(179,0,0,0.30);
+  color:var(--red);
 }
 
 .btn.primary{
-  background: var(--red);
-  color: #fff;
-  border-color: rgba(179,0,0,0.25);
+  background:var(--red);
+  color:#fff;
+  border-color:rgba(179,0,0,0.25);
 }
-.btn.primary:hover{ background: var(--redHover); color:#fff; }
+.btn.primary:hover{ background:var(--redHover); color:#fff; }
 
 .btn.danger, .danger{
-  background: #fff;
-  color: var(--black);
-  border: 1px solid rgba(0,0,0,0.18);
+  background:#fff;
+  color:var(--black);
+  border:1px solid rgba(0,0,0,0.18);
 }
-.btn.danger:hover{ border-color: rgba(179,0,0,0.35); color: var(--red); }
+.btn.danger:hover{
+  border-color:rgba(179,0,0,0.35);
+  color:var(--red);
+}
 
-/* =========================================
-   HELPERS
-========================================= */
-.row{ display:flex; gap: 10px; align-items:center; }
-.row > *{ flex: 1; }
+/* Helpers */
+.row{ display:flex; gap:10px; align-items:center; }
+.row > *{ flex:1; }
 
 .quick-actions{
   display:flex;
   flex-wrap:wrap;
-  gap: 10px;
-  margin-top: 12px;
+  gap:10px;
+  margin-top:12px;
 }
 
-.small-actions{
-  display:flex;
-  flex-wrap:wrap;
-  gap: 10px;
-}
-
-.bottom-bar{
-  position: sticky;
-  bottom: 0;
-  z-index: 60;
-  margin-top: 12px;
-  padding: 10px;
-  border-radius: var(--radius);
-  background: #fff;
-  border: 1px solid var(--border);
-  box-shadow: 0 -10px 24px rgba(0,0,0,0.06);
-}
-.bottom-actions{ display:flex; gap: 10px; }
-.bottom-actions > *{ flex: 1; }
-
-/* =========================================
-   RESULT BOX
-========================================= */
+/* Result box */
 .result-box{
-  margin-top: 12px;
-  padding: 14px;
-  border-radius: var(--radius);
-  border-left: 4px solid var(--red);
-  background: #fff;
-  border: 1px solid var(--border);
+  margin-top:12px;
+  padding:14px;
+  border-radius:var(--radius);
+  border-left:4px solid var(--red);
+  background:#fff;
+  border:1px solid var(--border);
 }
 
-/* =========================================
-   CHIPS
-========================================= */
-.chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top: 10px; }
+/* Chips */
+.chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
 .chip{
   display:inline-block;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: #fff;
-  color: var(--black);
+  padding:8px 10px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  background:#fff;
+  color:var(--black);
   cursor:pointer;
   user-select:none;
 }
 .chip:hover{
-  border-color: rgba(179,0,0,0.35);
-  color: var(--red);
+  border-color:rgba(179,0,0,0.35);
+  color:var(--red);
 }
 
-/* =========================================
-   WORD LIST
-========================================= */
-.word-list{ margin-top: 10px; display:flex; flex-direction:column; gap: 8px; }
+/* Word list */
+.word-list{ margin-top:10px; display:flex; flex-direction:column; gap:8px; }
 .word-row{
   display:flex;
   align-items:center;
   justify-content:space-between;
-  gap: 10px;
-  padding: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border);
-  background: #fff;
+  gap:10px;
+  padding:12px;
+  border-radius:var(--radius);
+  border:1px solid var(--border);
+  background:#fff;
 }
+
 .word-row button,
-.word-row .btn{ width: auto; }
+.word-row .btn{ width:auto; }
 
-/* =========================================
-   FILE INPUT / CODE
-========================================= */
-input[type="file"]{
-  background: #fff;
-  border: 1px dashed rgba(0,0,0,0.22);
-  border-radius: var(--radiusSm);
-  padding: 12px;
+/* Bottom bar (translator) */
+.bottom-bar{
+  position:sticky;
+  bottom:0;
+  z-index:60;
+  margin-top:12px;
+  padding:10px;
+  border-radius:var(--radius);
+  background:#fff;
+  border:1px solid var(--border);
+  box-shadow:0 -10px 24px rgba(0,0,0,0.06);
+}
+.bottom-actions{ display:flex; gap:10px; }
+.bottom-actions > *{ flex:1; }
+
+/* Admin/other grids */
+.grid{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:12px;
+  margin-top:12px;
+}
+@media (min-width: 860px){
+  .grid{ grid-template-columns:1fr 1fr; }
 }
 
-code{
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 10px;
-  background: #fff;
-  border: 1px solid rgba(0,0,0,0.12);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.92rem;
-  margin-top: 4px;
+/* Footer */
+.footer{
+  margin-top:18px;
+  text-align:center;
+  color:rgba(0,0,0,0.55);
+  padding:18px 0;
+  font-size:14px;
 }
 
+/* Divider */
 .divider{
-  height: 1px;
-  background: rgba(0,0,0,0.10);
-  margin: 14px 0;
+  height:1px;
+  background:rgba(0,0,0,0.10);
+  margin:14px 0;
 }
 
-/* =========================================
-   AUDIO + STATUS
-========================================= */
-audio{
-  width: 100%;
-  margin-top: 6px;
+/* File input */
+input[type="file"]{
+  background:#fff;
+  border:1px dashed rgba(0,0,0,0.22);
+  border-radius:var(--radiusSm);
+  padding:12px;
 }
+
+/* Code */
+code{
+  display:inline-block;
+  padding:4px 8px;
+  border-radius:10px;
+  background:#fff;
+  border:1px solid rgba(0,0,0,0.12);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size:0.92rem;
+  margin-top:4px;
+}
+
+/* Recorder UI */
+.trim{
+  padding:12px;
+  border-radius:var(--radius);
+  border:1px solid var(--border);
+  background:var(--card2);
+}
+.trim label{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-weight:700;
+  margin-right:10px;
+}
+.trim input[type="number"]{
+  width:110px;
+  padding:10px;
+  border-radius:12px;
+  background:#fff;
+}
+
+audio{ width:100%; margin-top:6px; }
 
 [data-status-for]{
-  min-height: 18px;
-  display: inline-block;
+  min-height:18px;
+  display:inline-block;
 }
 
-/* Recording state (JS uses .danger sometimes) */
+/* Recording state */
 button.danger{
-  border: 1px solid rgba(179,0,0,0.35);
-  background: #fff;
-  color: var(--red);
+  border:1px solid rgba(179,0,0,0.35);
+  background:#fff;
+  color:var(--red);
 }
 button.danger:hover{
-  background: #fff;
-  color: var(--redHover);
-  border-color: rgba(179,0,0,0.55);
+  background:#fff;
+  color:var(--redHover);
+  border-color:rgba(179,0,0,0.55);
 }
 
-/* =========================================
-   FOOTER
-========================================= */
-.footer{
-  margin-top: 18px;
-  text-align:center;
-  color: rgba(0,0,0,0.55);
-  padding: 18px 0;
-  font-size: 14px;
-}
-
-/* =========================================
-   MOBILE STACKING
-========================================= */
+/* Mobile tweaks */
 @media (max-width: 560px){
-  .row{ flex-direction: column; align-items: stretch; }
+  .row{ flex-direction:column; align-items:stretch; }
+  .trim label{ display:flex; margin-top:8px; }
+  .trim input[type="number"]{ width:100%; }
 }
 
-/* =========================================
-   SMALL ANIMATIONS (safe)
-========================================= */
-a, button, .chip {
-  transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
-}
+/* =======================================================
+   DESKTOP LEFT SIDEBAR LAYOUT (works with: header + nav + main)
+======================================================= */
+@media (min-width: 1000px){
+  .container{
+    max-width:1300px;
+    display:grid;
+    grid-template-columns:260px 1fr;
+    grid-template-rows:auto 1fr;
+    gap:18px;
+    align-items:start;
+  }
 
-a:active, button:active, .chip:active {
-  transform: scale(0.98);
-  opacity: 0.92;
-}
+  .topbar{ grid-column:1 / -1; }
 
-.card {
-  animation: fadeUp 180ms ease;
-}
+  /* Hide header buttons on desktop (sidebar is the menu) */
+  .topbar .small-actions{ display:none !important; }
 
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+  /* Vertical sidebar */
+  .nav{
+    grid-column:1;
+    grid-row:2;
 
-/* Reduce motion */
-@media (prefers-reduced-motion: reduce) {
-  a, button, .chip, .card {
-    transition: none !important;
-    animation: none !important;
+    position:sticky;
+    top:70px;
+    height:calc(100vh - 90px);
+    overflow-y:auto;
+
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+
+    padding:12px;
+    margin:0;
+
+    background:#fff;
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+  }
+
+  .nav-link{
+    width:100%;
+    text-align:left;
+    border-radius:12px;
+    padding:12px 14px;
+  }
+
+  /* Right side content wrapper */
+  .main{
+    grid-column:2;
+    grid-row:2;
+    min-width:0;
+  }
+
+  /* Safety: if some pages still have direct cards (no <main>) */
+  .container > .card,
+  .container > section.card,
+  .container > footer.footer{
+    grid-column:2;
+    grid-row:2;
   }
 }
 
+/* =======================================================
+   Mobile nav stays horizontal
+======================================================= */
+@media (max-width: 999px){
+  .container{ display:block; }
+  .nav{
+    display:flex;
+    flex-direction:row;
+    overflow-x:auto;
+    padding:12px 0;
+  }
+}
+
+/* =======================================================
+   Native-like transitions + reduce motion
+======================================================= */
+a, button, .chip{
+  transition: transform 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+}
+
+a:active, button:active, .chip:active{
+  transform:scale(0.98);
+  opacity:0.92;
+}
+
+.card{ animation: fadeUp 180ms ease; }
+
+@keyframes fadeUp{
+  from{ opacity:0; transform:translateY(6px); }
+  to{ opacity:1; transform:translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce){
+  a, button, .chip, .card{
+    transition:none !important;
+    animation:none !important;
+  }
+}
