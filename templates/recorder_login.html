@@ -27,10 +27,7 @@
   <div class="mini-copy">
     <span class="copy-year">© 2026</span>
     <span class="copy-name">Gadaa</span>
-  </div>
-
-  <div class="small-actions">
-    <a class="btn" href="/">🏠 Home</a>
+    </div>
 
     {% if session.get("recorder_logged_in") %}
       <a class="btn" href="/recorder/dashboard">Dashboard</a>
@@ -39,7 +36,6 @@
       <a class="btn primary" href="/recorder">Login</a>
     {% endif %}
   </div>
-</header>
 
   <div class="card">
     {% if msg %}
