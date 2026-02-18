@@ -17,17 +17,13 @@
       </div>
       <a class="btn" href="/">⬅ Home</a>
     </div>
+
   </div>
 <header class="topbar">
   <div class="brand">
     <h1>{{ APP_NAME }} — 🎙 Recorder</h1>
     <p class="tagline">Private access for live audio recording</p>
   </div>
-
-  <div class="mini-copy">
-    <span class="copy-year">© 2026</span>
-    <span class="copy-name">Gadaa</span>
-    </div>
 
     {% if session.get("recorder_logged_in") %}
       <a class="btn" href="/recorder/dashboard">Dashboard</a>
