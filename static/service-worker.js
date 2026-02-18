@@ -1,5 +1,5 @@
 /* static/service-worker.js */
-const CACHE_NAME = "gada-v7"; // bump on deploy
+const CACHE_NAME = "gada-v8";
 
 const CORE_ASSETS = [
   "/",
@@ -7,12 +7,10 @@ const CORE_ASSETS = [
   "/learn",
   "/support",
   "/offline",
-
   "/static/style.css",
   "/static/pwa-ui.js",
   "/static/audio.js",
   "/static/recorder.js",
-
   "/manifest.webmanifest",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
@@ -23,13 +21,7 @@ const CORE_ASSETS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(CORE_ASSETS);
-
-      // tell open pages offline is ready
-      const clients = await self.clients.matchAll({ type: "window" });
-      clients.forEach((c) => c.postMessage({ type: "OFFLINE_READY" }));
-    })
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
   );
   self.skipWaiting();
 });
@@ -46,20 +38,16 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
-  // ✅ don't touch non-GET (uploads, forms, login)
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
 
-  // ✅ only same origin
   if (url.origin !== self.location.origin) return;
 
-  // ✅ never intercept API calls
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/recorder/api/")) {
     return;
   }
 
-  // ✅ navigation pages: network-first (prevents old layouts), fallback cache/offline
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -68,39 +56,14 @@ self.addEventListener("fetch", (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
           return res;
         })
-        .catch(async () => {
-          const cached = await caches.match(req);
-          return cached || caches.match("/offline");
-        })
+        .catch(() => caches.match(req).then((r) => r || caches.match("/offline")))
     );
     return;
   }
 
-  // ✅ static assets: cache-first, then network, store in SAME cache
-  const isStatic =
-    url.pathname.startsWith("/static/") ||
-    url.pathname === "/manifest.webmanifest" ||
-    url.pathname.startsWith("/static/icons/");
-
-  if (isStatic) {
-    event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        });
-      })
-    );
-    return;
-  }
-
-  // ✅ everything else GET: cache-first, then network (your original “fast feel”)
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
-
       return fetch(req).then((res) => {
         const copy = res.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
