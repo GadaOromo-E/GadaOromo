@@ -1,50 +1,56 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Admin Login | GadaOromo</title>
+  <title>Admin Login | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
 
 <div class="container">
 
-  <div class="topbar">
-    <div class="title-row">
-<nav class="nav">
-  <a class="nav-link" href="/">Home</a>
-  <a class="nav-link" href="/translate">Translate</a>
-  <a class="nav-link" href="/submit">Submit Word</a>
-  <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
-  <a class="nav-link" href="/recorder">Add Voice</a>
-  <a class="nav-link" href="/learn">Learn</a>
-  <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
-  <a class="nav-link" href="/support">Donate</a>
-  <a class="nav-link" href="/admin">Admin login</a>
-</nav>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Admin Login</h1>
+      <p class="tagline">Authorized admins only.</p>
+    </div>
 
-      <div>
-        <h2 style="margin:0;">Admin Login</h2>
-        <div class="subtle">Authorized admins only.</div>
-      </div>
+    <div class="mini-copy">
+      <span class="copy-year">© 2026</span>
+      <span class="copy-name">Gadaa</span>
+    </div>
+
+    <div class="small-actions">
       <a class="btn" href="/">⬅ Home</a>
     </div>
-  </div>
+  </header>
 
-  <div class="card">
-    <form method="POST" autocomplete="off">
-      <input type="email" name="email" placeholder="Admin email" required>
-      <div style="height:10px;"></div>
-      <input type="password" name="password" placeholder="Password" required>
-      <div style="height:10px;"></div>
-      <button type="submit">Login</button>
-    </form>
-  </div>
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+    <a class="nav-link" href="/recorder">Add Voice</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/admin">Admin login</a>
+  </nav>
+
+  <main class="main">
+    <div class="card">
+      <form method="POST" autocomplete="off">
+        <input type="email" name="email" placeholder="Admin email" required>
+        <div style="height:10px;"></div>
+        <input type="password" name="password" placeholder="Password" required>
+        <div style="height:10px;"></div>
+        <button type="submit">Login</button>
+      </form>
+    </div>
+  </main>
 
 </div>
 
 </body>
 </html>
-
-

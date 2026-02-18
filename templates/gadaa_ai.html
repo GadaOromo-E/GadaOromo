@@ -15,73 +15,75 @@
 <div class="container">
 
   <header class="topbar">
-  <div class="brand">
-    <h1>🤖 Gadaa AI</h1>
-    <p class="tagline">Free demo • Oromo + English • Promo mode</p>
-  </div>
-<nav class="nav">
-  <a class="nav-link" href="/">Home</a>
-  <a class="nav-link" href="/translate">Translate</a>
-  <a class="nav-link" href="/submit">Submit Word</a>
-  <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
-  <a class="nav-link" href="/recorder">Add Voice</a>
-  <a class="nav-link" href="/learn">Learn</a>
-  <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
-  <a class="nav-link" href="/support">Donate</a>
-  <a class="nav-link" href="/admin">Admin login</a>
-</nav>
-
-  <div class="mini-copy">
-    <span class="copy-year">© 2026</span>
-    <span class="copy-name">Gadaa</span>
-  </div>
-
-  <div class="small-actions">
-    <a class="btn" href="/">🏠 Home</a>
-    <a class="btn" href="/translate">🌍 Translate</a>
-    <a class="btn" href="/recorder">🎙 Add Voice</a>
-  </div>
-</header>
-
-
-  <div class="card">
-    <h2>Chat with Gadaa AI (Free Demo)</h2>
-    <div class="muted" style="line-height:1.5;">
-      This demo uses your dictionary database (SQLite). It can:
-      <ul style="margin-top:8px; padding-left:18px;">
-        <li>Find exact word/phrase matches</li>
-        <li>Give mini-lessons + examples</li>
-        <li>Create quick quizzes</li>
-        <li>Suggest similar terms</li>
-      </ul>
-      <div style="margin-top:8px;">
-        Try: <code>hello</code>, <code>quiz me</code>, <code>suggest water</code>
-      </div>
+    <div class="brand">
+      <h1>🤖 Gadaa AI</h1>
+      <p class="tagline">Free demo • Oromo + English • Promo mode</p>
     </div>
 
-    <div id="aiChat" style="margin-top:14px;">
-      <div id="aiLog" class="result-box" style="min-height:160px; white-space:pre-wrap;"></div>
-
-      <div class="row" style="margin-top:10px; align-items:stretch;">
-        <input id="aiInput" type="text" placeholder="Type in Oromo or English..." />
-        <button id="aiSend" type="button">Send</button>
-      </div>
-
-      <div class="muted" id="aiStatus" style="margin-top:8px;"></div>
+    <div class="mini-copy">
+      <span class="copy-year">© 2026</span>
+      <span class="copy-name">Gadaa</span>
     </div>
-  </div>
 
-  {% if trending %}
+    <div class="small-actions">
+      <a class="btn" href="/">🏠 Home</a>
+      <a class="btn" href="/translate">🌍 Translate</a>
+      <a class="btn" href="/recorder">🎙 Add Voice</a>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+    <a class="nav-link" href="/recorder">Add Voice</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/gadaa-ai">Gadaa AI</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/admin">Admin login</a>
+  </nav>
+
+  <main class="main">
     <div class="card">
-      <h2>🔥 Trending</h2>
-      <div class="chips">
-        {% for row in trending %}
-          <span class="chip" data-pick="{{ row[0] }}">{{ row[0] }}</span>
-        {% endfor %}
+      <h2>Chat with Gadaa AI (Free Demo)</h2>
+      <div class="muted" style="line-height:1.5;">
+        This demo uses your dictionary database (SQLite). It can:
+        <ul style="margin-top:8px; padding-left:18px;">
+          <li>Find exact word/phrase matches</li>
+          <li>Give mini-lessons + examples</li>
+          <li>Create quick quizzes</li>
+          <li>Suggest similar terms</li>
+        </ul>
+        <div style="margin-top:8px;">
+          Try: <code>hello</code>, <code>quiz me</code>, <code>suggest water</code>
+        </div>
       </div>
-      <div class="subtle" style="margin-top:8px;">Tap a word to ask Gadaa AI about it.</div>
+
+      <div id="aiChat" style="margin-top:14px;">
+        <div id="aiLog" class="result-box" style="min-height:160px; white-space:pre-wrap;"></div>
+
+        <div class="row" style="margin-top:10px; align-items:stretch;">
+          <input id="aiInput" type="text" placeholder="Type in Oromo or English..." />
+          <button id="aiSend" type="button">Send</button>
+        </div>
+
+        <div class="muted" id="aiStatus" style="margin-top:8px;"></div>
+      </div>
     </div>
-  {% endif %}
+
+    {% if trending %}
+      <div class="card">
+        <h2>🔥 Trending</h2>
+        <div class="chips">
+          {% for row in trending %}
+            <span class="chip" data-pick="{{ row[0] }}">{{ row[0] }}</span>
+          {% endfor %}
+        </div>
+        <div class="subtle" style="margin-top:8px;">Tap a word to ask Gadaa AI about it.</div>
+      </div>
+    {% endif %}
+  </main>
 
 </div>
 
