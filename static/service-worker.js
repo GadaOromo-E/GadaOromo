@@ -78,22 +78,16 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // HTML navigation: network-first
-  if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        })
-        .catch(async () => {
-          const cached = await caches.match(req);
-          return cached || caches.match("/offline");
-        })
-    );
-    return;
-  }
+ if (req.mode === "navigate") {
+  event.respondWith((async () => {
+    try {
+      return await fetch(req);
+    } catch {
+      return caches.match("/offline");
+    }
+  })());
+  return;
+}
 
   // Static assets: cache-first
   if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
