@@ -1349,6 +1349,73 @@ def home():
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
         
     )
+
+# ------------------ DICTIONARY ------------------
+
+@app.route("/dictionary", methods=["GET", "POST"])
+def dictionary():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    result = None
+    result_id = None
+    suggestions = None
+    audio = None
+
+    # --- GET search (?q=) ---
+    q = request.args.get("q", "").strip()
+
+    # --- POST search (fallback hvis form bruker POST) ---
+    if request.method == "POST":
+        q = request.form.get("word", "").strip()
+
+    if q:
+        word = make_search_key(q)
+
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved'
+            AND (english_key=? OR oromo_key=?)
+        """, (word, word))
+        row = c.fetchone()
+
+        if row:
+            result_id = row[0]
+            result = (row[1], row[2])
+            audio = get_approved_audio("word", result_id)
+
+        if not row:
+            suggestions = {
+                "en": suggest_terms(word, "en_om"),
+                "om": suggest_terms(word, "om_en")
+            }
+
+    # full dictionary list
+    c.execute("""
+        SELECT id, english, oromo
+        FROM words
+        WHERE status='approved'
+        ORDER BY english ASC
+    """)
+    all_words = c.fetchall()
+
+    conn.close()
+
+    trending = get_trending(limit=15)
+    approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
+
+    return render_template(
+        "dictionary.html",
+        q=q,
+        result=result,
+        result_id=result_id,
+        audio=audio,
+        words=all_words,
+        suggestions=suggestions,
+        trending=trending,
+        approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
+    )
 # ------------------ TRANSLATE ------------------
 
 
@@ -3411,6 +3478,12 @@ def gadaa_ai_api():
         }
     })
 
+@app.after_request
+def no_cache_html(resp):
+    if resp.mimetype == "text/html":
+        resp.headers["Cache-Control"] = "no-store, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+    return resp
 
 # ------------------ RUN / MIGRATE ------------------
 
