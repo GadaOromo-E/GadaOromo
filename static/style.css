@@ -469,4 +469,64 @@ a:active, button:active, .chip:active {
     display: block;
     margin-bottom: 12px;
   }
+/* ===== Sidebar layout like screenshot ===== */
+
+.app-shell{
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-top: 14px;
+}
+
+/* left panel scroll */
+.side-menu{
+  position: sticky;
+  top: 110px; /* under topbar */
+  max-height: calc(100vh - 130px);
+  overflow: auto;
+
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+/* link cards */
+.side-link{
+  display:flex;
+  align-items:center;
+  gap: 12px;
+
+  padding: 14px 16px;
+  margin: 10px 0;
+
+  border: 1px solid rgba(0,0,0,0.14);
+  border-radius: 14px;
+  background: #fff;
+
+  color: var(--black);
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.side-link:hover{
+  border-color: rgba(179,0,0,0.35);
+  color: var(--red);
+}
+
+/* active item (add class="side-link active" in HTML) */
+.side-link.active{
+  border-color: rgba(179,0,0,0.40);
+  color: var(--red);
+}
+
+/* right side */
+.main-panel{ min-width: 0; }
+
+/* Mobile: stack */
+@media (max-width: 900px){
+  .app-shell{ grid-template-columns: 1fr; }
+  .side-menu{ position: relative; top: 0; max-height: none; }
+}
 }
