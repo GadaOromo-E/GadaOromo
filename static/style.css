@@ -37,8 +37,6 @@ a:hover{ color: var(--redHover); }
   padding: 14px;
 }
 
-/* Topbar (professional black header with red accent line)
-   NOTE: This block is repaired (proper braces) but keeps same intent/appearance. */
 .topbar{
   position: sticky;
   top: 0;
@@ -47,8 +45,7 @@ a:hover{ color: var(--redHover); }
   color: #fff;
   padding: 14px 0;
   border-bottom: 3px solid var(--red);
-  position: relative; /* keep your mini-copy positioning */
-}
+}}
 
 .mini-copy {
   position: absolute;
@@ -431,45 +428,14 @@ a:active, button:active, .chip:active {
     transition: none !important;
     animation: none !important;
   }
-}
-
 /* =======================================================
-   DESKTOP SHELL (optional)
-   Only affects pages that use:
-   <div class="app-shell"><aside class="side-menu">...</aside><main class="main-panel">...</main></div>
-   This DOES NOT change your existing pages unless you add these classes in HTML.
+   LEFT SIDEBAR LAYOUT (final)
+   Use in HTML:
+   <div class="app-shell">
+     <aside class="side-menu">...</aside>
+     <main class="main-panel">...</main>
+   </div>
 ======================================================= */
-
-.app-shell{
-  display: block;
-  padding: 14px;
-}
-
-@media (min-width: 900px){
-  .app-shell{
-    display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: 16px;
-    align-items: start;
-  }
-
-  .side-menu{
-    position: sticky;
-    top: 110px; /* below topbar/nav */
-    max-height: calc(100vh - 130px);
-    overflow: auto;
-    padding-right: 6px;
-  }
-
-  .main-panel{
-    min-width: 0;
-  }
-
-  .side-menu .nav-link{
-    display: block;
-    margin-bottom: 12px;
-  }
-/* ===== Sidebar layout like screenshot ===== */
 
 .app-shell{
   display: grid;
@@ -515,7 +481,6 @@ a:active, button:active, .chip:active {
   color: var(--red);
 }
 
-/* active item (add class="side-link active" in HTML) */
 .side-link.active{
   border-color: rgba(179,0,0,0.40);
   color: var(--red);
@@ -528,5 +493,4 @@ a:active, button:active, .chip:active {
 @media (max-width: 900px){
   .app-shell{ grid-template-columns: 1fr; }
   .side-menu{ position: relative; top: 0; max-height: none; }
-}
 }
