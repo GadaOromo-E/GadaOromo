@@ -8,19 +8,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
 <body>
+<header class="topbar">
+  <div class="brand">
+    <h2 style="margin:0;">🎛 Recorder Dashboard</h2>
+    <div class="subtle">Record live Oromo audio (published instantly)</div>
+  </div>
 
-<div class="container">
-  <div class="topbar">
-    <div class="title-row">
-      <div>
-        <h2 style="margin:0;">🎛 Recorder Dashboard</h2>
-        <div class="subtle">Record live Oromo audio (published instantly)</div>
-      </div>
-      <div class="small-actions" style="display:flex; gap:8px; flex-wrap:wrap;">
-        <a class="btn" href="/">Home</a>
-        <a class="btn" href="/recorder/logout">Logout</a>
-      </div>
-    </header>
+  <div class="topbar-right">
+    <a class="btn install-mini" href="/recorder/logout">Logout</a>
+  </div>
+</header>
 
     <form method="GET" action="/recorder/dashboard" style="margin-top:12px;">
       <input

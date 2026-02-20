@@ -30,33 +30,41 @@ body{
 a{ color: var(--red); text-decoration: none; }
 a:hover{ color: var(--redHover); }
 
-/* Layout */
+/* ===== Edge-to-edge container ===== */
 .container{
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 14px;
+  max-width: none;
+  margin: 0;
+  padding: 14px 18px;
 }
 
+/* ===== Clean topbar: title left, copyright right ===== */
 .topbar{
   position: sticky;
   top: 0;
   z-index: 60;
   background: var(--black);
   color: #fff;
-  padding: 14px 0;
+  padding: 14px 18px;
   border-bottom: 3px solid var(--red);
-}}
 
-.mini-copy {
-  position: absolute;
-  top: 6px;
-  right: 12px;
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap: 12px;
+}
+
+.mini-copy{
+  position: static; /* no absolute */
+  margin-top: 6px;
   font-size: 10px;
   letter-spacing: 0.4px;
   white-space: nowrap;
   font-weight: 500;
 }
 
+/* adjust sticky sidebar offset under topbar */
+.side-menu{ top: 92px; }
+}
 .copy-year {
   color: #c40000;   /* your brand red */
 }
