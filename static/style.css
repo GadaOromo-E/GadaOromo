@@ -502,3 +502,69 @@ a:active, button:active, .chip:active {
   .app-shell{ grid-template-columns: 1fr; }
   .side-menu{ position: relative; top: 0; max-height: none; }
 }
+/* ===== Topbar polish ===== */
+
+/* Make title + tagline look sharper */
+.topbar .brand h1{
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: 0.2px;
+  text-rendering: geometricPrecision;
+}
+
+.topbar .tagline{
+  color: rgba(255,255,255,0.80);
+  font-size: 0.98rem;
+  line-height: 1.35;
+  margin-top: 6px;
+}
+
+/* Right side spacing: move copyright slightly left from button */
+.topbar-right{
+  display:flex;
+  align-items:flex-start;
+  gap: 16px;                 /* more space between copyright and button */
+}
+
+/* Copyright styling: red year + white name, both bold */
+.mini-copy{
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  font-weight: 800;          /* bold both */
+}
+
+.copy-year{
+  color: var(--red);         /* red year */
+  font-weight: 900;
+}
+
+.copy-name{
+  color: #fff;               /* white Gadaa */
+  font-weight: 900;
+}
+
+/* Smaller but nicer install button, red */
+.btn.install-mini{
+  width: auto;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 0.95rem;
+  font-weight: 900;
+  line-height: 1;
+  background: var(--red);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.10);
+  box-shadow: 0 10px 22px rgba(0,0,0,0.22);
+}
+
+.btn.install-mini:hover{
+  background: var(--redHover);
+  color: #fff;
+}
+
+/* Optional: keep button from being too big on small screens */
+@media (max-width: 520px){
+  .btn.install-mini{ padding: 9px 12px; font-size: 0.9rem; }
+  .mini-copy{ font-size: 10px; }
+}
