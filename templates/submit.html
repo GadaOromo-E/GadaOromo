@@ -39,7 +39,7 @@
     <h2 style="margin-top:0;">Manual submission</h2>
     <div class="subtle">Enter both English and Oromo for one word.</div>
 
-    <form method="POST" autocomplete="off" style="margin-top:12px;">
+    <form method="POST" action="/submit" autocomplete="off" style="margin-top:12px;">
       <input type="hidden" name="mode" value="manual">
 
       <label style="display:block; margin-bottom:8px;">English</label>
@@ -67,7 +67,7 @@
       Duplicates will be skipped automatically.
     </div>
 
-    <form method="POST" enctype="multipart/form-data" autocomplete="off" style="margin-top:12px;">
+        <form method="POST" action="/submit" enctype="multipart/form-data" autocomplete="off" style="margin-top:12px;">
       <input type="hidden" name="mode" value="file">
 
       <label style="display:block; margin-bottom:8px;">Upload CSV or XLSX file</label>
