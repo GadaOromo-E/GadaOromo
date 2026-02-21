@@ -7,14 +7,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ APP_NAME }}</title>
 
- <script>
+<script>
   (function () {
     var ua = navigator.userAgent || "";
     if (/Android/i.test(ua)) {
       document.documentElement.classList.add("is-android");
     }
   })();
-</script>
+</script>t>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 
   <!-- ✅ PWA (Android + iPhone) -->
