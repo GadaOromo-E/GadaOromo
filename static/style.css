@@ -62,9 +62,6 @@ a:hover{ color: var(--redHover); }
   font-weight: 500;
 }
 
-/* adjust sticky sidebar offset under topbar */
-.side-menu{ top: 92px; }
-}
 .copy-year {
   color: #c40000;   /* your brand red */
 }
@@ -436,6 +433,8 @@ a:active, button:active, .chip:active {
     transition: none !important;
     animation: none !important;
   }
+}
+
 /* =======================================================
    LEFT SIDEBAR LAYOUT (final)
    Use in HTML:
@@ -567,4 +566,45 @@ a:active, button:active, .chip:active {
 @media (max-width: 520px){
   .btn.install-mini{ padding: 9px 12px; font-size: 0.9rem; }
   .mini-copy{ font-size: 10px; }
+}
+/* =========================================
+   ANDROID ONLY: Make side-menu mobile pretty
+   (does NOT affect iPhone/desktop)
+========================================= */
+
+/* Only when screen is small AND on Android */
+@media (max-width: 900px){
+  .is-android .side-menu{
+    /* make it a compact top nav instead of tall sidebar */
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    padding: 10px;
+    margin-top: 12px;
+
+    position: relative; /* keep your mobile behavior */
+    top: 0;
+    max-height: none;
+    overflow: visible;
+
+    border-radius: 16px;
+  }
+
+  .is-android .side-menu .side-link{
+    /* chip style */
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    width: auto;          /* IMPORTANT: not full width */
+    margin: 0;            /* remove the big vertical spacing */
+    padding: 10px 12px;
+    min-height: 40px;     /* good touch target */
+
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
 }
