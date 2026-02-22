@@ -78,7 +78,7 @@ a:hover{ color: var(--redHover); }
 }
 
 .brand h1{ margin:0; font-size: 1.7rem; color:#fff; }
-.tagline{ margin-top: 6px; color: rgba(255,255,255,0.75); }
+.tagline{ margin-top: 6px; color: rgba(255,255,255,0.92); }
 
 .subtle{ color: var(--muted); font-size: 0.95rem; }
 .muted{ color: var(--muted); }
@@ -607,4 +607,25 @@ a:active, button:active, .chip:active {
     font-weight: 800;
     white-space: nowrap;
   }
+/* Topbar copyright – brand red but accessible */
+.topbar .mini-copy{
+  color: rgba(255,255,255,0.92);
+}
+
+.topbar .copy-year{
+  background: var(--red);
+  color: #ffffff;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 900;
+  display: inline-block;
+  line-height: 1.3;
+  margin-right: 6px;
+}
+
+.topbar .copy-name{
+  color: #ffffff;
+  font-weight: 900;
+}
+
 }
