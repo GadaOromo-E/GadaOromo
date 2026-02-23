@@ -607,12 +607,12 @@ a:active, button:active, .chip:active {
     font-weight: 800;
     white-space: nowrap;
   }
-/* Topbar copyright – brand red but accessible */
-.topbar .mini-copy{
+/* FORCE accessible topbar copyright */
+header.topbar .mini-copy{
   color: rgba(255,255,255,0.92);
 }
 
-.topbar .copy-year{
+header.topbar .copy-year{
   background: var(--red);
   color: #ffffff;
   padding: 2px 8px;
@@ -623,9 +623,7 @@ a:active, button:active, .chip:active {
   margin-right: 6px;
 }
 
-.topbar .copy-name{
+header.topbar .copy-name{
   color: #ffffff;
   font-weight: 900;
-}
-
 }

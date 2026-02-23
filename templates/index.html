@@ -14,7 +14,8 @@
       document.documentElement.classList.add("is-android");
     }
   })();
-</script>t>
+</script>
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 
   <!-- ✅ PWA (Android + iPhone) -->
@@ -259,6 +260,8 @@
 
     <div class="quick-actions">
       <a class="btn primary" href="/translate">🌍 Translator</a>
+      <a class="btn primary" href="/dictionary">📖 Dictionary</a>
+      <a class="btn" href="/gadaa-ai">🤖 Gadaa AI</a>
       <a class="btn" href="/learn">📚 Learning</a>
       <a class="btn danger" href="/support">❤️ Donate</a>
       <a class="btn" href="/submit">➕ Add Word</a>
@@ -309,9 +312,16 @@
     {% endif %}
   </section>
 
-  <footer class="footer">
-    <p>© 2026 Gadaa — Open community dictionary</p>
-  </footer>
+ <footer class="footer">
+  <p>© 2026 Gadaa — Open community dictionary</p>
+
+  <div style="margin-top:8px;">
+    <a href="/dictionary"><strong>Dictionary</strong></a> ·
+    <a href="/translate">Translate</a> ·
+    <a href="/gadaa-ai">Gadaa AI</a> ·
+    <a href="/learn">Learn</a>
+  </div>
+</footer>
 
 </div>
 
