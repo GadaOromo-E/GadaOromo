@@ -404,8 +404,8 @@ function startVoice(){
   recognition.start();
 }
 </script>
-
-<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+<script src="{{ url_for('static', filename='speak.js') }}" defer></script>
+<script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
 <!-- ✅ bump to ensure new audio.js loads -->
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260125-3"></script>
 
