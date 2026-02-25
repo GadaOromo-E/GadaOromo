@@ -809,7 +809,6 @@ init_db()
 ensure_key_columns()
 backfill_keys()
 ensure_key_indexes()
-ensure_phrase_aliases_table()
 
 
 # ------------------ ANALYTICS HELPERS ------------------
@@ -1481,7 +1480,6 @@ def translate():
     suggestions = None
     audio = None
     matched = None
-    phrase_suggestions = []
 
     if request.method == "POST":
         text = request.form.get("text", "")
@@ -1549,8 +1547,6 @@ def translate():
 
         record_search(text, direction, is_phrase, is_exact)
         result = translated
-        
-        phrase_suggestions = suggest_phrases_from_text(text, direction, limit=8)
 
         # suggestions only for single word not exact
         # (use improved single-word detection rather than split())
@@ -1574,8 +1570,7 @@ def translate():
         matched=matched,
         audio=audio,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids,
-        approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids,
-        phrase_suggestions=phrase_suggestions,
+        approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
     )
 
 
@@ -1779,28 +1774,23 @@ def translate_multipart_text(text: str, direction: str):
     any_exact = 0
     any_phrase = 0
 
-    conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor()
-    try:
-        for seg_text, punct, ws in parts:
-            if seg_text and seg_text.strip():
-                # ✅ use phrase-alias longest-match translator (not word-by-word)
-                tr, ex, ph = translate_segment_longest_phrase(cur, seg_text, direction, max_phrase_words=12)
+    for seg_text, punct, ws in parts:
+        if seg_text:
+            tr, ex, ph = translate_text(seg_text, direction)
 
-                # avoid doubled punctuation if your phrase translation already ends with punctuation
-                if ph and punct:
-                    tr = _strip_trailing_punct(tr)
+            # ✅ IMPORTANT: avoid doubled punctuation when phrase already ends with . or ?
+            # If input has punctuation, input punctuation should win.
+            if ph and punct:
+                tr = _strip_trailing_punct(tr)
 
-                out.append(tr)
-                any_exact |= ex
-                any_phrase |= ph
-            else:
-                out.append(seg_text or "")
+            out.append(tr)
+            any_exact |= ex
+            any_phrase |= ph
+        else:
+            out.append(seg_text)
 
-            out.append(punct)
-            out.append(ws)
-    finally:
-        conn.close()
+        out.append(punct)
+        out.append(ws)
 
     return "".join(out), int(any_exact), int(any_phrase)
 
@@ -2882,7 +2872,6 @@ def admin_manage():
                     else:
                         c.execute("UPDATE phrases SET english=?, oromo=? WHERE id=?", (en, om, pid))
                         conn.commit()
-                        upsert_phrase_aliases(pid, en, om, source="admin_edit")
                         msg = "Phrase updated."
                 conn.close()
 
@@ -3169,6 +3158,7 @@ def reject(word_id):
 
 
 # ------------------ APPROVE / REJECT PHRASES ------------------
+
 @app.route("/approve_phrase/<int:phrase_id>")
 def approve_phrase(phrase_id):
     if not require_admin():
@@ -3176,21 +3166,11 @@ def approve_phrase(phrase_id):
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-
-    # approve
     c.execute("UPDATE phrases SET status='approved' WHERE id=?", (phrase_id,))
     conn.commit()
-
-    # fetch phrase text
-    c.execute("SELECT english, oromo FROM phrases WHERE id=?", (phrase_id,))
-    row = c.fetchone()
     conn.close()
-
-    # ✅ create aliases for better matching
-    if row:
-        upsert_phrase_aliases(phrase_id, row[0], row[1], source="auto")
-
     return redirect("/dashboard")
+
 
 @app.route("/reject_phrase/<int:phrase_id>")
 def reject_phrase(phrase_id):
