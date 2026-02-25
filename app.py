@@ -1481,6 +1481,7 @@ def translate():
     suggestions = None
     audio = None
     matched = None
+    phrase_suggestions = []
 
     if request.method == "POST":
         text = request.form.get("text", "")
