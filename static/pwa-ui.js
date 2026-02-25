@@ -6,7 +6,7 @@
 
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isAndroid = /android/i.test(navigator.userAgent);
 
   // ---------- Small helpers ----------
   function vibrate(msOrPattern) {
@@ -134,9 +134,15 @@
     );
   }
 
-  // ---------- Install button ----------
-  const installBtn = document.getElementById("installBtn");
-  let deferredPrompt = null;
+ // ---------- Install button ----------
+const installBtn = document.getElementById("installBtn");
+const playBtn = document.getElementById("playBtn");   // ← legg til
+let deferredPrompt = null;
+
+// Vis Play Store-knapp på Android
+if (/android/i.test(navigator.userAgent) && playBtn) {
+  playBtn.style.display = "inline-block";
+}
 
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
