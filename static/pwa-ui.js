@@ -136,13 +136,7 @@
 
  // ---------- Install button ----------
 const installBtn = document.getElementById("installBtn");
-const playBtn = document.getElementById("playBtn");   // ← legg til
 let deferredPrompt = null;
-
-// Vis Play Store-knapp på Android
-if (/android/i.test(navigator.userAgent) && playBtn) {
-  playBtn.style.display = "inline-block";
-}
 
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
