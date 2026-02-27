@@ -607,6 +607,8 @@ a:active, button:active, .chip:active {
     font-weight: 800;
     white-space: nowrap;
   }
+}  
+
 /* FORCE accessible topbar copyright */
 header.topbar .mini-copy{
   color: rgba(255,255,255,0.92);
@@ -626,4 +628,83 @@ header.topbar .copy-year{
 header.topbar .copy-name{
   color: #ffffff;
   font-weight: 900;
+}
+/* Mobile navigation: make menu look like Android "chips/grid" */
+@media (max-width: 640px) {
+  /* Layout becomes single column */
+  .layout {
+    display: block;
+  }
+
+  /* Turn the side menu into a grid */
+  .side-menu {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+
+  /* Links become chip-like buttons */
+  .side-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+
+    padding: 12px 10px;
+    border-radius: 14px;
+
+    text-align: center;
+    font-weight: 600;
+    white-space: nowrap;
+
+    /* keep your existing button/card styles if you have them */
+  }
+
+  /* If some labels are long, let them wrap nicely */
+  .side-link {
+    white-space: normal;
+    line-height: 1.15;
+  }
+}
+
+/* iOS Safari safe-area padding (prevents weird bottom spacing) */
+@supports (padding: env(safe-area-inset-bottom)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
+/* Mobile: make side-menu look like chips on ALL phones (Android + iPhone) */
+@media (max-width: 900px){
+  .side-menu{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+
+    padding: 10px;
+    margin-top: 12px;
+
+    position: relative;
+    top: 0;
+    max-height: none;
+    overflow: visible;
+
+    border-radius: 16px;
+  }
+
+  .side-menu .side-link{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+
+    width: auto;
+    margin: 0;
+    padding: 10px 12px;
+    min-height: 40px;
+
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+  }
 }

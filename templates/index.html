@@ -279,43 +279,32 @@
     </div>
   </section>
 
-  {% if trending %}
-    <section class="card">
-      <h2>🔥 Trending Searches</h2>
-      <div class="chips">
-        {% for t in trending %}
-          <span class="chip" onclick="useSuggestion('{{ t[0]|e }}')">
-            {{ t[0] }} <span class="muted">({{ t[1] }})</span>
-          </span>
-        {% endfor %}
-      </div>
-      <div class="subtle" style="margin-top:8px;">Tap a trending word to search it.</div>
-    </section>
-  {% endif %}
+  <section class="card small-note" aria-label="copyright">
+  <div class="muted" style="font-weight:600;">
+    © 2026 Gadaa — Open community dictionary
+  </div>
+</section>
 
   <section class="card">
     <h2>Approved Words</h2>
 
     {% if words and words|length > 0 %}
       <div class="word-list">
-        {% for w in words %}
-          <div class="word-row" style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
-            <div style="flex:1; min-width:0;">
-              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-                <span><b>{{ w[1] }}</b></span>
-                <span class="muted">→</span>
-                <span><b>{{ w[2] }}</b></span>
+    {% for w in words %}
+  <div class="word-row">
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+      <span><b>{{ w[1] }}</b></span>
+      <span class="muted">→</span>
+      <span><b>{{ w[2] }}</b></span>
 
-                {% if w[0] in approved_oromo_audio_word_ids %}
-                  <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
-                {% endif %}
-              </div>
-            </div>
-
-            <button type="button" class="btn" onclick="useSuggestion('{{ w[1]|e }}')" title="Search this word">Search</button>
-          </div>
-        {% endfor %}
-      </div>
+      {% if w[0] in approved_oromo_audio_word_ids %}
+        <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
+      {% endif %}
+    </div>
+  </div>
+{% endfor %}
+             
+</div>
     {% else %}
       <p class="muted">No approved words yet. Be the first to submit!</p>
     {% endif %}
