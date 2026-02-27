@@ -136,22 +136,25 @@
     </div>
   </div>
 
-  <!-- LIST RESULTS (if you use words) -->
-  <div class="card">
-    {% if words %}
-      <div class="word-list">
-        {% for w in words %}
-          <div class="word-row">
-            <div>
-              <div style="font-weight:800;">{{ w[1] }}</div>
-              <div class="subtle">{{ w[2] }}</div>
-            </div>
-        {% endfor %}
-      </div>
-    {% else %}
-      <div class="muted">No words found.</div>
-    {% endif %}
-  </div>
+ <!-- LIST RESULTS -->
+<div class="card">
+  {% if words %}
+    <div class="word-list">
+      {% for w in words %}
+        <div class="word-row">
+          <div>
+            <div style="font-weight:800;">{{ w[1] }}</div>
+            <div class="subtle">{{ w[2] }}</div>
+          </div>
+
+          <a class="btn" href="/translate?text={{ w[1]|urlencode }}">Translate</a>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="muted">No words found.</div>
+  {% endif %}
+</div>
 
   {% if result %}
     <div class="result-box" style="margin-top:14px;">
