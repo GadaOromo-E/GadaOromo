@@ -143,7 +143,9 @@
       {% for w in words %}
         <div class="word-row">
           <div>
+           <a href="/word/{{ w[1]|urlencode }}">
             <div style="font-weight:800;">{{ w[1] }}</div>
+             </a>
             <div class="subtle">{{ w[2] }}</div>
           </div>
         </div>
