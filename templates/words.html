@@ -2,15 +2,26 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{{ word.en }} — {{ APP_NAME }}</title>
+  <title>{{ word.en }} in Oromo — Translation | {{ APP_NAME }}</title>
 
   <meta name="description"
-        content="Meaning of {{ word.en }} in Oromo ({{ word.om }}). Oromo ↔ English dictionary entry with pronunciation.">
+         content="Translation of '{{ word.en }}' in Oromo is '{{ word.om }}'. Oromo ↔ English dictionary entry with pronunciation and meaning.">
 
   <meta name="robots" content="index,follow">
-  <link rel="canonical" href="{{ request.url }}">
+ <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
 
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "DefinedTerm",
+ "name": "{{ word.en }}",
+ "description": "Oromo translation: {{ word.om }}",
+ "inDefinedTermSet": "https://gadaadictionary.com"
+}
+</script>
+
 </head>
 
 <body>
