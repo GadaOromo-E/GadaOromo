@@ -1214,6 +1214,27 @@ def _get_word_by_key(source_lang: str, key_text: str):
         return None
 
 
+def _get_word_by_any_key(key_text: str):
+    """Legacy-compatible base lookup: match either English or Oromo key."""
+    if not key_text:
+        return None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND (english_key=? OR oromo_key=?)
+            LIMIT 1
+        """, (key_text, key_text))
+        row = c.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        app.logger.exception(f"base word fallback lookup failed: {repr(e)}")
+        return None
+
+
 def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
     if target_lang == "en":
         return normalize_text(english_text)
@@ -1264,6 +1285,9 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
         wkey = make_search_key(_strip_edge_punct(q))
         if wkey:
             base_row = _get_word_by_key(source_lang, wkey)
+            # Keep old dictionary behavior: if selected source misses, still try either side.
+            if not base_row:
+                base_row = _get_word_by_any_key(wkey)
     else:
         pivot_english = google_translate_text_v2(
             q,
@@ -1328,17 +1352,8 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
         }
         return result, wid, None, True
 
-    # No base word found: translate defensively so page still renders.
-    tr = safe_translate_multilingual(q, source_lang, target_lang)
-    result = {
-        "source_text": q,
-        "target_text": tr.get("text", "") or "",
-        "english": pivot_english or (q if source_lang == "en" else ""),
-        "oromo": "",
-        "is_auto_translation": tr.get("is_auto_translation", False),
-        "tts_audio_url": tr.get("tts_audio_url")
-    }
-    return result, None, None, False
+    # Base entry not found: do not return generated result as primary dictionary output.
+    return None, None, None, False
 
 
 def get_or_generate_extra_translations(word_id: int, english_text: str):
@@ -1755,6 +1770,9 @@ def dictionary():
                     "en": suggest_terms(word, "en_om"),
                     "om": suggest_terms(word, "om_en")
                 }
+                if result is None:
+                    # Trigger template "no result found" block safely.
+                    result = {}
         except Exception as e:
             app.logger.exception(f"/dictionary lookup failed: {repr(e)}")
             lookup_error = "Translation is temporarily unavailable. Showing base dictionary data."
