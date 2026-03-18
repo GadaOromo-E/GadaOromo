@@ -60,23 +60,6 @@
       {% endif %}
     </div>
 
-    <div class="card">
-      {% if words %}
-        <div class="word-list">
-          {% for w in words %}
-            <div class="word-row">
-              <div>
-                <div style="font-weight:800;">{{ w[1] }}</div>
-                <div class="subtle">{{ w[2] }}</div>
-              </div>
-            </div>
-          {% endfor %}
-        </div>
-      {% else %}
-        <div class="muted">No words found.</div>
-      {% endif %}
-    </div>
-
     {% if result %}
       <div class="result-box" style="margin-top:14px;">
         <div><b>{{ language_options[source_lang].label }}:</b> <span id="srcText">{{ result.source_text }}</span></div>
@@ -153,6 +136,25 @@
       </div>
     {% elif result is not none %}
       <div class="result-box" style="margin-top:14px;"><div class="muted">No result found.</div></div>
+    {% endif %}
+
+    {% if not q %}
+      <div class="card">
+        {% if words %}
+          <div class="word-list">
+            {% for w in words %}
+              <div class="word-row">
+                <div>
+                  <div style="font-weight:800;">{{ w[1] }}</div>
+                  <div class="subtle">{{ w[2] }}</div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="muted">No words found.</div>
+        {% endif %}
+      </div>
     {% endif %}
 
     {% if suggestions %}
