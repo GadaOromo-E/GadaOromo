@@ -90,6 +90,12 @@
           <div style="margin-top:4px;"><b>Oromo base:</b> {{ result.oromo }}</div>
         {% endif %}
 
+        {% if result.english %}
+          <div class="small-actions" style="margin-top:8px;">
+            <a class="btn" href="/word/{{ result.english|urlencode }}">Open Word Page</a>
+          </div>
+        {% endif %}
+
         {% if other_translations %}
           <div style="margin-top:12px;">
             <div class="subtle"><b>Available translations</b></div>
@@ -145,7 +151,7 @@
             {% for w in words %}
               <div class="word-row">
                 <div>
-                  <div style="font-weight:800;">{{ w[1] }}</div>
+                  <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;">{{ w[1] }}</a>
                   <div class="subtle">{{ w[2] }}</div>
                 </div>
               </div>

@@ -1,27 +1,23 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{{ word.en }} in Oromo â€” Translation | {{ APP_NAME }}</title>
-
-  <meta name="description"
-         content="Translation of '{{ word.en }}' in Oromo is '{{ word.om }}'. Oromo â†” English dictionary entry with pronunciation and meaning.">
-
+  <title>{{ word.en }} - {{ word.om }} | Oromo Multilingual Dictionary (English, Arabic, French, Chinese, Amharic) | {{ APP_NAME }}</title>
+  <meta name="description" content="'{{ word.en }}' in Oromo is '{{ word.om }}'. Multilingual dictionary entry with English, Oromo, Arabic, French, Chinese, and Amharic translations, plus pronunciation and meaning context.">
   <meta name="robots" content="index,follow">
- <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
-
+  <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 
-<script type="application/ld+json">
-{
- "@context": "https://schema.org",
- "@type": "DefinedTerm",
- "name": "{{ word.en }}",
- "description": "Oromo translation: {{ word.om }}",
- "inDefinedTermSet": "https://gadaadictionary.com"
-}
-</script>
-
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "DefinedTerm",
+    "name": "{{ word.en }}",
+    "description": "Oromo translation: {{ word.om }}. Available in Arabic, French, Chinese, and Amharic.",
+    "url": "https://gadaadictionary.com/word/{{ word.en|urlencode }}",
+    "inDefinedTermSet": "https://gadaadictionary.com"
+  }
+  </script>
 </head>
 
 <body>
@@ -29,7 +25,7 @@
 
   <header class="topbar">
     <h1>{{ APP_NAME }}</h1>
-    <p class="tagline">Oromo â†” English Dictionary</p>
+    <p class="tagline">Oromo -> English Dictionary</p>
   </header>
 
   <section class="card">
@@ -60,9 +56,7 @@
     {% endif %}
 
     {% if word.explanation %}
-      <p class="muted" style="margin-top:10px;">
-        {{ word.explanation }}
-      </p>
+      <p class="muted" style="margin-top:10px;">{{ word.explanation }}</p>
     {% endif %}
 
     {% if word.audio_oromo %}
@@ -93,14 +87,13 @@
   </section>
 
   <div class="quick-actions">
-    <a class="btn primary" href="/?q={{ word.en }}">ðŸ” Search</a>
-    <a class="btn" href="/">ðŸ  Home</a>
+    <a class="btn primary" href="/dictionary?q={{ word.en|urlencode }}&source_lang=en&target_lang=om">Search</a>
+    <a class="btn" href="/">Home</a>
   </div>
 
   <footer class="footer">
-    <p>Â© {{ current_year }} {{ APP_NAME }}</p>
+    <p>&copy; {{ current_year }} {{ APP_NAME }}</p>
   </footer>
 </div>
 </body>
 </html>
-

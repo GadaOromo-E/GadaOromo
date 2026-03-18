@@ -43,6 +43,7 @@ from uuid import uuid4
 from difflib import get_close_matches
 from io import StringIO, BytesIO
 from datetime import datetime
+from urllib.parse import quote, unquote
 import unicodedata
 
 import requests
@@ -202,6 +203,32 @@ def sitemap_xml():
         xml_parts.append(f"<changefreq>{freq}</changefreq>")
         xml_parts.append(f"<priority>{prio}</priority>")
         xml_parts.append("</url>")
+
+    # Word detail pages (canonical /word/<english>)
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT english
+            FROM words
+            WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+            ORDER BY english ASC
+        """)
+        for (en,) in c.fetchall():
+            en_term = normalize_text(en or "")
+            if not en_term:
+                continue
+            loc = f"{base}/word/{quote(en_term)}"
+            xml_parts.append("<url>")
+            xml_parts.append(f"<loc>{loc}</loc>")
+            xml_parts.append(f"<lastmod>{now}</lastmod>")
+            xml_parts.append("<changefreq>weekly</changefreq>")
+            xml_parts.append("<priority>0.7</priority>")
+            xml_parts.append("</url>")
+        conn.close()
+    except Exception as e:
+        app.logger.exception(f"sitemap word URLs failed: {repr(e)}")
+
     xml_parts.append("</urlset>")
 
     resp = make_response("\n".join(xml_parts))
@@ -1851,6 +1878,56 @@ def dictionary():
         suggestions=suggestions,
         trending=trending,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
+    )
+
+
+@app.route("/word/<path:term>", methods=["GET"])
+def word_detail(term):
+    raw = normalize_text(unquote(term or ""))
+    key = make_search_key(_strip_edge_punct(raw))
+    if not key:
+        abort(404)
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND (english_key=? OR oromo_key=?)
+            LIMIT 1
+        """, (key, key))
+        row = c.fetchone()
+        conn.close()
+    except Exception as e:
+        app.logger.exception(f"/word lookup failed: {repr(e)}")
+        row = None
+
+    if not row:
+        abort(404)
+
+    wid, en, om = row
+    audio = get_approved_audio("word", wid)
+
+    word = {
+        "en": en,
+        "om": om,
+        "explanation": "",
+        "audio_oromo": audio.get("oromo", ""),
+        "audio_english": audio.get("english", "")
+    }
+
+    other_translations = {}
+    try:
+        other_translations = get_or_generate_extra_translations(wid, en)
+    except Exception as e:
+        app.logger.exception(f"/word extra translations failed: {repr(e)}")
+
+    return render_template(
+        "words.html",
+        word=word,
+        other_translations=other_translations,
+        current_year=datetime.utcnow().year
     )
 # ------------------ TRANSLATE ------------------
 
