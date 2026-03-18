@@ -1,3 +1,14 @@
+# Python
 __pycache__/
 *.pyc
+
+# Database
+gadaoromo.db
 gadaoromo.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
