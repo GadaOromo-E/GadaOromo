@@ -1328,6 +1328,30 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
     return result, None, None, False
 
 
+def get_or_generate_extra_translations(word_id: int, english_text: str):
+    """
+    Fetch or generate all configured extra-language translations for a base word.
+    Failures per language are isolated so one provider/cache error does not break the page.
+    """
+    out = {}
+    if not word_id or not english_text:
+        return out
+
+    for lang in ("am", "ar", "fr", "zh-CN"):
+        try:
+            translated, tts_url, _ = _get_or_generate_word_translation(word_id, english_text, lang)
+            if translated:
+                out[lang] = {
+                    "text": translated,
+                    "tts_audio_url": tts_url
+                }
+        except Exception as e:
+            app.logger.exception(f"extra translation failed for lang={lang}, word_id={word_id}: {repr(e)}")
+            continue
+
+    return out
+
+
 def translate_multilingual(text: str, source_lang: str, target_lang: str):
     t = normalize_text(text)
     if not t:
@@ -1678,6 +1702,7 @@ def dictionary():
     is_auto_translation = False
     tts_audio_url = None
     lookup_error = None
+    other_translations = {}
 
     # --- GET search (?q=) ---
     q = request.args.get("q", "").strip()
@@ -1705,6 +1730,11 @@ def dictionary():
 
             if result_id:
                 audio = get_approved_audio("word", result_id)
+                try:
+                    other_translations = get_or_generate_extra_translations(result_id, result.get("english", ""))
+                except Exception as e:
+                    app.logger.exception(f"/dictionary extra translations failed: {repr(e)}")
+                    other_translations = {}
 
             if (not from_base) and source_lang in ("om", "en"):
                 word = make_search_key(q)
@@ -1752,6 +1782,7 @@ def dictionary():
         is_auto_translation=is_auto_translation,
         tts_audio_url=tts_audio_url,
         lookup_error=lookup_error,
+        other_translations=other_translations,
         audio=audio,
         words=all_words,
         suggestions=suggestions,

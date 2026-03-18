@@ -18,17 +18,17 @@
 </header>
 
 <div class="app-shell">
-  <aside class="side-menu">
-    <a class="side-link" href="/">Home</a>
-    <a class="side-link" href="/dictionary">Dictionary</a>
-    <a class="side-link" href="/translate">Translate</a>
-    <a class="side-link" href="/submit">Submit Word</a>
-    <a class="side-link" href="/submit_phrase">Submit Phrase</a>
-    <a class="side-link" href="/recorder">Add Voice</a>
-    <a class="side-link" href="/learn">Learn</a>
-    <a class="side-link" href="/gadaa-ai">Gadaa AI</a>
-    <a class="side-link" href="/support">Donate</a>
-    <a class="side-link" href="/admin">Admin login</a>
+    <aside class="side-menu">
+    <a class="side-link" href="/">🏠 Home</a>
+    <a class="side-link" href="/dictionary">📖 Dictionary</a>
+    <a class="side-link" href="/translate">🌍 Translate</a>
+    <a class="side-link" href="/submit">➕ Submit Word</a>
+    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
+    <a class="side-link" href="/recorder">🎙 Add Voice</a>
+    <a class="side-link" href="/learn">📚 Learn</a>
+    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
+    <a class="side-link" href="/support">❤️ Donate</a>
+    <a class="side-link" href="/admin">🔒 Admin login</a>
   </aside>
 
   <main class="content" id="main">
@@ -105,6 +105,24 @@
         {% endif %}
         {% if result.oromo %}
           <div style="margin-top:4px;"><b>Oromo base:</b> {{ result.oromo }}</div>
+        {% endif %}
+
+        {% if other_translations %}
+          <div style="margin-top:12px;">
+            <div class="subtle"><b>Available translations</b></div>
+            <div style="margin-top:8px; display:grid; gap:8px;">
+              {% for code in ["am", "ar", "fr", "zh-CN"] %}
+                {% if other_translations.get(code) %}
+                  <div class="result-box" style="margin:0;">
+                    <div><b>{{ language_options[code].label }}:</b></div>
+                    <div {% if code == "ar" %}dir="rtl" style="text-align:right;"{% endif %}>
+                      {{ other_translations[code].text }}
+                    </div>
+                  </div>
+                {% endif %}
+              {% endfor %}
+            </div>
+          </div>
         {% endif %}
 
         {% if tts_audio_url %}
@@ -188,4 +206,3 @@ function speakTarget(){ const el=document.getElementById('dstText'); speakTextCo
 </script>
 </body>
 </html>
-

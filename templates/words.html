@@ -39,6 +39,26 @@
       <b>Oromo:</b> {{ word.om }}
     </p>
 
+    {% if other_translations %}
+      <div style="margin-top:12px;">
+        <b>Available translations</b>
+        <div style="margin-top:8px; display:grid; gap:8px;">
+          {% if other_translations.get("am") %}
+            <div><b>Amharic:</b> {{ other_translations["am"].text }}</div>
+          {% endif %}
+          {% if other_translations.get("ar") %}
+            <div><b>Arabic:</b> <span dir="rtl" style="display:inline-block; text-align:right;">{{ other_translations["ar"].text }}</span></div>
+          {% endif %}
+          {% if other_translations.get("fr") %}
+            <div><b>French:</b> {{ other_translations["fr"].text }}</div>
+          {% endif %}
+          {% if other_translations.get("zh-CN") %}
+            <div><b>Chinese:</b> {{ other_translations["zh-CN"].text }}</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
     {% if word.explanation %}
       <p class="muted" style="margin-top:10px;">
         {{ word.explanation }}
