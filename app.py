@@ -844,27 +844,32 @@ def ensure_phrase_aliases_table():
 
 
 def ensure_generated_translations_table():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
 
-    c.execute("""
-    CREATE TABLE IF NOT EXISTS generated_translations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        word_id INTEGER NOT NULL,
-        lang_code TEXT NOT NULL,
-        translated_text TEXT NOT NULL,
-        provider TEXT NOT NULL DEFAULT 'google_translate_v2',
-        tts_audio_url TEXT,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        UNIQUE(word_id, lang_code)
-    )
-    """)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS generated_translations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            word_id INTEGER NOT NULL,
+            lang_code TEXT NOT NULL,
+            translated_text TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'google_translate_v2',
+            tts_audio_url TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(word_id, lang_code)
+        )
+        """)
 
-    c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_word_id ON generated_translations(word_id)")
-    c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_lang_code ON generated_translations(lang_code)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_word_id ON generated_translations(word_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_lang_code ON generated_translations(lang_code)")
 
-    conn.commit()
-    conn.close()
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        app.logger.exception(f"Failed to ensure generated_translations table: {repr(e)}")
+        return False
 
 
 # Run DB init + migrations at startup
@@ -872,7 +877,7 @@ init_db()
 ensure_key_columns()
 backfill_keys()
 ensure_key_indexes()
-ensure_generated_translations_table()
+_generated_table_ready = ensure_generated_translations_table()
 
 
 def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int):
@@ -1150,6 +1155,8 @@ def _get_cached_generated_translation(word_id: int, lang_code: str):
         conn.close()
         return row
     except Exception as e:
+        if "no such table: generated_translations" in str(e).lower():
+            ensure_generated_translations_table()
         app.logger.exception(f"generated_translations cache read failed: {repr(e)}")
         return None
 
@@ -1179,6 +1186,26 @@ def _save_generated_translation(
         conn.commit()
         conn.close()
     except Exception as e:
+        if "no such table: generated_translations" in str(e).lower():
+            if ensure_generated_translations_table():
+                try:
+                    conn = sqlite3.connect(DB_NAME)
+                    c = conn.cursor()
+                    c.execute("""
+                        INSERT INTO generated_translations
+                        (word_id, lang_code, translated_text, provider, tts_audio_url, updated_at)
+                        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(word_id, lang_code) DO UPDATE SET
+                            translated_text=excluded.translated_text,
+                            provider=excluded.provider,
+                            tts_audio_url=excluded.tts_audio_url,
+                            updated_at=CURRENT_TIMESTAMP
+                    """, (word_id, lang_code, translated_text, provider, tts_audio_url))
+                    conn.commit()
+                    conn.close()
+                    return
+                except Exception as e2:
+                    app.logger.exception(f"generated_translations retry write failed: {repr(e2)}")
         app.logger.exception(f"generated_translations cache write failed: {repr(e)}")
 
 
@@ -1304,6 +1331,7 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
         target_text = ""
         tts_audio_url = None
         is_auto = False
+        auto_unavailable = False
 
         if target_lang == "en":
             target_text = en
@@ -1333,6 +1361,7 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
             if not target_text:
                 # Final fallback keeps page functional if provider is down.
                 target_text = en
+                auto_unavailable = True
             is_auto = True
 
         if source_lang == "en":
@@ -1348,6 +1377,7 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
             "english": en,
             "oromo": om,
             "is_auto_translation": is_auto,
+            "auto_unavailable": auto_unavailable,
             "tts_audio_url": tts_audio_url
         }
         return result, wid, None, True
@@ -1755,6 +1785,8 @@ def dictionary():
             result, result_id, lookup_error, from_base = _dictionary_lookup_result(q, source_lang, target_lang)
             is_auto_translation = bool(result and result.get("is_auto_translation"))
             tts_audio_url = result.get("tts_audio_url") if result else None
+            if result and result.get("auto_unavailable"):
+                lookup_error = "Auto translation unavailable. Showing base Oromo-English result."
 
             if result_id:
                 audio = get_approved_audio("word", result_id)
@@ -1977,7 +2009,15 @@ def translate():
         tts_audio_url = tr["tts_audio_url"]
 
         if text and not result:
-            translate_error = "Translation service is temporarily unavailable. Please try again."
+            if source_lang == "om" and target_lang not in ("om", "en"):
+                base_en, _, _ = translate_multipart_text(text, "om_en")
+                result = base_en
+                translate_error = "Auto translation unavailable. Showing base Oromo-English result."
+            elif source_lang == "en" and target_lang not in ("om", "en"):
+                result = normalize_text(text)
+                translate_error = "Auto translation unavailable. Showing base Oromo-English result."
+            else:
+                translate_error = "Translation service is temporarily unavailable. Please try again."
 
         record_search(text, direction, is_phrase, is_exact)
 
