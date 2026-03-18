@@ -62,7 +62,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
 from datetime import timedelta
 
-# True i produksjon/https (Render + Cloudflare). False lokalt på http.
+# True i produksjon/https (Render + Cloudflare). False lokalt pÃ¥ http.
 IS_PROD = (os.environ.get("FLASK_ENV") == "production") or bool(os.environ.get("RENDER"))
 
 app.config.update(
@@ -72,7 +72,7 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
 )
 
-# ✅ IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
+# âœ… IMPORTANT for Render / reverse proxy: makes Flask understand HTTPS + correct host
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 logging.basicConfig(level=logging.INFO)
@@ -93,7 +93,7 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = (os.environ.get("DB_PATH", "").strip() or DEFAULT_DB)
-app.logger.info(f"✅ Using DB_NAME={DB_NAME}")
+app.logger.info(f"âœ… Using DB_NAME={DB_NAME}")
 
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 
@@ -306,7 +306,7 @@ EN_STOP = {"the", "is", "are", "to", "and", "of", "in", "on", "a", "an", "for", 
 
 def normalize_text(text: str) -> str:
     t = (text or "").strip()
-    t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
+    t = t.replace("â€™", "'").replace("â€˜", "'").replace("`", "'")
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -328,7 +328,7 @@ def dedup_preserve_order(items):
 
 def make_search_key(text: str) -> str:
     t = (text or "").strip()
-    t = t.replace("’", "'").replace("‘", "'").replace("`", "'")
+    t = t.replace("â€™", "'").replace("â€˜", "'").replace("`", "'")
     t = unicodedata.normalize("NFKC", t)
     t = t.casefold()
     t = re.sub(r"\s+", " ", t).strip()
@@ -338,7 +338,7 @@ def make_search_key(text: str) -> str:
 # ------------------ COMMUNITY FILE PARSERS (NO GOOGLE) ------------------
 
 def parse_csv_pairs_from_path(path: str):
-    # prøv UTF-8 først, fallback latin-1
+    # prÃ¸v UTF-8 fÃ¸rst, fallback latin-1
     for enc in ("utf-8-sig", "utf-8", "latin-1"):
         try:
             with open(path, "r", encoding=enc, newline="") as f:
@@ -462,7 +462,7 @@ def _admin_id() -> int:
         return 0
 
 
-# ✅ recorder session (password-based)
+# âœ… recorder session (password-based)
 def require_recorder() -> bool:
     return bool(session.get("recorder") == 1)
 
@@ -754,7 +754,7 @@ def init_db():
     conn.close()
     
 def _strip_edge_punct(s: str) -> str:
-    return re.sub(r"^[\s\"'“”‘’`]+|[.!?,;:\s\"'“”‘’`]+$", "", s or "").strip()
+    return re.sub(r"^[\s\"'â€œâ€â€˜â€™`]+|[.!?,;:\s\"'â€œâ€â€˜â€™`]+$", "", s or "").strip()
 
 
 def ensure_key_columns():
@@ -1137,17 +1137,21 @@ def translate_text(text: str, direction: str = "om_en"):
 
 
 def _get_cached_generated_translation(word_id: int, lang_code: str):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-        SELECT translated_text, tts_audio_url
-        FROM generated_translations
-        WHERE word_id=? AND lang_code=?
-        LIMIT 1
-    """, (word_id, lang_code))
-    row = c.fetchone()
-    conn.close()
-    return row
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT translated_text, tts_audio_url
+            FROM generated_translations
+            WHERE word_id=? AND lang_code=?
+            LIMIT 1
+        """, (word_id, lang_code))
+        row = c.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        app.logger.exception(f"generated_translations cache read failed: {repr(e)}")
+        return None
 
 
 def _save_generated_translation(
@@ -1159,45 +1163,55 @@ def _save_generated_translation(
 ):
     if not translated_text:
         return
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-        INSERT INTO generated_translations
-        (word_id, lang_code, translated_text, provider, tts_audio_url, updated_at)
-        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(word_id, lang_code) DO UPDATE SET
-            translated_text=excluded.translated_text,
-            provider=excluded.provider,
-            tts_audio_url=excluded.tts_audio_url,
-            updated_at=CURRENT_TIMESTAMP
-    """, (word_id, lang_code, translated_text, provider, tts_audio_url))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO generated_translations
+            (word_id, lang_code, translated_text, provider, tts_audio_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(word_id, lang_code) DO UPDATE SET
+                translated_text=excluded.translated_text,
+                provider=excluded.provider,
+                tts_audio_url=excluded.tts_audio_url,
+                updated_at=CURRENT_TIMESTAMP
+        """, (word_id, lang_code, translated_text, provider, tts_audio_url))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.exception(f"generated_translations cache write failed: {repr(e)}")
 
 
 def clear_generated_translations_for_word(word_id: int):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("DELETE FROM generated_translations WHERE word_id=?", (word_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("DELETE FROM generated_translations WHERE word_id=?", (word_id,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.exception(f"generated_translations cache clear failed: {repr(e)}")
 
 
 def _get_word_by_key(source_lang: str, key_text: str):
     if source_lang not in ("om", "en"):
         return None
     col = "oromo_key" if source_lang == "om" else "english_key"
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute(f"""
-        SELECT id, english, oromo
-        FROM words
-        WHERE status='approved' AND {col}=?
-        LIMIT 1
-    """, (key_text,))
-    row = c.fetchone()
-    conn.close()
-    return row
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(f"""
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved' AND {col}=?
+            LIMIT 1
+        """, (key_text,))
+        row = c.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        app.logger.exception(f"base word lookup failed ({source_lang}): {repr(e)}")
+        return None
 
 
 def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
@@ -1222,6 +1236,96 @@ def _get_or_generate_word_translation(word_id: int, english_text: str, target_la
     # TODO: server-side TTS generation can populate tts_audio_url later.
     _save_generated_translation(word_id, target_lang, translated, provider="google_translate_v2", tts_audio_url=None)
     return translated, None, False
+
+
+def safe_translate_multilingual(text: str, source_lang: str, target_lang: str):
+    try:
+        return translate_multilingual(text, source_lang, target_lang)
+    except Exception as e:
+        app.logger.exception(f"translate_multilingual failed: {repr(e)}")
+        return {
+            "text": "",
+            "is_exact": 0,
+            "is_phrase": 0,
+            "is_auto_translation": (target_lang not in ("om", "en") or source_lang not in ("om", "en")),
+            "tts_audio_url": None
+        }
+
+
+def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: str):
+    q = normalize_text(query_text)
+    if not q:
+        return None, None, None, False
+
+    base_row = None
+    pivot_english = None
+
+    if source_lang in ("om", "en"):
+        wkey = make_search_key(_strip_edge_punct(q))
+        if wkey:
+            base_row = _get_word_by_key(source_lang, wkey)
+    else:
+        pivot_english = google_translate_text_v2(
+            q,
+            target="en",
+            source=_google_lang_code(source_lang)
+        )
+        if pivot_english:
+            wkey = make_search_key(_strip_edge_punct(pivot_english))
+            if wkey:
+                base_row = _get_word_by_key("en", wkey)
+
+    if base_row:
+        wid, en, om = base_row
+        target_text = ""
+        tts_audio_url = None
+        is_auto = False
+
+        if target_lang == "en":
+            target_text = en
+        elif target_lang == "om":
+            target_text = om
+        else:
+            try:
+                target_text, tts_audio_url, _ = _get_or_generate_word_translation(wid, en, target_lang)
+            except Exception as e:
+                app.logger.exception(f"dictionary auto translation failed: {repr(e)}")
+                target_text = ""
+                tts_audio_url = None
+
+            if not target_text:
+                # Provider/cache failed; keep page usable with base English as fallback text.
+                target_text = en
+            is_auto = True
+
+        if source_lang == "en":
+            source_text = en
+        elif source_lang == "om":
+            source_text = om
+        else:
+            source_text = q
+
+        result = {
+            "source_text": source_text,
+            "target_text": target_text,
+            "english": en,
+            "oromo": om,
+            "is_auto_translation": is_auto,
+            "tts_audio_url": tts_audio_url
+        }
+        return result, wid, None, True
+
+    # No base word found: translate defensively so page still renders.
+    tr = safe_translate_multilingual(q, source_lang, target_lang)
+    result = {
+        "source_text": q,
+        "target_text": tr.get("text", "") or "",
+        "english": pivot_english or (q if source_lang == "en" else ""),
+        "oromo": "",
+        "is_auto_translation": tr.get("is_auto_translation", False),
+        "tts_audio_url": tr.get("tts_audio_url")
+    }
+    return result, None, None, False
 
 
 def translate_multilingual(text: str, source_lang: str, target_lang: str):
@@ -1569,34 +1673,55 @@ def dictionary():
     result_id = None
     suggestions = None
     audio = None
+    source_lang = "om"
+    target_lang = "en"
+    is_auto_translation = False
+    tts_audio_url = None
+    lookup_error = None
 
     # --- GET search (?q=) ---
     q = request.args.get("q", "").strip()
+    source_lang = (request.args.get("source_lang") or source_lang).strip()
+    target_lang = (request.args.get("target_lang") or target_lang).strip()
 
     # --- POST search (fallback hvis form bruker POST) ---
     if request.method == "POST":
         q = request.form.get("word", "").strip()
+        source_lang = (request.form.get("source_lang") or source_lang).strip()
+        target_lang = (request.form.get("target_lang") or target_lang).strip()
+
+    if not _is_supported_lang(source_lang):
+        source_lang = "om"
+    if not _is_supported_lang(target_lang):
+        target_lang = "en"
+    if source_lang == target_lang:
+        target_lang = "en" if source_lang != "en" else "om"
 
     if q:
-        word = make_search_key(q)
+        try:
+            result, result_id, lookup_error, from_base = _dictionary_lookup_result(q, source_lang, target_lang)
+            is_auto_translation = bool(result and result.get("is_auto_translation"))
+            tts_audio_url = result.get("tts_audio_url") if result else None
 
-        c.execute("""
-            SELECT id, english, oromo
-            FROM words
-            WHERE status='approved'
-            AND (english_key=? OR oromo_key=?)
-        """, (word, word))
-        row = c.fetchone()
+            if result_id:
+                audio = get_approved_audio("word", result_id)
 
-        if row:
-            result_id = row[0]
-            result = (row[1], row[2])
-            audio = get_approved_audio("word", result_id)
-
-        if not row:
-            suggestions = {
-                "en": suggest_terms(word, "en_om"),
-                "om": suggest_terms(word, "om_en")
+            if (not from_base) and source_lang in ("om", "en"):
+                word = make_search_key(q)
+                suggestions = {
+                    "en": suggest_terms(word, "en_om"),
+                    "om": suggest_terms(word, "om_en")
+                }
+        except Exception as e:
+            app.logger.exception(f"/dictionary lookup failed: {repr(e)}")
+            lookup_error = "Translation is temporarily unavailable. Showing base dictionary data."
+            result = {
+                "source_text": q,
+                "target_text": "",
+                "english": "",
+                "oromo": "",
+                "is_auto_translation": False,
+                "tts_audio_url": None
             }
 
     # full dictionary list
@@ -1618,6 +1743,15 @@ def dictionary():
         q=q,
         result=result,
         result_id=result_id,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        language_options=LANGUAGE_OPTIONS,
+        result_is_rtl=_is_rtl_lang(target_lang),
+        source_speech_lang=_speech_lang_code(source_lang),
+        target_speech_lang=_speech_lang_code(target_lang),
+        is_auto_translation=is_auto_translation,
+        tts_audio_url=tts_audio_url,
+        lookup_error=lookup_error,
         audio=audio,
         words=all_words,
         suggestions=suggestions,
@@ -1737,6 +1871,7 @@ def translate():
     phrase_suggestions = None
     is_auto_translation = False
     tts_audio_url = None
+    translate_error = None
 
     if request.method == "POST":
         text = request.form.get("text", "")
@@ -1771,13 +1906,16 @@ def translate():
         if source_lang in ("om", "en"):
             matched, audio = find_exact_base_match(text, source_lang)
 
-        # ✅ IMPORTANT: use multipart translator (handles commas + sentences correctly)
-        tr = translate_multilingual(text, source_lang, target_lang)
+        # âœ… IMPORTANT: use multipart translator (handles commas + sentences correctly)
+        tr = safe_translate_multilingual(text, source_lang, target_lang)
         result = tr["text"]
         is_exact = tr["is_exact"]
         is_phrase = tr["is_phrase"]
         is_auto_translation = tr["is_auto_translation"]
         tts_audio_url = tr["tts_audio_url"]
+
+        if text and not result:
+            translate_error = "Translation service is temporarily unavailable. Please try again."
 
         record_search(text, direction, is_phrase, is_exact)
 
@@ -1805,6 +1943,7 @@ def translate():
         target_speech_lang=_speech_lang_code(target_lang),
         is_auto_translation=is_auto_translation,
         tts_audio_url=tts_audio_url,
+        translate_error=translate_error,
         suggestions=suggestions,
         phrase_suggestions=phrase_suggestions,
         trending=trending,
@@ -2019,7 +2158,7 @@ def translate_multipart_text(text: str, direction: str):
         if seg_text:
             tr, ex, ph = translate_text(seg_text, direction)
 
-            # ✅ IMPORTANT: avoid doubled punctuation when phrase already ends with . or ?
+            # âœ… IMPORTANT: avoid doubled punctuation when phrase already ends with . or ?
             # If input has punctuation, input punctuation should win.
             if ph and punct:
                 tr = _strip_trailing_punct(tr)
@@ -2074,7 +2213,7 @@ def translate_segment_longest_phrase(cur, segment_text: str, direction: str, max
     if not seg:
         return "", 0, 0
 
-    # ✅ Grammar template check FIRST
+    # âœ… Grammar template check FIRST
     if direction == "en_om":
         for pattern, replacement in EN_OM_TEMPLATES:
             if pattern.match(seg):
@@ -2692,7 +2831,7 @@ def recorder_api_submit_audio():
         conn.close()
         return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
-    # ✅ Recorder uploads: replace existing audio (approved + pending) for this entry/lang
+    # âœ… Recorder uploads: replace existing audio (approved + pending) for this entry/lang
     conn.close()
     delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
 
@@ -2706,7 +2845,7 @@ def recorder_api_submit_audio():
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # ✅ auto-approve for recorder
+    # âœ… auto-approve for recorder
     c.execute("""
         INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
         VALUES (?, ?, ?, ?, 'approved')
@@ -2715,7 +2854,7 @@ def recorder_api_submit_audio():
     conn.close()
 
     url = _public_audio_url(rel_path)
-    return jsonify({"ok": True, "message": "Saved ✅ Published now.", "url": url})
+    return jsonify({"ok": True, "message": "Saved âœ… Published now.", "url": url})
 
 
 # ------------------ API AUDIO SUBMISSION (PUBLIC + RECORDER MODE) ------------------
@@ -2746,7 +2885,7 @@ def _handle_audio_submission(is_recorder: bool):
 
     ext = original.rsplit(".", 1)[1].lower()
 
-    # ✅ connect with timeout (prevents “stuck forever” on DB lock)
+    # âœ… connect with timeout (prevents â€œstuck foreverâ€ on DB lock)
     conn = sqlite3.connect(DB_NAME, timeout=30)
     c = conn.cursor()
     try:
@@ -2763,7 +2902,7 @@ def _handle_audio_submission(is_recorder: bool):
             return jsonify({"ok": False, "error": "Entry not found or not approved"}), 404
 
         if is_recorder:
-            # ✅ IMPORTANT: do deletes BEFORE saving file + inserting
+            # âœ… IMPORTANT: do deletes BEFORE saving file + inserting
             conn.close()
             delete_audio_for_entry_lang(entry_type, entry_id, lang, statuses=("approved", "pending"))
 
@@ -2798,7 +2937,7 @@ def _handle_audio_submission(is_recorder: bool):
 
         return jsonify({
             "ok": True,
-            "message": ("Saved ✅ Published now." if is_recorder else "Oromo audio submitted for admin approval."),
+            "message": ("Saved âœ… Published now." if is_recorder else "Oromo audio submitted for admin approval."),
             "status": status,
             "url": _public_audio_url(rel_path)
         })
@@ -2819,9 +2958,9 @@ def _handle_audio_submission(is_recorder: bool):
 def upload_audio(entry_type, entry_id, lang):
     """
     Manual file upload page (public).
-    ✅ Oromo ONLY
-    ✅ Allow unlimited pending submissions
-    ✅ Block only if an APPROVED Oromo audio already exists for this entry
+    âœ… Oromo ONLY
+    âœ… Allow unlimited pending submissions
+    âœ… Block only if an APPROVED Oromo audio already exists for this entry
     """
     entry_type = (entry_type or "").strip().lower()
     lang = (lang or "").strip().lower()
@@ -3574,12 +3713,12 @@ def _db_suggest(clean: str, limit=6):
 
 def _make_lesson_card(entry: dict):
     """
-    Build a small “teacher style” response.
+    Build a small â€œteacher styleâ€ response.
     """
     en = entry["english"]
     om = entry["oromo"]
 
-    # very lightweight “lesson”
+    # very lightweight â€œlessonâ€
     if entry["type"] == "word":
         examples = [
             f"Example (EN): I use **{en}** in a sentence.",
@@ -3597,7 +3736,7 @@ def _make_lesson_card(entry: dict):
     ]
 
     return {
-        "title": f"📘 {entry['type'].capitalize()} lesson",
+        "title": f"ðŸ“˜ {entry['type'].capitalize()} lesson",
         "english": en,
         "oromo": om,
         "examples": examples,
@@ -3635,7 +3774,7 @@ def gadaa_ai_api():
             "reply": {
                 "type": "text",
                 "text": (
-                    "Hi! I’m **Gadaa AI (free demo)**.\n\n"
+                    "Hi! Iâ€™m **Gadaa AI (free demo)**.\n\n"
                     "Try:\n"
                     "- Type a word/phrase in Oromo or English (exact match)\n"
                     "- Ask: `quiz me` or `lesson`\n"
@@ -3712,10 +3851,11 @@ if __name__ == "__main__":
         backfill_keys()
         ensure_key_indexes()
         print("DB migration done")
-        sys.exit(0)   # ✅ VERY IMPORTANT → stop here
+        sys.exit(0)   # âœ… VERY IMPORTANT â†’ stop here
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
