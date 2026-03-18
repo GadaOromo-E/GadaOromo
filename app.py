@@ -503,6 +503,45 @@ def google_translate_batch_v2(texts, target: str, source: str = "en"):
         app.logger.exception(f"Google Translate exception: {repr(e)}")
         return []
 
+# ------------------ MULTILINGUAL TRANSLATION CONFIG ------------------
+
+LANGUAGE_OPTIONS = {
+    "om": {"label": "Oromo", "google_code": "om", "speech_code": "om-ET", "rtl": False},
+    "en": {"label": "English", "google_code": "en", "speech_code": "en-US", "rtl": False},
+    "am": {"label": "Amharic", "google_code": "am", "speech_code": "am-ET", "rtl": False},
+    "ar": {"label": "Arabic", "google_code": "ar", "speech_code": "ar-SA", "rtl": True},
+    "fr": {"label": "French", "google_code": "fr", "speech_code": "fr-FR", "rtl": False},
+    "zh-CN": {"label": "Chinese", "google_code": "zh-CN", "speech_code": "zh-CN", "rtl": False},
+}
+
+def _is_supported_lang(lang_code: str) -> bool:
+    return lang_code in LANGUAGE_OPTIONS
+
+
+def _google_lang_code(lang_code: str) -> str:
+    cfg = LANGUAGE_OPTIONS.get(lang_code, {})
+    return cfg.get("google_code", lang_code)
+
+
+def _speech_lang_code(lang_code: str) -> str:
+    cfg = LANGUAGE_OPTIONS.get(lang_code, {})
+    return cfg.get("speech_code", "en-US")
+
+
+def _is_rtl_lang(lang_code: str) -> bool:
+    cfg = LANGUAGE_OPTIONS.get(lang_code, {})
+    return bool(cfg.get("rtl"))
+
+
+def google_translate_text_v2(text: str, target: str, source: str = "en") -> str:
+    t = normalize_text(text)
+    if not t:
+        return ""
+    out = google_translate_batch_v2([t], target=target, source=source)
+    if not out:
+        return ""
+    return normalize_text(out[0] or "")
+
 
 # ------------------ AUDIO HELPERS ------------------
 
@@ -804,14 +843,37 @@ def ensure_phrase_aliases_table():
     conn.close()
 
 
-# ✅ Run DB init + migrations at startup
+def ensure_generated_translations_table():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS generated_translations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        word_id INTEGER NOT NULL,
+        lang_code TEXT NOT NULL,
+        translated_text TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'google_translate_v2',
+        tts_audio_url TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(word_id, lang_code)
+    )
+    """)
+
+    c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_word_id ON generated_translations(word_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_generated_translations_lang_code ON generated_translations(lang_code)")
+
+    conn.commit()
+    conn.close()
+
+
+# Run DB init + migrations at startup
 init_db()
 ensure_key_columns()
 backfill_keys()
 ensure_key_indexes()
+ensure_generated_translations_table()
 
-
-# ------------------ ANALYTICS HELPERS ------------------
 
 def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int):
     q = normalize_text(raw_query)
@@ -1072,6 +1134,152 @@ def translate_text(text: str, direction: str = "om_en"):
 
     conn.close()
     return " ".join(out), 0, 0
+
+
+def _get_cached_generated_translation(word_id: int, lang_code: str):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        SELECT translated_text, tts_audio_url
+        FROM generated_translations
+        WHERE word_id=? AND lang_code=?
+        LIMIT 1
+    """, (word_id, lang_code))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def _save_generated_translation(
+    word_id: int,
+    lang_code: str,
+    translated_text: str,
+    provider: str = "google_translate_v2",
+    tts_audio_url: str = None
+):
+    if not translated_text:
+        return
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO generated_translations
+        (word_id, lang_code, translated_text, provider, tts_audio_url, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(word_id, lang_code) DO UPDATE SET
+            translated_text=excluded.translated_text,
+            provider=excluded.provider,
+            tts_audio_url=excluded.tts_audio_url,
+            updated_at=CURRENT_TIMESTAMP
+    """, (word_id, lang_code, translated_text, provider, tts_audio_url))
+    conn.commit()
+    conn.close()
+
+
+def clear_generated_translations_for_word(word_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("DELETE FROM generated_translations WHERE word_id=?", (word_id,))
+    conn.commit()
+    conn.close()
+
+
+def _get_word_by_key(source_lang: str, key_text: str):
+    if source_lang not in ("om", "en"):
+        return None
+    col = "oromo_key" if source_lang == "om" else "english_key"
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(f"""
+        SELECT id, english, oromo
+        FROM words
+        WHERE status='approved' AND {col}=?
+        LIMIT 1
+    """, (key_text,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+
+def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
+    if target_lang == "en":
+        return normalize_text(english_text)
+    return google_translate_text_v2(
+        english_text,
+        target=_google_lang_code(target_lang),
+        source="en"
+    )
+
+
+def _get_or_generate_word_translation(word_id: int, english_text: str, target_lang: str):
+    cached = _get_cached_generated_translation(word_id, target_lang)
+    if cached and normalize_text(cached[0] or ""):
+        return normalize_text(cached[0]), cached[1], True
+
+    translated = _auto_translate_from_english(english_text, target_lang)
+    if not translated:
+        return "", None, False
+
+    # TODO: server-side TTS generation can populate tts_audio_url later.
+    _save_generated_translation(word_id, target_lang, translated, provider="google_translate_v2", tts_audio_url=None)
+    return translated, None, False
+
+
+def translate_multilingual(text: str, source_lang: str, target_lang: str):
+    t = normalize_text(text)
+    if not t:
+        return {"text": "", "is_exact": 0, "is_phrase": 0, "is_auto_translation": False, "tts_audio_url": None}
+
+    if source_lang == target_lang:
+        return {"text": t, "is_exact": 1, "is_phrase": 0, "is_auto_translation": False, "tts_audio_url": None}
+
+    if source_lang == "om":
+        english_text, is_exact, is_phrase = translate_multipart_text(t, "om_en")
+        english_text = normalize_text(english_text)
+        if target_lang == "en":
+            return {"text": english_text, "is_exact": is_exact, "is_phrase": is_phrase, "is_auto_translation": False, "tts_audio_url": None}
+
+        tokens = t.split()
+        if len(tokens) == 1:
+            row = _get_word_by_key("om", make_search_key(_strip_edge_punct(tokens[0])))
+            if row:
+                translated, tts_url, _ = _get_or_generate_word_translation(row[0], row[1], target_lang)
+                if translated:
+                    return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
+
+        translated = _auto_translate_from_english(english_text, target_lang) if english_text else ""
+        return {"text": translated, "is_exact": is_exact, "is_phrase": is_phrase, "is_auto_translation": bool(translated), "tts_audio_url": None}
+
+    if source_lang == "en":
+        if target_lang == "om":
+            out, is_exact, is_phrase = translate_multipart_text(t, "en_om")
+            return {"text": out, "is_exact": is_exact, "is_phrase": is_phrase, "is_auto_translation": False, "tts_audio_url": None}
+
+        tokens = t.split()
+        if len(tokens) == 1:
+            row = _get_word_by_key("en", make_search_key(_strip_edge_punct(tokens[0])))
+            if row:
+                translated, tts_url, _ = _get_or_generate_word_translation(row[0], row[1], target_lang)
+                if translated:
+                    return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
+
+        translated = _auto_translate_from_english(t, target_lang)
+        return {"text": translated, "is_exact": 0, "is_phrase": 0, "is_auto_translation": bool(translated), "tts_audio_url": None}
+
+    # Non-base source languages always pivot through English.
+    src_google = _google_lang_code(source_lang)
+    source_to_english = google_translate_text_v2(t, target="en", source=src_google)
+    if not source_to_english:
+        return {"text": "", "is_exact": 0, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": None}
+
+    if target_lang == "en":
+        return {"text": source_to_english, "is_exact": 0, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": None}
+
+    if target_lang == "om":
+        out, is_exact, is_phrase = translate_multipart_text(source_to_english, "en_om")
+        return {"text": out, "is_exact": is_exact, "is_phrase": is_phrase, "is_auto_translation": True, "tts_audio_url": None}
+
+    out = _auto_translate_from_english(source_to_english, target_lang)
+    return {"text": out, "is_exact": 0, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": None}
 
 
 import re
@@ -1472,85 +1680,109 @@ def phrase_key_candidates(s: str):
     return cands
 
 
+def find_exact_base_match(text: str, source_lang: str):
+    if source_lang not in ("om", "en"):
+        return None, None
+
+    clean_exact = normalize_text(text)
+    key_candidates = build_key_candidates(text)
+    phrase_col = "oromo_key" if source_lang == "om" else "english_key"
+    word_col = "oromo_key" if source_lang == "om" else "english_key"
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    matched = None
+    audio = None
+
+    if key_candidates:
+        for k in key_candidates:
+            pr = c.execute(
+                f"SELECT id FROM phrases WHERE status='approved' AND {phrase_col}=? LIMIT 1",
+                (k,)
+            ).fetchone()
+            if pr:
+                matched = {"type": "phrase", "id": pr[0]}
+                audio = get_approved_audio("phrase", pr[0])
+                break
+
+    if not matched:
+        tokens = [t for t in _TOKEN_RE.findall(clean_exact) if not t.isspace()]
+        word_tokens = [t for t in tokens if re.fullmatch(r"[\w']+", t)]
+        if len(word_tokens) == 1 and len([t for t in tokens if re.fullmatch(r"[\w']+", t)]) == 1:
+            wkey = make_search_key(word_tokens[0])
+            if wkey:
+                wr = c.execute(
+                    f"SELECT id FROM words WHERE status='approved' AND {word_col}=? LIMIT 1",
+                    (wkey,)
+                ).fetchone()
+                if wr:
+                    matched = {"type": "word", "id": wr[0]}
+                    audio = get_approved_audio("word", wr[0])
+
+    conn.close()
+    return matched, audio
+
+
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
     result = None
     text = ""
-    direction = "auto"
+    direction = "om_en"
+    source_lang = "om"
+    target_lang = "en"
     suggestions = None
     audio = None
     matched = None
+    phrase_suggestions = None
+    is_auto_translation = False
+    tts_audio_url = None
 
     if request.method == "POST":
         text = request.form.get("text", "")
-        direction = request.form.get("direction", "auto")
+        source_lang = (request.form.get("source_lang") or "").strip()
+        target_lang = (request.form.get("target_lang") or "").strip()
+        legacy_direction = (request.form.get("direction") or "").strip()
 
-        if direction == "auto":
-            direction = detect_direction_auto(text)
+        # Backward compatibility for old form payloads
+        if not source_lang or not target_lang:
+            if legacy_direction == "om_en":
+                source_lang, target_lang = "om", "en"
+            elif legacy_direction == "en_om":
+                source_lang, target_lang = "en", "om"
+            elif legacy_direction == "auto":
+                detected = detect_direction_auto(text)
+                source_lang, target_lang = ("om", "en") if detected == "om_en" else ("en", "om")
 
-        clean_exact = normalize_text(text)
-        key_candidates = build_key_candidates(text)
+        if not _is_supported_lang(source_lang):
+            source_lang = "om"
+        if not _is_supported_lang(target_lang):
+            target_lang = "en"
+        if source_lang == target_lang:
+            target_lang = "en" if source_lang != "en" else "om"
 
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
+        if source_lang == "om" and target_lang == "en":
+            direction = "om_en"
+        elif source_lang == "en" and target_lang == "om":
+            direction = "en_om"
+        else:
+            direction = f"{source_lang}_{target_lang}"
 
-        # --- exact phrase match (case-insensitive via *_key) ---
-        if key_candidates:
-            if direction == "om_en":
-                for k in key_candidates:
-                    pr = c.execute(
-                        "SELECT id FROM phrases WHERE status='approved' AND oromo_key=? LIMIT 1",
-                        (k,)
-                    ).fetchone()
-                    if pr:
-                        matched = {"type": "phrase", "id": pr[0]}
-                        audio = get_approved_audio("phrase", pr[0])
-                        break
-            else:
-                for k in key_candidates:
-                    pr = c.execute(
-                        "SELECT id FROM phrases WHERE status='approved' AND english_key=? LIMIT 1",
-                        (k,)
-                    ).fetchone()
-                    if pr:
-                        matched = {"type": "phrase", "id": pr[0]}
-                        audio = get_approved_audio("phrase", pr[0])
-                        break
-
-        # --- exact word match (only if input is truly a single word-like token) ---
-        if not matched:
-            tokens = [t for t in _TOKEN_RE.findall(clean_exact) if not t.isspace()]
-            word_tokens = [t for t in tokens if re.fullmatch(r"[\w']+", t)]
-            # exactly one word token, and nothing else word-like
-            if len(word_tokens) == 1 and len([t for t in tokens if re.fullmatch(r"[\w']+", t)]) == 1:
-                wkey = make_search_key(word_tokens[0])
-                if wkey:
-                    if direction == "om_en":
-                        wr = c.execute(
-                            "SELECT id FROM words WHERE status='approved' AND oromo_key=? LIMIT 1",
-                            (wkey,)
-                        ).fetchone()
-                    else:
-                        wr = c.execute(
-                            "SELECT id FROM words WHERE status='approved' AND english_key=? LIMIT 1",
-                            (wkey,)
-                        ).fetchone()
-
-                    if wr:
-                        matched = {"type": "word", "id": wr[0]}
-                        audio = get_approved_audio("word", wr[0])
-
-        conn.close()
+        if source_lang in ("om", "en"):
+            matched, audio = find_exact_base_match(text, source_lang)
 
         # ✅ IMPORTANT: use multipart translator (handles commas + sentences correctly)
-        translated, is_exact, is_phrase = translate_multipart_text(text, direction)
+        tr = translate_multilingual(text, source_lang, target_lang)
+        result = tr["text"]
+        is_exact = tr["is_exact"]
+        is_phrase = tr["is_phrase"]
+        is_auto_translation = tr["is_auto_translation"]
+        tts_audio_url = tr["tts_audio_url"]
 
         record_search(text, direction, is_phrase, is_exact)
-        result = translated
 
-        # suggestions only for single word not exact
-        # (use improved single-word detection rather than split())
-        if not is_exact:
+        if source_lang in ("om", "en") and target_lang in ("om", "en") and not is_exact:
+            clean_exact = normalize_text(text)
             tokens = [t for t in _TOKEN_RE.findall(clean_exact) if not t.isspace()]
             word_tokens = [t for t in tokens if re.fullmatch(r"[\w']+", t)]
             if len(word_tokens) == 1:
@@ -1565,7 +1797,16 @@ def translate():
         result=result,
         text=text,
         direction=direction,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        language_options=LANGUAGE_OPTIONS,
+        result_is_rtl=_is_rtl_lang(target_lang),
+        source_speech_lang=_speech_lang_code(source_lang),
+        target_speech_lang=_speech_lang_code(target_lang),
+        is_auto_translation=is_auto_translation,
+        tts_audio_url=tts_audio_url,
         suggestions=suggestions,
+        phrase_suggestions=phrase_suggestions,
         trending=trending,
         matched=matched,
         audio=audio,
@@ -2764,41 +3005,8 @@ def admin_manage():
     if request.method == "POST":
         action = (request.form.get("action") or "").strip()
 
-        if action == "add_admin":
-            email = (request.form.get("email") or "").strip().lower()
-            password = request.form.get("password") or ""
-            if not email or not password:
-                msg = "Email and password are required."
-            else:
-                conn = sqlite3.connect(DB_NAME)
-                c = conn.cursor()
-                c.execute("SELECT 1 FROM admin WHERE email=?", (email,))
-                if c.fetchone():
-                    msg = "Admin already exists with that email."
-                else:
-                    c.execute(
-                        "INSERT INTO admin (email, password) VALUES (?, ?)",
-                        (email, generate_password_hash(password))
-                    )
-                    conn.commit()
-                    msg = "Admin added."
-                conn.close()
-
-        elif action == "delete_admin":
-            admin_id_raw = (request.form.get("admin_id") or "").strip()
-            if not admin_id_raw.isdigit():
-                msg = "Invalid admin id."
-            else:
-                admin_id = int(admin_id_raw)
-                if admin_id == _admin_id():
-                    msg = "You cannot delete your own account."
-                else:
-                    conn = sqlite3.connect(DB_NAME)
-                    c = conn.cursor()
-                    c.execute("DELETE FROM admin WHERE id=?", (admin_id,))
-                    conn.commit()
-                    conn.close()
-                    msg = "Admin deleted."
+        if action in ("add_admin", "delete_admin"):
+            msg = "Admin account changes are disabled here. Use password management only."
 
         elif action == "update_word":
             wid_raw = (request.form.get("word_id") or "").strip()
@@ -2825,8 +3033,14 @@ def admin_manage():
                     if c.fetchone():
                         msg = "Duplicate conflict: another word already uses that English or Oromo."
                     else:
-                        c.execute("UPDATE words SET english=?, oromo=? WHERE id=?", (en, om, wid))
+                        en_key = make_search_key(_strip_edge_punct(en))
+                        om_key = make_search_key(_strip_edge_punct(om))
+                        c.execute(
+                            "UPDATE words SET english=?, oromo=?, english_key=?, oromo_key=? WHERE id=?",
+                            (en, om, en_key, om_key, wid)
+                        )
                         conn.commit()
+                        clear_generated_translations_for_word(wid)
                         msg = "Word updated."
                 conn.close()
 
@@ -2843,6 +3057,7 @@ def admin_manage():
                 c.execute("DELETE FROM words WHERE id=? AND status='approved'", (wid,))
                 conn.commit()
                 conn.close()
+                clear_generated_translations_for_word(wid)
                 msg = "Word deleted permanently."
 
         elif action == "update_phrase":
@@ -2870,8 +3085,14 @@ def admin_manage():
                     if c.fetchone():
                         msg = "Duplicate conflict: another phrase already uses that English or Oromo."
                     else:
-                        c.execute("UPDATE phrases SET english=?, oromo=? WHERE id=?", (en, om, pid))
+                        en_key = make_search_key(_strip_edge_punct(en))
+                        om_key = make_search_key(_strip_edge_punct(om))
+                        c.execute(
+                            "UPDATE phrases SET english=?, oromo=?, english_key=?, oromo_key=? WHERE id=?",
+                            (en, om, en_key, om_key, pid)
+                        )
                         conn.commit()
+                        upsert_phrase_aliases(pid, en, om, source="admin_manage")
                         msg = "Phrase updated."
                 conn.close()
 
@@ -2898,9 +3119,6 @@ def admin_manage():
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-
-    c.execute("SELECT id, email FROM admin ORDER BY id ASC")
-    admins = c.fetchall()
 
     if word_q:
         q = "%" + normalize_text(word_q) + "%"
@@ -2945,7 +3163,6 @@ def admin_manage():
     return render_template(
         "admin_manage.html",
         msg=msg,
-        admins=admins,
         approved_words=approved_words,
         approved_phrases=approved_phrases,
         word_q=word_q,
@@ -3499,4 +3716,6 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
+
 

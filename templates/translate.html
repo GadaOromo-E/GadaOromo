@@ -15,11 +15,11 @@
 </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 
-  <!-- ✅ PWA -->
+  <!-- ? PWA -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
 
-  <!-- ✅ iOS -->
+  <!-- ? iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
@@ -34,9 +34,9 @@
 
 <div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
   <div style="text-align:center;">
-    <div style="font-size:42px;">📘</div>
+    <div style="font-size:42px;">??</div>
     <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
-    <div class="muted" style="margin-top:6px;">Loading…</div>
+    <div class="muted" style="margin-top:6px;">Loading�</div>
   </div>
 </div>
 <script>
@@ -62,7 +62,7 @@
 <div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
   <b>Install on iPhone</b>
   <div class="muted" style="margin-top:6px; line-height:1.5;">
-    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+    Tap <b>Share</b> (??) ? <b>Add to Home Screen</b>.
   </div>
 </div>
 
@@ -73,50 +73,54 @@
 <div class="container">
 <header class="topbar">
   <div class="brand">
-    <h1>🌍 Oromo ↔ English Translator</h1>
+    <h1>Oromo Multilingual Translator</h1>
     <p class="tagline">
-      {% if direction == "om_en" %}Detected/Selected: Oromo → English
-      {% elif direction == "en_om" %}Detected/Selected: English → Oromo
-      {% else %}Detected/Selected: Auto{% endif %}
+      Selected: {{ language_options[source_lang].label }} -> {{ language_options[target_lang].label }}
     </p>
   </div>
 
   <div class="topbar-right">
     <div class="mini-copy">
-      <span class="copy-year">© 2026</span>
+      <span class="copy-year">� 2026</span>
       <span class="copy-name">Gadaa</span>
     </div>
 
     <button id="installBtn" class="btn install-mini" type="button" style="display:none;">
-  ⬇️ Install App
+  ?? Install App
 </button>
   </div>
 </header>
 <div class="app-shell">
 
   <aside class="side-menu">
-    <a class="side-link" href="/">🏠 Home</a>
-    <a class="side-link" href="/dictionary">📖 Dictionary</a>
-    <a class="side-link" href="/translate">🌍 Translate</a>
-    <a class="side-link" href="/submit">➕ Submit Word</a>
-    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
-    <a class="side-link" href="/recorder">🎙 Add Voice</a>
-    <a class="side-link" href="/learn">📚 Learn</a>
-    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
-    <a class="side-link" href="/support">❤️ Donate</a>
-    <a class="side-link" href="/admin">🔒 Admin login</a>
+    <a class="side-link" href="/">?? Home</a>
+    <a class="side-link" href="/dictionary">?? Dictionary</a>
+    <a class="side-link" href="/translate">?? Translate</a>
+    <a class="side-link" href="/submit">? Submit Word</a>
+    <a class="side-link" href="/submit_phrase">? Submit Phrase</a>
+    <a class="side-link" href="/recorder">?? Add Voice</a>
+    <a class="side-link" href="/learn">?? Learn</a>
+    <a class="side-link" href="/gadaa-ai">?? Gadaa AI</a>
+    <a class="side-link" href="/support">?? Donate</a>
+    <a class="side-link" href="/admin">?? Admin login</a>
   </aside>
 <main class="content" id="main">
   <div class="card">
     <form method="POST" id="translateForm">
       <div class="row">
-        <select name="direction" id="directionSelect">
-          <option value="auto" {% if direction == "auto" %}selected{% endif %}>Auto Detect</option>
-          <option value="om_en" {% if direction == "om_en" %}selected{% endif %}>Oromo → English</option>
-          <option value="en_om" {% if direction == "en_om" %}selected{% endif %}>English → Oromo</option>
+        <select name="source_lang" id="sourceLangSelect">
+          {% for code, cfg in language_options.items() %}
+            <option value="{{ code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
+          {% endfor %}
         </select>
 
-        <button type="button" onclick="startVoice()">🎤 Speak</button>
+        <select name="target_lang" id="targetLangSelect">
+          {% for code, cfg in language_options.items() %}
+            <option value="{{ code }}" {% if target_lang == code %}selected{% endif %}>To: {{ cfg.label }}</option>
+          {% endfor %}
+        </select>
+
+        <button type="button" onclick="startVoice()">?? Speak</button>
       </div>
 
       <textarea name="text" id="textInput" placeholder="Type word or sentence..." required oninput="autoGrow(this)">{{ text or "" }}</textarea>
@@ -124,33 +128,41 @@
       <div class="bottom-bar">
         <div class="bottom-actions">
           <button type="submit">Translate</button>
-          <a class="btn" href="javascript:void(0)" onclick="speakInput()">🔊 Speak Input</a>
+          <a class="btn" href="javascript:void(0)" onclick="speakInput()">?? Speak Input</a>
         </div>
       </div>
 
       <div class="small-actions">
-        <button type="button" class="btn" onclick="clearInput()">🧹 Clear</button>
-        <button type="button" class="btn" onclick="swapDirection()">🔁 Swap</button>
+        <button type="button" class="btn" onclick="clearInput()">?? Clear</button>
+        <button type="button" class="btn" onclick="swapDirection()">?? Swap</button>
       </div>
     </form>
 
     {% if result %}
       <div class="result-box">
-        <strong>Result:</strong> <span id="resultText">{{ result }}</span>
+        <strong>Result:</strong> <span id="resultText" {% if result_is_rtl %}dir="rtl" style="display:inline-block; text-align:right; width:100%;"{% endif %}>{{ result }}</span>{% if is_auto_translation %}<span class="chip" style="margin-left:8px;">Auto translation</span>{% endif %}
       </div>
 
       <div class="small-actions">
-        <button type="button" class="btn" onclick="speakResult()">🔊 Speak Result</button>
-        <button type="button" class="btn" onclick="copyResult()">📋 Copy Result</button>
+        <button type="button" class="btn" onclick="speakResult()">?? Speak Result</button>
+        <button type="button" class="btn" onclick="copyResult()">?? Copy Result</button>
       </div>
+      {% if tts_audio_url %}
+        <div style="margin-top:10px;">
+          <div class="subtle">Generated audio</div>
+          <audio controls style="width:100%;">
+            <source src="{{ tts_audio_url }}">
+          </audio>
+        </div>
+      {% endif %}
     {% else %}
-      <div class="result-box" style="opacity:0.85;">Result will appear here…</div>
+      <div class="result-box" style="opacity:0.85;">Result will appear here�</div>
     {% endif %}
 
     <!-- ===== Community Audio (approved) ===== -->
     {% if audio and (audio.oromo or audio.english) %}
       <div style="margin-top:14px;">
-        <h2>🎧 Community Pronunciation</h2>
+        <h2>?? Community Pronunciation</h2>
 
         {% if audio.oromo %}
           <div class="subtle">Oromo audio (saved)</div>
@@ -169,7 +181,7 @@
     {% elif result %}
       <!-- show a helpful message when there is a result but no matched audio -->
       <div style="margin-top:14px;">
-        <h2>🎧 Community Pronunciation</h2>
+        <h2>?? Community Pronunciation</h2>
         <div class="muted">No saved Oromo audio found for this translation yet.</div>
       </div>
     {% endif %}
@@ -177,7 +189,7 @@
     <!-- ===== Inline Recording (public, ONLY when exact match exists) ===== -->
     {% if matched %}
       <div style="margin-top:14px;">
-        <h2>🎙 Help the community</h2>
+        <h2>?? Help the community</h2>
         <div class="muted" style="margin-top:6px;">
           Record Oromo pronunciation here. It becomes public after admin approval.
         </div>
@@ -205,7 +217,7 @@
                 data-entry-id="{{ matched.id }}"
                 data-lang="oromo"
                 title="Record Oromo pronunciation"
-              >🎙 Record Oromo</button>
+              >?? Record Oromo</button>
 
               <button
                 type="button"
@@ -215,7 +227,7 @@
                 data-entry-id="{{ matched.id }}"
                 data-lang="oromo"
                 style="display:none;"
-              >⏹ Stop</button>
+              >? Stop</button>
             </div>
 
             <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
@@ -229,7 +241,7 @@
                 data-entry-id="{{ matched.id }}"
                 data-lang="oromo"
                 style="display:none;"
-              >✅ Submit</button>
+              >? Submit</button>
 
               <button
                 type="button"
@@ -239,13 +251,13 @@
                 data-entry-id="{{ matched.id }}"
                 data-lang="oromo"
                 style="display:none;"
-              >🔁 Re-record</button>
+              >?? Re-record</button>
             </div>
 
             <div class="muted" data-status style="margin-top:8px;"></div>
           </div>
         {% else %}
-          <div class="muted" style="margin-top:10px;">✅ Oromo audio already approved for this {{ matched.type }}.</div>
+          <div class="muted" style="margin-top:10px;">? Oromo audio already approved for this {{ matched.type }}.</div>
         {% endif %}
 
         <div class="small-actions" style="margin-top:10px;">
@@ -256,7 +268,7 @@
 
     {% if suggestions %}
       <div style="margin-top:14px;">
-        <h2>Did you mean…</h2>
+        <h2>Did you mean�</h2>
 
         {% if suggestions.closest and suggestions.closest|length > 0 %}
           <div class="subtle">Closest matches</div>
@@ -289,7 +301,7 @@
 
 {% if phrase_suggestions and phrase_suggestions|length > 0 %}
   <div style="margin-top:14px;">
-    <h2>✅ Phrase suggestions found in your input</h2>
+    <h2>? Phrase suggestions found in your input</h2>
     <div class="muted" style="margin-top:6px;">
       These are approved phrases that match parts of what you typed.
     </div>
@@ -316,7 +328,7 @@
 
     {% if trending %}
       <div style="margin-top:14px;">
-        <h2>🔥 Trending</h2>
+        <h2>?? Trending</h2>
         <div class="chips">
           {% for row in trending %}
             <span class="chip" onclick="useSuggestion('{{ row[0]|e }}')">{{ row[0] }}</span>
@@ -335,10 +347,14 @@ window.addEventListener("load", ()=>{ const ta=document.getElementById("textInpu
 function useSuggestion(text){ const ta=document.getElementById("textInput"); ta.value=text; autoGrow(ta); document.getElementById("translateForm").submit(); }
 function clearInput(){ const ta=document.getElementById("textInput"); ta.value=""; autoGrow(ta); ta.focus(); }
 function swapDirection(){
-  const sel=document.getElementById("directionSelect");
-  if(sel.value==="om_en") sel.value="en_om";
-  else if(sel.value==="en_om") sel.value="om_en";
-  else sel.value="en_om";
+  const src=document.getElementById("sourceLangSelect");
+  const dst=document.getElementById("targetLangSelect");
+  const oldSrc=src.value;
+  src.value=dst.value;
+  dst.value=oldSrc;
+  if(src.value===dst.value){
+    dst.value=(src.value==="en") ? "om" : "en";
+  }
 }
 function copyResult(){
   const el=document.getElementById("resultText");
@@ -376,24 +392,19 @@ function speakText(text, langCode){
 
 function speakInput(){
   const txt=document.getElementById("textInput").value;
-  const dir=document.getElementById("directionSelect").value;
-  const lang=(dir==="om_en") ? "om-ET" : "en-US";
-  speakText(txt, lang);
+  speakText(txt, "{{ source_speech_lang }}");
 }
 function speakResult(){
   const el=document.getElementById("resultText");
   const txt=el?el.innerText:"";
-  const dir=document.getElementById("directionSelect").value;
-  const lang=(dir==="om_en") ? "en-US" : "om-ET";
-  speakText(txt, lang);
+  speakText(txt, "{{ target_speech_lang }}");
 }
 
 function startVoice(){
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if(!SpeechRecognition) return alert("Voice input not supported. Use Chrome on PC/Android.");
   const recognition=new SpeechRecognition();
-  const dir=document.getElementById("directionSelect").value;
-  recognition.lang=(dir==="om_en") ? "om-ET" : "en-US";
+  recognition.lang="{{ source_speech_lang }}";
   recognition.interimResults=false;
 
   recognition.onresult=function(event){
@@ -407,7 +418,7 @@ function startVoice(){
 </script>
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
-<!-- ✅ bump to ensure new audio.js loads -->
+<!-- ? bump to ensure new audio.js loads -->
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260125-3"></script>
 
 </body>
