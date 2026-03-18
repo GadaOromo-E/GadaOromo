@@ -7,6 +7,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dictionary | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+  <style>
+    .translation-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    .translation-table th,
+    .translation-table td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: center;
+    }
+    .translation-table th {
+      background: #f5f5f5;
+    }
+    .translation-table td:first-child {
+      font-weight: 700;
+      text-align: left;
+      white-space: nowrap;
+    }
+  </style>
 </head>
 <body>
 <div class="container">
@@ -98,24 +119,37 @@
         {% if result.oromo or other_translations %}
           <div style="margin-top:12px;">
             <div class="subtle"><b>Available meanings</b></div>
-            <div style="margin-top:8px; display:grid; gap:8px;">
-              {% if result.oromo %}
-                <div class="result-box" style="margin:0;">
-                  <div><b>Oromo:</b></div>
-                  <div>{{ result.oromo }}</div>
-                </div>
-              {% endif %}
-              {% for code in ["am", "ar", "fr", "zh-CN"] %}
-                {% if other_translations.get(code) %}
-                  <div class="result-box" style="margin:0;">
-                    <div><b>{{ language_options[code].label }}:</b></div>
-                    <div {% if code == "ar" %}dir="rtl" style="text-align:right;"{% endif %}>
-                      {{ other_translations[code].text }}
-                    </div>
-                  </div>
-                {% endif %}
-              {% endfor %}
-            </div>
+            {% set am_text = other_translations.get("am", {}).get("text", "-") %}
+            {% set ar_text = other_translations.get("ar", {}).get("text", "-") %}
+            {% set zh_text = other_translations.get("zh-CN", {}).get("text", "-") %}
+            {% set fr_text = other_translations.get("fr", {}).get("text", "-") %}
+            <table class="translation-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Amharic</th>
+                  <th>Arabic</th>
+                  <th>Chinese</th>
+                  <th>French</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>English</td>
+                  <td>{{ am_text }}</td>
+                  <td dir="rtl">{{ ar_text }}</td>
+                  <td>{{ zh_text }}</td>
+                  <td>{{ fr_text }}</td>
+                </tr>
+                <tr>
+                  <td>Oromo</td>
+                  <td>{{ am_text }}</td>
+                  <td dir="rtl">{{ ar_text }}</td>
+                  <td>{{ zh_text }}</td>
+                  <td>{{ fr_text }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         {% endif %}
 

@@ -7,6 +7,27 @@
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .translation-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    .translation-table th,
+    .translation-table td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: center;
+    }
+    .translation-table th {
+      background: #f5f5f5;
+    }
+    .translation-table td:first-child {
+      font-weight: 700;
+      text-align: left;
+      white-space: nowrap;
+    }
+  </style>
 
   <script type="application/ld+json">
   {
@@ -38,23 +59,37 @@
     {% if word.om or other_translations %}
       <div style="margin-top:12px;">
         <b>Available meanings</b>
-        <div style="margin-top:8px; display:grid; gap:8px;">
-          {% if word.om %}
-            <div><b>Oromo:</b> {{ word.om }}</div>
-          {% endif %}
-          {% if other_translations.get("am") %}
-            <div><b>Amharic:</b> {{ other_translations["am"].text }}</div>
-          {% endif %}
-          {% if other_translations.get("ar") %}
-            <div><b>Arabic:</b> <span dir="rtl" style="display:inline-block; text-align:right;">{{ other_translations["ar"].text }}</span></div>
-          {% endif %}
-          {% if other_translations.get("fr") %}
-            <div><b>French:</b> {{ other_translations["fr"].text }}</div>
-          {% endif %}
-          {% if other_translations.get("zh-CN") %}
-            <div><b>Chinese:</b> {{ other_translations["zh-CN"].text }}</div>
-          {% endif %}
-        </div>
+        {% set am_text = other_translations.get("am", {}).get("text", "-") %}
+        {% set ar_text = other_translations.get("ar", {}).get("text", "-") %}
+        {% set zh_text = other_translations.get("zh-CN", {}).get("text", "-") %}
+        {% set fr_text = other_translations.get("fr", {}).get("text", "-") %}
+        <table class="translation-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Amharic</th>
+              <th>Arabic</th>
+              <th>Chinese</th>
+              <th>French</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>English</td>
+              <td>{{ am_text }}</td>
+              <td dir="rtl">{{ ar_text }}</td>
+              <td>{{ zh_text }}</td>
+              <td>{{ fr_text }}</td>
+            </tr>
+            <tr>
+              <td>Oromo</td>
+              <td>{{ am_text }}</td>
+              <td dir="rtl">{{ ar_text }}</td>
+              <td>{{ zh_text }}</td>
+              <td>{{ fr_text }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     {% endif %}
 

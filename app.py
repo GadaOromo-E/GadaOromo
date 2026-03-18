@@ -540,6 +540,7 @@ LANGUAGE_OPTIONS = {
     "fr": {"label": "French", "google_code": "fr", "speech_code": "fr-FR", "rtl": False},
     "zh-CN": {"label": "Chinese", "google_code": "zh-CN", "speech_code": "zh-CN", "rtl": False},
 }
+EXTRA_GENERATED_LANGS = ("am", "ar", "zh-CN", "fr")
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -558,6 +559,107 @@ def _speech_lang_code(lang_code: str) -> str:
 def _is_rtl_lang(lang_code: str) -> bool:
     cfg = LANGUAGE_OPTIONS.get(lang_code, {})
     return bool(cfg.get("rtl"))
+
+
+def _upsert_pending_word_base(conn, english_text: str, oromo_text: str):
+    """
+    Insert a pending base word or safely complete an existing partial row.
+    Returns: (word_id, inserted_new, repaired_existing_partial)
+    """
+    en = normalize_text(english_text or "")
+    om = normalize_text(oromo_text or "")
+    en_key = make_search_key(_strip_edge_punct(en))
+    om_key = make_search_key(_strip_edge_punct(om))
+
+    if not en or not om or not en_key or not om_key:
+        return None, False, False
+
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, english, oromo
+        FROM words
+        WHERE english_key=? OR oromo_key=? OR english=? OR oromo=?
+        LIMIT 1
+    """, (en_key, om_key, en, om))
+    row = c.fetchone()
+
+    if row:
+        wid, existing_en, existing_om = row
+        existing_en_norm = normalize_text(existing_en or "")
+        existing_om_norm = normalize_text(existing_om or "")
+
+        merged_en = existing_en_norm or en
+        merged_om = existing_om_norm or om
+        merged_en_key = make_search_key(_strip_edge_punct(merged_en))
+        merged_om_key = make_search_key(_strip_edge_punct(merged_om))
+
+        repaired = (merged_en != existing_en_norm) or (merged_om != existing_om_norm)
+        if repaired:
+            c.execute(
+                "UPDATE words SET english=?, oromo=?, english_key=?, oromo_key=? WHERE id=?",
+                (merged_en, merged_om, merged_en_key, merged_om_key, wid),
+            )
+        return wid, False, repaired
+
+    c.execute(
+        "INSERT INTO words (english, oromo, english_key, oromo_key, status) VALUES (?, ?, ?, ?, 'pending')",
+        (en, om, en_key, om_key),
+    )
+    return c.lastrowid, True, False
+
+
+def _cache_extra_translations_for_words(word_items):
+    """
+    Best-effort cache warmup for extra languages.
+    word_items: list[(word_id, english_text)]
+    """
+    if not word_items:
+        return 0
+
+    cached_count = 0
+
+    for lang in EXTRA_GENERATED_LANGS:
+        try:
+            missing_ids = []
+            missing_english = []
+
+            for wid, en in word_items:
+                if not wid or not en:
+                    continue
+                cached = _get_cached_generated_translation(wid, lang)
+                if cached and normalize_text(cached[0] or ""):
+                    continue
+                missing_ids.append(wid)
+                missing_english.append(en)
+
+            if not missing_english:
+                continue
+
+            translated_list = google_translate_batch_v2(
+                missing_english,
+                target=_google_lang_code(lang),
+                source="en",
+            )
+            if not translated_list or len(translated_list) != len(missing_english):
+                continue
+
+            for wid, translated in zip(missing_ids, translated_list):
+                translated_text = normalize_text(translated or "")
+                if not translated_text:
+                    continue
+                _save_generated_translation(
+                    wid,
+                    lang,
+                    translated_text,
+                    provider="google_translate_v2",
+                    tts_audio_url=None,
+                )
+                cached_count += 1
+        except Exception as e:
+            app.logger.exception(f"extra translation cache warmup failed for lang={lang}: {repr(e)}")
+            continue
+
+    return cached_count
 
 
 def google_translate_text_v2(text: str, target: str, source: str = "en") -> str:
@@ -2508,31 +2610,24 @@ def submit():
 
             inserted = 0
             skipped = 0
+            repaired = 0
 
             conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-
             for en, om in pairs:
-                c.execute(
-                    "SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1",
-                    (en, om),
-                )
-                if c.fetchone():
+                _wid, was_inserted, was_repaired = _upsert_pending_word_base(conn, en, om)
+                if was_inserted:
+                    inserted += 1
+                elif was_repaired:
+                    repaired += 1
+                else:
                     skipped += 1
-                    continue
-
-                c.execute(
-                    "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
-                    (en, om),
-                )
-                inserted += 1
 
             conn.commit()
             conn.close()
 
             msg = (
                 f"Thanks! File submitted. "
-                f"Added: {inserted} | Skipped duplicates: {skipped}. "
+                f"Added: {inserted} | Completed partial entries: {repaired} | Skipped duplicates: {skipped}. "
                 f"Waiting for admin approval."
             )
             return render_template("submit.html", msg=msg)
@@ -2550,26 +2645,16 @@ def submit():
         
 
         conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        
-        # duplicate check via *_key (case-insensitive)
-        c.execute(
-            "SELECT 1 FROM words WHERE english_key=? OR oromo_key=?",
-            (english_key, oromo_key),
-        )
-        if c.fetchone():
-            conn.close()
-            msg = "This word already exists (or is pending). Try another."
-            return render_template("submit.html", msg=msg)
-        
-         # insert original + key
-         
-        c.execute(
-            "INSERT INTO words (english, oromo,english_key, oromo_key, status) VALUES (?, ?, ?, ?, 'pending')",
-            (english_raw, oromo_raw, english_key, oromo_key),
-        )
+        _wid, was_inserted, was_repaired = _upsert_pending_word_base(conn, english_raw, oromo_raw)
         conn.commit()
         conn.close()
+
+        if not was_inserted and not was_repaired:
+            msg = "This word already exists (or is pending). Try another."
+            return render_template("submit.html", msg=msg)
+        if was_repaired:
+            msg = "Existing partial entry was completed and is waiting for admin approval."
+            return render_template("submit.html", msg=msg)
 
         msg = "Thank you! Your word is waiting for admin approval."
         return render_template("submit.html", msg=msg)
@@ -2745,31 +2830,24 @@ def submit_file():
 
         inserted = 0
         skipped = 0
+        repaired = 0
 
         conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-
         for en, om in pairs:
-            c.execute(
-                "SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1",
-                (en, om),
-            )
-            if c.fetchone():
+            _wid, was_inserted, was_repaired = _upsert_pending_word_base(conn, en, om)
+            if was_inserted:
+                inserted += 1
+            elif was_repaired:
+                repaired += 1
+            else:
                 skipped += 1
-                continue
-
-            c.execute(
-                "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
-                (en, om),
-            )
-            inserted += 1
 
         conn.commit()
         conn.close()
 
         msg = (
             f"Thanks! File submitted. "
-            f"Added: {inserted} | Skipped duplicates: {skipped}. "
+            f"Added: {inserted} | Completed partial entries: {repaired} | Skipped duplicates: {skipped}. "
             f"Waiting for admin approval."
         )
         return render_template("submit_file.html", msg=msg)
@@ -3528,10 +3606,18 @@ def admin_change_password():
 
 # ------------------ ADMIN IMPORT (ENGLISH-ONLY -> GOOGLE) ------------------
 
-def _words_exist(conn, english_word: str) -> bool:
+def _find_word_by_english(conn, english_word: str):
     c = conn.cursor()
-    c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (english_word, english_word))
-    return c.fetchone() is not None
+    norm = normalize_text(english_word or "")
+    key = make_search_key(_strip_edge_punct(norm))
+    if key:
+        c.execute(
+            "SELECT id, english, oromo FROM words WHERE english_key=? OR english=? LIMIT 1",
+            (key, norm),
+        )
+    else:
+        c.execute("SELECT id, english, oromo FROM words WHERE english=? LIMIT 1", (norm,))
+    return c.fetchone()
 
 
 @app.route("/admin/import", methods=["GET", "POST"])
@@ -3592,10 +3678,11 @@ def admin_import():
         inserted = 0
         skipped = 0
         failed = 0
+        repaired = 0
+        cached_generated = 0
         google_calls = 0
 
         conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
 
         batches = []
         for i in range(0, len(words), IMPORT_BATCH_SIZE):
@@ -3606,7 +3693,8 @@ def admin_import():
         for batch in batches:
             to_translate = []
             for en in batch:
-                if _words_exist(conn, en):
+                existing = _find_word_by_english(conn, en)
+                if existing and normalize_text(existing[1] or "") and normalize_text(existing[2] or ""):
                     skipped += 1
                 else:
                     to_translate.append(en)
@@ -3621,27 +3709,37 @@ def admin_import():
                 failed += len(to_translate)
                 continue
 
+            batch_word_items = []
             for en, om in zip(to_translate, oms):
                 if not om:
                     failed += 1
                     continue
 
-                c.execute("SELECT 1 FROM words WHERE english=? OR oromo=? LIMIT 1", (en, om))
-                if c.fetchone():
-                    skipped += 1
+                wid, was_inserted, was_repaired = _upsert_pending_word_base(conn, en, om)
+                if not wid:
+                    failed += 1
                     continue
 
-                c.execute(
-                    "INSERT INTO words (english, oromo, status) VALUES (?, ?, 'pending')",
-                    (en, om)
-                )
-                inserted += 1
+                if was_inserted:
+                    inserted += 1
+                elif was_repaired:
+                    repaired += 1
+                else:
+                    skipped += 1
+
+                batch_word_items.append((wid, normalize_text(en)))
+
+            try:
+                cached_generated += _cache_extra_translations_for_words(batch_word_items)
+            except Exception as e:
+                app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
 
         conn.commit()
         conn.close()
 
         msg2 = (
-            f"One-click import done. Imported: {inserted} | Skipped: {skipped} | Failed: {failed} | "
+            f"One-click import done. Imported: {inserted} | Completed partial entries: {repaired} | "
+            f"Skipped: {skipped} | Failed: {failed} | Cached extra translations: {cached_generated} | "
             f"Google calls used: {google_calls}/{IMPORT_MAX_CALLS}. "
             f"Processed {len(words)} words ({total_chars} chars). Approve in Dashboard."
         )
@@ -3652,8 +3750,10 @@ def admin_import():
                 "processed": len(words),
                 "total_chars": total_chars,
                 "imported": inserted,
+                "repaired": repaired,
                 "skipped": skipped,
                 "failed": failed,
+                "cached_generated_translations": cached_generated,
                 "google_calls_used": google_calls,
                 "google_calls_max": IMPORT_MAX_CALLS,
                 "batch_size": IMPORT_BATCH_SIZE,
