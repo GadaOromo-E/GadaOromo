@@ -1294,7 +1294,20 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
                 tts_audio_url = None
 
             if not target_text:
-                # Provider/cache failed; keep page usable with base English as fallback text.
+                # Retry direct provider path before final fallback.
+                tr_retry = safe_translate_multilingual(en, "en", target_lang)
+                target_text = (tr_retry or {}).get("text", "") or ""
+                if target_text:
+                    try:
+                        _save_generated_translation(
+                            wid, target_lang, target_text,
+                            provider="google_translate_v2", tts_audio_url=None
+                        )
+                    except Exception:
+                        pass
+
+            if not target_text:
+                # Final fallback keeps page functional if provider is down.
                 target_text = en
             is_auto = True
 
@@ -1711,7 +1724,7 @@ def dictionary():
 
     # --- POST search (fallback hvis form bruker POST) ---
     if request.method == "POST":
-        q = request.form.get("word", "").strip()
+        q = (request.form.get("q") or request.form.get("word") or "").strip()
         source_lang = (request.form.get("source_lang") or source_lang).strip()
         target_lang = (request.form.get("target_lang") or target_lang).strip()
 
