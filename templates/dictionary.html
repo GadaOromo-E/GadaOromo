@@ -54,7 +54,6 @@
         </div>
       </form>
 
-      <div class="subtle" style="margin-top:10px;">Tip: choose source and target languages for dictionary lookup.</div>
       {% if lookup_error %}
         <div class="result-box" style="margin-top:10px;"><div class="muted">{{ lookup_error }}</div></div>
       {% endif %}
@@ -96,10 +95,16 @@
           </div>
         {% endif %}
 
-        {% if other_translations %}
+        {% if result.oromo or other_translations %}
           <div style="margin-top:12px;">
-            <div class="subtle"><b>Available translations</b></div>
+            <div class="subtle"><b>Available meanings</b></div>
             <div style="margin-top:8px; display:grid; gap:8px;">
+              {% if result.oromo %}
+                <div class="result-box" style="margin:0;">
+                  <div><b>Oromo:</b></div>
+                  <div>{{ result.oromo }}</div>
+                </div>
+              {% endif %}
               {% for code in ["am", "ar", "fr", "zh-CN"] %}
                 {% if other_translations.get(code) %}
                   <div class="result-box" style="margin:0;">

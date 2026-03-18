@@ -35,10 +35,13 @@
       <b>Oromo:</b> {{ word.om }}
     </p>
 
-    {% if other_translations %}
+    {% if word.om or other_translations %}
       <div style="margin-top:12px;">
-        <b>Available translations</b>
+        <b>Available meanings</b>
         <div style="margin-top:8px; display:grid; gap:8px;">
+          {% if word.om %}
+            <div><b>Oromo:</b> {{ word.om }}</div>
+          {% endif %}
           {% if other_translations.get("am") %}
             <div><b>Amharic:</b> {{ other_translations["am"].text }}</div>
           {% endif %}
