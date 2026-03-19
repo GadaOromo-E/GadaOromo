@@ -319,9 +319,9 @@ def uploads(filename):
 
 # ------------------ ADMIN IMPORT CONFIG ------------------
 
-IMPORT_BATCH_SIZE = 200
-IMPORT_MAX_CALLS = 10
-IMPORT_MAX_WORDS = IMPORT_BATCH_SIZE * IMPORT_MAX_CALLS  # 2000
+IMPORT_BATCH_SIZE = 100
+IMPORT_MAX_WORDS = 200
+IMPORT_MAX_CALLS = max(1, (IMPORT_MAX_WORDS + IMPORT_BATCH_SIZE - 1) // IMPORT_BATCH_SIZE)
 
 
 # ------------------ STOPWORDS ------------------
@@ -420,17 +420,12 @@ def parse_xlsx_pairs_from_path(path: str):
 
 # ------------------ ADMIN IMPORT PARSERS (ENGLISH-ONLY) ------------------
 
-def parse_txt_english(file_bytes: bytes):
+def parse_txt_english_rows(file_bytes: bytes):
     text = file_bytes.decode("utf-8", errors="replace")
-    words = []
-    for line in text.splitlines():
-        w = normalize_text(line)
-        if w:
-            words.append(w)
-    return dedup_preserve_order(words)
+    return [line for line in text.splitlines()]
 
 
-def parse_csv_english(file_bytes: bytes):
+def parse_csv_english_rows(file_bytes: bytes):
     text = file_bytes.decode("utf-8", errors="replace")
     f = StringIO(text)
     reader = csv.DictReader(f)
@@ -449,31 +444,43 @@ def parse_csv_english(file_bytes: bytes):
     words = []
     for row in reader:
         raw = row.get(english_key, "") if english_key else row.get(first_key, "")
-        w = normalize_text(raw or "")
-        if w:
-            words.append(w)
+        words.append(str(raw or ""))
 
-    return dedup_preserve_order(words)
+    return words
 
 
-def parse_xlsx_english(file_bytes: bytes):
+def parse_xlsx_english_rows(file_bytes: bytes):
     wb = load_workbook(BytesIO(file_bytes))
     ws = wb.active
 
     words = []
     for idx, row in enumerate(ws.iter_rows(values_only=True)):
         if not row:
+            words.append("")
             continue
         a = (row[0] if len(row) > 0 else "") or ""
 
         if idx == 0 and str(a).strip().lower() in ("english", "en"):
             continue
 
-        w = normalize_text(str(a))
-        if w:
-            words.append(w)
+        words.append(str(a))
 
-    return dedup_preserve_order(words)
+    return words
+
+
+def parse_txt_english(file_bytes: bytes):
+    words = [normalize_text(x) for x in parse_txt_english_rows(file_bytes)]
+    return dedup_preserve_order([w for w in words if w])
+
+
+def parse_csv_english(file_bytes: bytes):
+    words = [normalize_text(x) for x in parse_csv_english_rows(file_bytes)]
+    return dedup_preserve_order([w for w in words if w])
+
+
+def parse_xlsx_english(file_bytes: bytes):
+    words = [normalize_text(x) for x in parse_xlsx_english_rows(file_bytes)]
+    return dedup_preserve_order([w for w in words if w])
 
 
 # ------------------ ADMIN + RECORDER HELPERS ------------------
@@ -561,7 +568,7 @@ def _is_rtl_lang(lang_code: str) -> bool:
     return bool(cfg.get("rtl"))
 
 
-def _upsert_pending_word_base(conn, english_text: str, oromo_text: str):
+def _upsert_pending_word_base(conn, english_text: str, oromo_text: str, status: str = "pending"):
     """
     Insert a pending base word or safely complete an existing partial row.
     Returns: (word_id, inserted_new, repaired_existing_partial)
@@ -601,9 +608,10 @@ def _upsert_pending_word_base(conn, english_text: str, oromo_text: str):
             )
         return wid, False, repaired
 
+    safe_status = status if status in ("pending", "approved") else "pending"
     c.execute(
-        "INSERT INTO words (english, oromo, english_key, oromo_key, status) VALUES (?, ?, ?, ?, 'pending')",
-        (en, om, en_key, om_key),
+        "INSERT INTO words (english, oromo, english_key, oromo_key, status) VALUES (?, ?, ?, ?, ?)",
+        (en, om, en_key, om_key, safe_status),
     )
     return c.lastrowid, True, False
 
@@ -3620,6 +3628,31 @@ def _find_word_by_english(conn, english_word: str):
     return c.fetchone()
 
 
+def _count_missing_generated_langs(conn, word_id: int) -> int:
+    if not word_id:
+        return len(EXTRA_GENERATED_LANGS)
+    try:
+        c = conn.cursor()
+        placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+        c.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM generated_translations
+            WHERE word_id=?
+              AND lang_code IN ({placeholders})
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (word_id, *EXTRA_GENERATED_LANGS),
+        )
+        row = c.fetchone()
+        have_count = int((row or [0])[0] or 0)
+        missing = len(EXTRA_GENERATED_LANGS) - have_count
+        return missing if missing > 0 else 0
+    except Exception:
+        return len(EXTRA_GENERATED_LANGS)
+
+
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
     if not require_admin():
@@ -3628,14 +3661,14 @@ def admin_import():
     msg = None
 
     if request.method == "POST":
-        words = []
+        raw_words = []
 
         if request.is_json:
             data = request.get_json(silent=True) or {}
             incoming = data.get("words", [])
             if not isinstance(incoming, list):
                 return jsonify({"error": "JSON must include 'words' as a list"}), 400
-            words = [normalize_text(x) for x in incoming if str(x).strip()]
+            raw_words = [str(x) for x in incoming]
         else:
             f = request.files.get("file") or request.files.get("txt_file")
             if not f or not f.filename:
@@ -3647,11 +3680,11 @@ def admin_import():
 
             try:
                 if filename.endswith(".txt"):
-                    words = parse_txt_english(data)
+                    raw_words = parse_txt_english_rows(data)
                 elif filename.endswith(".csv"):
-                    words = parse_csv_english(data)
+                    raw_words = parse_csv_english_rows(data)
                 elif filename.endswith(".xlsx"):
-                    words = parse_xlsx_english(data)
+                    raw_words = parse_xlsx_english_rows(data)
                 else:
                     msg = "Only .txt, .csv, .xlsx files are supported."
                     return render_template("admin_import.html", msg=msg)
@@ -3660,99 +3693,159 @@ def admin_import():
                 msg = "Could not read the file. Please check its format."
                 return render_template("admin_import.html", msg=msg)
 
-        words = [w for w in words if w]
-        words = dedup_preserve_order(words)
+        empty_rows = 0
+        duplicate_rows = 0
+        over_limit_rows = 0
+        seen_keys = set()
+        words = []
+
+        for raw in raw_words:
+            w = normalize_text(raw or "")
+            k = make_search_key(_strip_edge_punct(w))
+            if not w or not k:
+                empty_rows += 1
+                continue
+            if k in seen_keys:
+                duplicate_rows += 1
+                continue
+            seen_keys.add(k)
+            if len(words) >= IMPORT_MAX_WORDS:
+                over_limit_rows += 1
+                continue
+            words.append(w)
 
         if not words:
+            summary = (
+                f"No valid English words to import. Empty rows: {empty_rows} | "
+                f"Duplicates: {duplicate_rows} | Over limit: {over_limit_rows}."
+            )
             if request.is_json:
-                return jsonify({"error": "No words provided"}), 400
-            msg = "No English words found."
+                return jsonify({
+                    "processed": 0,
+                    "imported": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "empty_rows": empty_rows,
+                    "duplicate_rows": duplicate_rows,
+                    "over_limit_rows": over_limit_rows,
+                    "updated_missing_translations": 0,
+                    "cached_generated_translations": 0,
+                    "google_calls_used": 0,
+                    "google_calls_max": IMPORT_MAX_CALLS,
+                    "batch_size": IMPORT_BATCH_SIZE,
+                    "max_words": IMPORT_MAX_WORDS,
+                    "message": summary,
+                }), 400
+            msg = summary
             return render_template("admin_import.html", msg=msg)
-
-        if len(words) > IMPORT_MAX_WORDS:
-            words = words[:IMPORT_MAX_WORDS]
-            msg = f"Only first {IMPORT_MAX_WORDS} words processed (fixed limit)."
 
         total_chars = sum(len(x) for x in words)
 
         inserted = 0
         skipped = 0
         failed = 0
-        repaired = 0
         cached_generated = 0
+        updated_missing_translations = 0
         google_calls = 0
 
         conn = sqlite3.connect(DB_NAME)
 
-        batches = []
-        for i in range(0, len(words), IMPORT_BATCH_SIZE):
-            batches.append(words[i:i + IMPORT_BATCH_SIZE])
-            if len(batches) >= IMPORT_MAX_CALLS:
-                break
+        words_for_base_insert = []
+        words_for_cache = []
 
-        for batch in batches:
-            to_translate = []
-            for en in batch:
-                existing = _find_word_by_english(conn, en)
-                if existing and normalize_text(existing[1] or "") and normalize_text(existing[2] or ""):
-                    skipped += 1
-                else:
-                    to_translate.append(en)
+        for en in words:
+            existing = _find_word_by_english(conn, en)
+            if existing:
+                skipped += 1
+                wid = int(existing[0])
+                existing_en = normalize_text(existing[1] or "") or en
+                words_for_cache.append((wid, existing_en))
+            else:
+                words_for_base_insert.append(en)
 
-            if not to_translate:
+        for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
+            batch = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
+            if not batch:
                 continue
 
             google_calls += 1
-            oms = google_translate_batch_v2(to_translate, target="om", source="en")
+            oms = google_translate_batch_v2(batch, target="om", source="en")
 
-            if not oms or len(oms) != len(to_translate):
-                failed += len(to_translate)
-                continue
+            if oms and len(oms) == len(batch):
+                translated_pairs = list(zip(batch, oms))
+            else:
+                translated_pairs = []
+                for en in batch:
+                    google_calls += 1
+                    translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
 
-            batch_word_items = []
-            for en, om in zip(to_translate, oms):
-                if not om:
+            for en, om in translated_pairs:
+                om_text = normalize_text(om or "")
+                if not om_text:
                     failed += 1
                     continue
 
-                wid, was_inserted, was_repaired = _upsert_pending_word_base(conn, en, om)
+                wid, was_inserted, _was_repaired = _upsert_pending_word_base(
+                    conn, en, om_text, status="approved"
+                )
                 if not wid:
                     failed += 1
                     continue
 
                 if was_inserted:
                     inserted += 1
-                elif was_repaired:
-                    repaired += 1
                 else:
                     skipped += 1
 
-                batch_word_items.append((wid, normalize_text(en)))
+                words_for_cache.append((wid, normalize_text(en)))
 
-            try:
-                cached_generated += _cache_extra_translations_for_words(batch_word_items)
-            except Exception as e:
-                app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
+        # Keep per-word items unique for cache accounting.
+        unique_cache_items = []
+        seen_ids = set()
+        for wid, en in words_for_cache:
+            if not wid or not en or wid in seen_ids:
+                continue
+            seen_ids.add(wid)
+            unique_cache_items.append((wid, en))
+
+        missing_before = {}
+        for wid, _en in unique_cache_items:
+            missing_before[wid] = _count_missing_generated_langs(conn, wid)
+
+        try:
+            cached_generated = _cache_extra_translations_for_words(unique_cache_items)
+        except Exception as e:
+            app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
+            cached_generated = 0
+
+        for wid in missing_before.keys():
+            before = missing_before.get(wid, 0)
+            after = _count_missing_generated_langs(conn, wid)
+            if after < before:
+                updated_missing_translations += 1
 
         conn.commit()
         conn.close()
 
         msg2 = (
-            f"One-click import done. Imported: {inserted} | Completed partial entries: {repaired} | "
-            f"Skipped: {skipped} | Failed: {failed} | Cached extra translations: {cached_generated} | "
-            f"Google calls used: {google_calls}/{IMPORT_MAX_CALLS}. "
-            f"Processed {len(words)} words ({total_chars} chars). Approve in Dashboard."
+            f"Import done. Processed: {len(words)} | Imported: {inserted} | Skipped existing: {skipped} | "
+            f"Failed: {failed} | Empty rows: {empty_rows} | Duplicates: {duplicate_rows} | "
+            f"Over limit: {over_limit_rows} | Updated missing translations: {updated_missing_translations} | "
+            f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
         )
-        msg = (msg + " " + msg2).strip() if msg else msg2
+        msg = msg2
 
         if request.is_json:
             return jsonify({
                 "processed": len(words),
                 "total_chars": total_chars,
                 "imported": inserted,
-                "repaired": repaired,
                 "skipped": skipped,
                 "failed": failed,
+                "empty_rows": empty_rows,
+                "duplicate_rows": duplicate_rows,
+                "over_limit_rows": over_limit_rows,
+                "updated_missing_translations": updated_missing_translations,
                 "cached_generated_translations": cached_generated,
                 "google_calls_used": google_calls,
                 "google_calls_max": IMPORT_MAX_CALLS,

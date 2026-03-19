@@ -13,11 +13,11 @@
   <div class="topbar">
     <div class="title-row">
       <div>
-        <h2 style="margin:0;">📥 Admin Import (English → Oromo)</h2>
+        <h2 style="margin:0;">📥 Admin Import (English-first)</h2>
         <div class="subtle">
-          One-click import: upload a file and click Import. Up to <b>2000</b> English words will be translated using
-          <b>Google Translate API</b> (server-side) in <b>10</b> calls (batch size <b>200</b>).
-          Imported words are saved as <b>pending</b> for approval.
+          Upload a file and import up to <b>200</b> English words at once.
+          The system generates Oromo + Amharic + Arabic + French + Chinese and caches generated translations.
+          Newly imported words are saved as normal usable dictionary entries.
         </div>
       </div>
       <a class="btn danger" href="/dashboard">⬅ Back</a>
@@ -46,10 +46,11 @@
       <b>File rules (English-only list):</b><br>
       • <b>TXT</b>: one English word per line<br>
       • <b>CSV</b>: header <code>english</code> (recommended) or first column is used<br>
-      • <b>XLSX</b>: Column A = English (first row may be header “English”)<br><br>
+      • <b>XLSX</b>: Column A = English (first row may be header “English”)<br>
+      • Empty rows are ignored, duplicates are skipped, and rows over 200 are skipped with summary counts.<br><br>
 
       <b>Important:</b> This import works only if the server has <code>GOOGLE_TRANSLATE_API_KEY</code> set.
-      After importing, go to <b>Dashboard</b> to approve/reject.
+      If the provider fails on some rows, import still completes with partial success.
     </div>
   </div>
 
@@ -84,7 +85,7 @@
       // Prevent double submit
       btn.disabled = true;
       btn.textContent = "Importing…";
-      status.textContent = "Uploading file, translating in 200×10 batches, saving as pending…";
+      status.textContent = "Uploading file, validating rows, and importing up to 200 words…";
     });
   })();
 </script>
