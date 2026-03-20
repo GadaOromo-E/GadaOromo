@@ -192,6 +192,15 @@
                 <div>
                   <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;">{{ w[1] }}</a>
                   <div class="subtle">{{ w[2] }}</div>
+                  {% set wt = list_other_translations.get(w[0], {}) %}
+                  {% if wt %}
+                    <div class="muted" style="margin-top:4px; font-size:13px; line-height:1.45;">
+                      {% if wt.get("am") %}<span><b>Am:</b> {{ wt.get("am") }}</span>{% endif %}
+                      {% if wt.get("ar") %}{% if wt.get("am") %} | {% endif %}<span><b>Ar:</b> <span dir="rtl" style="unicode-bidi:isolate; display:inline-block;">{{ wt.get("ar") }}</span></span>{% endif %}
+                      {% if wt.get("fr") %}{% if wt.get("am") or wt.get("ar") %} | {% endif %}<span><b>Fr:</b> {{ wt.get("fr") }}</span>{% endif %}
+                      {% if wt.get("zh-CN") %}{% if wt.get("am") or wt.get("ar") or wt.get("fr") %} | {% endif %}<span><b>Zh:</b> {{ wt.get("zh-CN") }}</span>{% endif %}
+                    </div>
+                  {% endif %}
                 </div>
               </div>
             {% endfor %}
@@ -253,4 +262,3 @@ function speakTarget(){ const el=document.getElementById('dstText'); speakTextCo
 </script>
 </body>
 </html>
-

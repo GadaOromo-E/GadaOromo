@@ -1962,6 +1962,32 @@ def dictionary():
         ORDER BY english ASC
     """)
     all_words = c.fetchall()
+    list_other_translations = {}
+
+    try:
+        placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+        c.execute(
+            f"""
+            SELECT gt.word_id, gt.lang_code, gt.translated_text
+            FROM generated_translations gt
+            JOIN words w ON w.id = gt.word_id
+            WHERE w.status='approved'
+              AND gt.lang_code IN ({placeholders})
+              AND gt.translated_text IS NOT NULL
+              AND TRIM(gt.translated_text) != ''
+            """,
+            EXTRA_GENERATED_LANGS,
+        )
+        for wid, lang_code, translated_text in c.fetchall():
+            wid_int = int(wid or 0)
+            txt = normalize_text(translated_text or "")
+            if not wid_int or not txt:
+                continue
+            row = list_other_translations.setdefault(wid_int, {})
+            row[lang_code] = txt
+    except Exception as e:
+        app.logger.exception(f"/dictionary list extra translations failed: {repr(e)}")
+        list_other_translations = {}
 
     conn.close()
 
@@ -1983,6 +2009,7 @@ def dictionary():
         tts_audio_url=tts_audio_url,
         lookup_error=lookup_error,
         other_translations=other_translations,
+        list_other_translations=list_other_translations,
         audio=audio,
         words=all_words,
         suggestions=suggestions,
