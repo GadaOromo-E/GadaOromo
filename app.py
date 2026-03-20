@@ -181,6 +181,7 @@ def sitemap_xml():
     base = _site_base_url()
     urls = [
         ("/", "daily", "1.0"),
+        ("/dictionary", "daily", "0.9"),
         ("/translate", "daily", "0.9"),
         ("/learn", "weekly", "0.6"),
         ("/support", "monthly", "0.3"),
@@ -218,7 +219,7 @@ def sitemap_xml():
             en_term = normalize_text(en or "")
             if not en_term:
                 continue
-            loc = f"{base}/word/{quote(en_term)}"
+            loc = f"{base}/word/{quote(en_term, safe='')}"
             xml_parts.append("<url>")
             xml_parts.append(f"<loc>{loc}</loc>")
             xml_parts.append(f"<lastmod>{now}</lastmod>")

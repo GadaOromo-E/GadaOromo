@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <link rel="canonical" href="https://gadaadictionary.com{{ request.path }}">
+  <link rel="canonical" href="https://gadaadictionary.com/translate">
+  {% if request.args %}
+  <meta name="robots" content="noindex,follow">
+  {% endif %}
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Translator | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
@@ -194,4 +197,3 @@ function startVoice(){ const SpeechRecognition = window.SpeechRecognition || win
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260125-3"></script>
 </body>
 </html>
-

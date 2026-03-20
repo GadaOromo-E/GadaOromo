@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="description" content="Gadaa Dictionary - Oromo and multilingual lookup using English pivot.">
-  <link rel="canonical" href="https://gadaadictionary.com{{ request.path }}">
+  <link rel="canonical" href="https://gadaadictionary.com/dictionary">
+  {% if request.args %}
+  <meta name="robots" content="noindex,follow">
+  {% endif %}
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dictionary | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
