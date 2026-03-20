@@ -179,6 +179,7 @@ def robots_txt():
 @app.route("/sitemap.xml")
 def sitemap_xml():
     base = _site_base_url()
+    max_word_urls = 50000
     urls = [
         ("/", "daily", "1.0"),
         ("/dictionary", "daily", "0.9"),
@@ -210,11 +211,12 @@ def sitemap_xml():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("""
-            SELECT english
+            SELECT DISTINCT TRIM(english) AS english
             FROM words
             WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
             ORDER BY english ASC
-        """)
+            LIMIT ?
+        """, (max_word_urls,))
         for (en,) in c.fetchall():
             en_term = normalize_text(en or "")
             if not en_term:
@@ -224,7 +226,7 @@ def sitemap_xml():
             xml_parts.append(f"<loc>{loc}</loc>")
             xml_parts.append(f"<lastmod>{now}</lastmod>")
             xml_parts.append("<changefreq>weekly</changefreq>")
-            xml_parts.append("<priority>0.7</priority>")
+            xml_parts.append("<priority>0.8</priority>")
             xml_parts.append("</url>")
         conn.close()
     except Exception as e:
@@ -500,6 +502,47 @@ def _admin_id() -> int:
 # âœ… recorder session (password-based)
 def require_recorder() -> bool:
     return bool(session.get("recorder") == 1)
+
+
+def _words_table_counts():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    out = {
+        "total_rows": 0,
+        "non_empty_english_rows": 0,
+        "approved_rows": 0,
+        "approved_non_empty_english_rows": 0,
+        "distinct_approved_non_empty_english_rows": 0,
+    }
+
+    c.execute("SELECT COUNT(*) FROM words")
+    out["total_rows"] = int((c.fetchone() or [0])[0] or 0)
+
+    c.execute("SELECT COUNT(*) FROM words WHERE english IS NOT NULL AND TRIM(english) != ''")
+    out["non_empty_english_rows"] = int((c.fetchone() or [0])[0] or 0)
+
+    c.execute("SELECT COUNT(*) FROM words WHERE status='approved'")
+    out["approved_rows"] = int((c.fetchone() or [0])[0] or 0)
+
+    c.execute("""
+        SELECT COUNT(*)
+        FROM words
+        WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+    """)
+    out["approved_non_empty_english_rows"] = int((c.fetchone() or [0])[0] or 0)
+
+    c.execute("""
+        SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT TRIM(english) AS english
+            FROM words
+            WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+        )
+    """)
+    out["distinct_approved_non_empty_english_rows"] = int((c.fetchone() or [0])[0] or 0)
+
+    conn.close()
+    return out
 
 
 # ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
@@ -3420,6 +3463,27 @@ def dashboard():
         words_lookup=words_lookup,
         phrases_lookup=phrases_lookup
     )
+
+
+@app.route("/admin/debug/db-counts", methods=["GET"])
+def admin_debug_db_counts():
+    if not require_admin():
+        return redirect("/admin")
+
+    try:
+        counts = _words_table_counts()
+        payload = {
+            "db_path": DB_NAME,
+            **counts,
+        }
+        app.logger.info(f"admin_debug_db_counts db_path={DB_NAME} counts={counts}")
+        return jsonify(payload)
+    except Exception as e:
+        app.logger.exception(f"admin_debug_db_counts failed: {repr(e)}")
+        return jsonify({
+            "error": "Could not read DB counts.",
+            "db_path": DB_NAME
+        }), 500
 
 
 # ------------------ ADMIN MANAGEMENT ------------------
