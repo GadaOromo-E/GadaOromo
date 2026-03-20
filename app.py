@@ -197,6 +197,9 @@ def sitemap_xml():
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
+    static_url_count = len(urls)
+    emitted_word_urls = 0
+    fetched_word_rows = 0
     for path, freq, prio in urls:
         loc = f"{base}{path}"
         xml_parts.append("<url>")
@@ -217,22 +220,36 @@ def sitemap_xml():
             ORDER BY english ASC
             LIMIT ?
         """, (max_word_urls,))
-        for (en,) in c.fetchall():
-            en_term = normalize_text(en or "")
-            if not en_term:
-                continue
-            loc = f"{base}/word/{quote(en_term, safe='')}"
-            xml_parts.append("<url>")
-            xml_parts.append(f"<loc>{loc}</loc>")
-            xml_parts.append(f"<lastmod>{now}</lastmod>")
-            xml_parts.append("<changefreq>weekly</changefreq>")
-            xml_parts.append("<priority>0.8</priority>")
-            xml_parts.append("</url>")
-        conn.close()
+        rows = c.fetchall()
+        fetched_word_rows = len(rows)
+        for (en,) in rows:
+            try:
+                en_term = normalize_text(str(en or ""))
+                if not en_term:
+                    continue
+                loc = f"{base}/word/{quote(en_term, safe='')}"
+                xml_parts.append("<url>")
+                xml_parts.append(f"<loc>{loc}</loc>")
+                xml_parts.append(f"<lastmod>{now}</lastmod>")
+                xml_parts.append("<changefreq>weekly</changefreq>")
+                xml_parts.append("<priority>0.8</priority>")
+                xml_parts.append("</url>")
+                emitted_word_urls += 1
+            except Exception as row_err:
+                app.logger.exception(f"sitemap word URL row failed: {repr(row_err)}")
     except Exception as e:
         app.logger.exception(f"sitemap word URLs failed: {repr(e)}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
     xml_parts.append("</urlset>")
+    final_total_urls = static_url_count + emitted_word_urls
+    app.logger.info(
+        f"sitemap_xml db_path={DB_NAME} fetched_word_rows={fetched_word_rows} final_total_urls={final_total_urls}"
+    )
 
     resp = make_response("\n".join(xml_parts))
     resp.headers["Content-Type"] = "application/xml; charset=utf-8"
