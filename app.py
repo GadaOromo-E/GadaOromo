@@ -247,13 +247,19 @@ def sitemap_xml():
 
     xml_parts.append("</urlset>")
     final_total_urls = static_url_count + emitted_word_urls
-    app.logger.info(
-        f"sitemap_xml db_path={DB_NAME} fetched_word_rows={fetched_word_rows} final_total_urls={final_total_urls}"
+    sitemap_log_line = (
+        f"sitemap_xml db_path={DB_NAME} "
+        f"fetched_word_rows={fetched_word_rows} "
+        f"final_total_urls={final_total_urls}"
     )
+    app.logger.info(sitemap_log_line)
+    logging.getLogger("gunicorn.error").info(sitemap_log_line)
 
     resp = make_response("\n".join(xml_parts))
     resp.headers["Content-Type"] = "application/xml; charset=utf-8"
     resp.headers["Cache-Control"] = "public, max-age=3600"
+    resp.headers["X-Sitemap-Word-Urls"] = str(emitted_word_urls)
+    resp.headers["X-Sitemap-Total-Urls"] = str(final_total_urls)
     return resp
 
 
