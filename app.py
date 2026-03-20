@@ -179,16 +179,9 @@ def robots_txt():
 @app.route("/sitemap.xml")
 def sitemap_xml():
     base = _site_base_url()
-    max_word_urls = 50000
     urls = [
         ("/", "daily", "1.0"),
         ("/dictionary", "daily", "0.9"),
-        ("/translate", "daily", "0.9"),
-        ("/learn", "weekly", "0.6"),
-        ("/support", "monthly", "0.3"),
-        ("/submit", "weekly", "0.5"),
-        ("/submit_phrase", "weekly", "0.5"),
-        ("/recorder", "monthly", "0.2"),
     ]
 
     now = datetime.utcnow().strftime("%Y-%m-%d")
@@ -219,7 +212,7 @@ def sitemap_xml():
             WHERE status='approved'
             AND english IS NOT NULL
             AND TRIM(english) != ''
-            LIMIT 50000
+            ORDER BY english ASC
         """)
         rows = c.fetchall()
         fetched_word_rows = len(rows)

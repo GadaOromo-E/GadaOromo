@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{{ word.en }} in Oromo: {{ word.om }} | Amharic, Arabic, French, Chinese Translations | {{ APP_NAME }}</title>
-  <meta name="description" content="{{ word.en }} means {{ word.om }} in Oromo. See multilingual meanings in Amharic, Arabic, French, and Chinese on this Oromo-English dictionary word page.">
+  <title>{{ word.en }} in Oromo ({{ word.om }}) | Amharic, Arabic, French & Chinese Meanings | {{ APP_NAME }}</title>
+  <meta name="description" content="{{ word.en }} means {{ word.om }} in Oromo. Find meanings and translations in Amharic, Arabic, French, and Chinese on this Oromo-English dictionary word page.">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
@@ -33,8 +33,8 @@
   {
     "@context": "https://schema.org",
     "@type": "DefinedTerm",
-    "name": "{{ word.en }} - Oromo meaning: {{ word.om }}",
-    "description": "{{ word.en }} means {{ word.om }} in Oromo. Multilingual meanings are available in Amharic, Arabic, French, and Chinese.",
+    "name": "{{ word.en }} in Oromo: {{ word.om }}",
+    "description": "{{ word.en }} means {{ word.om }} in Oromo, with additional meanings in Amharic, Arabic, French, and Chinese.",
     "url": "https://gadaadictionary.com/word/{{ word.en|urlencode }}",
     "inDefinedTermSet": "https://gadaadictionary.com"
   }
