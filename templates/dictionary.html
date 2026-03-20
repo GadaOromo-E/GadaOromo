@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="description" content="Gadaa Dictionary - Oromo and multilingual lookup using English pivot.">
   <link rel="canonical" href="https://gadaadictionary.com/dictionary">
-  {% if request.args %}
+  {% if request.args or q %}
   <meta name="robots" content="noindex,follow">
   {% endif %}
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
