@@ -49,7 +49,7 @@ import unicodedata
 import requests
 from flask import (
     Flask, render_template, request, redirect, session,
-    jsonify, send_from_directory, abort, make_response
+    jsonify, send_from_directory, abort, make_response, Response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -209,36 +209,37 @@ def sitemap_xml():
         xml_parts.append(f"<priority>{prio}</priority>")
         xml_parts.append("</url>")
 
-    # Word detail pages (canonical /word/<english>)
+    # --- WORD URLS ---
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("""
-            SELECT DISTINCT TRIM(english) AS english
+            SELECT DISTINCT TRIM(english)
             FROM words
-            WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
-            ORDER BY english ASC
-            LIMIT ?
-        """, (max_word_urls,))
+            WHERE status='approved'
+            AND english IS NOT NULL
+            AND TRIM(english) != ''
+            LIMIT 50000
+        """)
         rows = c.fetchall()
         fetched_word_rows = len(rows)
+
         for (en,) in rows:
             try:
-                en_term = normalize_text(str(en or ""))
-                if not en_term:
-                    continue
-                loc = f"{base}/word/{quote(en_term, safe='')}"
-                xml_parts.append("<url>")
-                xml_parts.append(f"<loc>{loc}</loc>")
-                xml_parts.append(f"<lastmod>{now}</lastmod>")
-                xml_parts.append("<changefreq>weekly</changefreq>")
-                xml_parts.append("<priority>0.8</priority>")
-                xml_parts.append("</url>")
+                url = f"{base}/word/{quote(en, safe='')}"
+                xml_parts.append(f"""
+    <url>
+        <loc>{url}</loc>
+        <changefreq>weekly</changefreq>
+        <priority>0.8</priority>
+    </url>
+""")
                 emitted_word_urls += 1
-            except Exception as row_err:
-                app.logger.exception(f"sitemap word URL row failed: {repr(row_err)}")
+            except Exception as e:
+                print("skip bad word:", en, e)
+
     except Exception as e:
-        app.logger.exception(f"sitemap word URLs failed: {repr(e)}")
+        print("sitemap word error:", e)
     finally:
         try:
             conn.close()
@@ -255,12 +256,8 @@ def sitemap_xml():
     app.logger.info(sitemap_log_line)
     logging.getLogger("gunicorn.error").info(sitemap_log_line)
 
-    resp = make_response("\n".join(xml_parts))
-    resp.headers["Content-Type"] = "application/xml; charset=utf-8"
-    resp.headers["Cache-Control"] = "public, max-age=3600"
-    resp.headers["X-Sitemap-Word-Urls"] = str(emitted_word_urls)
-    resp.headers["X-Sitemap-Total-Urls"] = str(final_total_urls)
-    return resp
+    xml = "".join(xml_parts)
+    return Response(xml, mimetype="application/xml")
 
 
 @app.route("/.well-known/assetlinks.json")
@@ -3814,7 +3811,7 @@ def admin_import():
             duplicate_rows = 0
             over_limit_rows = 0
             seen_keys = set()
-            words = []
+            unique_words = []
 
             for raw in raw_words:
                 w = normalize_text(raw or "")
@@ -3826,22 +3823,23 @@ def admin_import():
                     duplicate_rows += 1
                     continue
                 seen_keys.add(k)
-                if len(words) >= IMPORT_MAX_WORDS:
-                    over_limit_rows += 1
-                    continue
-                words.append(w)
+                unique_words.append(w)
 
-            if not words:
+            if not unique_words:
                 summary = (
                     f"No valid English words to import. Empty rows: {empty_rows} | "
-                    f"Duplicates: {duplicate_rows} | Over limit: {over_limit_rows}."
+                    f"Duplicates: {duplicate_rows}."
                 )
                 if request.is_json:
                     return jsonify({
                         "processed": 0,
+                        "valid_unique_rows": 0,
+                        "attempted_new_rows": 0,
                         "imported": 0,
-                        "skipped": 0,
+                        "skipped_existing": 0,
+                        "skipped_duplicate_rows": duplicate_rows,
                         "failed": 0,
+                        "ignored_due_limit": 0,
                         "empty_rows": empty_rows,
                         "duplicate_rows": duplicate_rows,
                         "over_limit_rows": over_limit_rows,
@@ -3856,10 +3854,10 @@ def admin_import():
                 msg = summary
                 return render_template("admin_import.html", msg=msg)
 
-            total_chars = sum(len(x) for x in words)
+            total_chars = sum(len(x) for x in unique_words)
 
             inserted = 0
-            skipped = 0
+            skipped_existing = 0
             failed = 0
             cached_generated = 0
             updated_missing_translations = 0
@@ -3867,54 +3865,66 @@ def admin_import():
 
             conn = sqlite3.connect(DB_NAME)
 
-            words_for_base_insert = []
+            new_words = []
             words_for_cache = []
 
-            for en in words:
+            for en in unique_words:
                 existing = _find_word_by_english(conn, en)
                 if existing:
-                    skipped += 1
+                    skipped_existing += 1
                     wid = int(existing[0])
                     existing_en = normalize_text(existing[1] or "") or en
                     words_for_cache.append((wid, existing_en))
                 else:
-                    words_for_base_insert.append(en)
+                    new_words.append(en)
+
+            words_for_base_insert = new_words[:IMPORT_MAX_WORDS]
+            over_limit_rows = max(0, len(new_words) - len(words_for_base_insert))
 
             for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
                 batch = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
                 if not batch:
                     continue
 
-                google_calls += 1
-                oms = google_translate_batch_v2(batch, target="om", source="en")
+                try:
+                    google_calls += 1
+                    oms = google_translate_batch_v2(batch, target="om", source="en")
 
-                if oms and len(oms) == len(batch):
-                    translated_pairs = list(zip(batch, oms))
-                else:
-                    translated_pairs = []
-                    for en in batch:
-                        google_calls += 1
-                        translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
+                    if oms and len(oms) == len(batch):
+                        translated_pairs = list(zip(batch, oms))
+                    else:
+                        translated_pairs = []
+                        for en in batch:
+                            google_calls += 1
+                            translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
+                except Exception as batch_err:
+                    app.logger.exception(f"admin_import batch translate failed: {repr(batch_err)}")
+                    translated_pairs = [(en, "") for en in batch]
 
                 for en, om in translated_pairs:
-                    om_text = normalize_text(om or "")
-                    if not om_text:
+                    try:
+                        om_text = normalize_text(om or "")
+                        if not om_text:
+                            failed += 1
+                            continue
+
+                        wid, was_inserted, _was_repaired = _upsert_pending_word_base(
+                            conn, en, om_text, status="approved"
+                        )
+                        if not wid:
+                            failed += 1
+                            continue
+
+                        if was_inserted:
+                            inserted += 1
+                        else:
+                            skipped_existing += 1
+
+                        words_for_cache.append((wid, normalize_text(en)))
+                    except Exception as row_err:
+                        app.logger.exception(f"admin_import row upsert failed for en={repr(en)}: {repr(row_err)}")
                         failed += 1
                         continue
-
-                    wid, was_inserted, _was_repaired = _upsert_pending_word_base(
-                        conn, en, om_text, status="approved"
-                    )
-                    if not wid:
-                        failed += 1
-                        continue
-
-                    if was_inserted:
-                        inserted += 1
-                    else:
-                        skipped += 1
-
-                    words_for_cache.append((wid, normalize_text(en)))
 
             # Keep per-word items unique for cache accounting.
             unique_cache_items = []
@@ -3953,20 +3963,26 @@ def admin_import():
             conn = None
 
             msg2 = (
-                f"Import done. Processed: {len(words)} | Imported: {inserted} | Skipped existing: {skipped} | "
-                f"Failed: {failed} | Empty rows: {empty_rows} | Duplicates: {duplicate_rows} | "
-                f"Over limit: {over_limit_rows} | Updated missing translations: {updated_missing_translations} | "
+                f"Import done. Valid unique rows: {len(unique_words)} | Attempted new rows: {len(words_for_base_insert)} | "
+                f"Imported: {inserted} | Skipped existing: {skipped_existing} | Failed: {failed} | "
+                f"Ignored due to limit: {over_limit_rows} | Empty rows: {empty_rows} | Duplicate rows in file: {duplicate_rows} | "
+                f"Updated missing translations: {updated_missing_translations} | "
                 f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
             )
             msg = msg2
 
             if request.is_json:
                 return jsonify({
-                    "processed": len(words),
+                    "processed": len(raw_words),
+                    "valid_unique_rows": len(unique_words),
+                    "attempted_new_rows": len(words_for_base_insert),
                     "total_chars": total_chars,
                     "imported": inserted,
-                    "skipped": skipped,
+                    "skipped": skipped_existing,
+                    "skipped_existing": skipped_existing,
+                    "skipped_duplicate_rows": duplicate_rows,
                     "failed": failed,
+                    "ignored_due_limit": over_limit_rows,
                     "empty_rows": empty_rows,
                     "duplicate_rows": duplicate_rows,
                     "over_limit_rows": over_limit_rows,
