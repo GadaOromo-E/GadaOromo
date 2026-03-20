@@ -3659,202 +3659,233 @@ def admin_import():
         return redirect("/admin")
 
     msg = None
+    conn = None
 
-    if request.method == "POST":
-        raw_words = []
+    try:
+        if request.method == "POST":
+            raw_words = []
 
-        if request.is_json:
-            data = request.get_json(silent=True) or {}
-            incoming = data.get("words", [])
-            if not isinstance(incoming, list):
-                return jsonify({"error": "JSON must include 'words' as a list"}), 400
-            raw_words = [str(x) for x in incoming]
-        else:
-            f = request.files.get("file") or request.files.get("txt_file")
-            if not f or not f.filename:
-                msg = "Please upload a TXT / CSV / XLSX file (English-only list)."
+            if request.is_json:
+                data = request.get_json(silent=True) or {}
+                incoming = data.get("words", [])
+                if not isinstance(incoming, list):
+                    return jsonify({"error": "JSON must include 'words' as a list"}), 400
+                raw_words = [str(x) for x in incoming]
+            else:
+                f = request.files.get("file") or request.files.get("txt_file")
+                if not f or not f.filename:
+                    msg = "Please upload a TXT / CSV / XLSX file (English-only list)."
+                    return render_template("admin_import.html", msg=msg)
+
+                filename = (f.filename or "").lower().strip()
+                data = f.read()
+
+                try:
+                    if filename.endswith(".txt"):
+                        raw_words = parse_txt_english_rows(data)
+                    elif filename.endswith(".csv"):
+                        raw_words = parse_csv_english_rows(data)
+                    elif filename.endswith(".xlsx"):
+                        raw_words = parse_xlsx_english_rows(data)
+                    else:
+                        msg = "Only .txt, .csv, .xlsx files are supported."
+                        return render_template("admin_import.html", msg=msg)
+                except Exception as e:
+                    app.logger.exception(f"admin_import parse error: {repr(e)}")
+                    msg = "Could not read the file. Please check its format."
+                    return render_template("admin_import.html", msg=msg)
+
+            empty_rows = 0
+            duplicate_rows = 0
+            over_limit_rows = 0
+            seen_keys = set()
+            words = []
+
+            for raw in raw_words:
+                w = normalize_text(raw or "")
+                k = make_search_key(_strip_edge_punct(w))
+                if not w or not k:
+                    empty_rows += 1
+                    continue
+                if k in seen_keys:
+                    duplicate_rows += 1
+                    continue
+                seen_keys.add(k)
+                if len(words) >= IMPORT_MAX_WORDS:
+                    over_limit_rows += 1
+                    continue
+                words.append(w)
+
+            if not words:
+                summary = (
+                    f"No valid English words to import. Empty rows: {empty_rows} | "
+                    f"Duplicates: {duplicate_rows} | Over limit: {over_limit_rows}."
+                )
+                if request.is_json:
+                    return jsonify({
+                        "processed": 0,
+                        "imported": 0,
+                        "skipped": 0,
+                        "failed": 0,
+                        "empty_rows": empty_rows,
+                        "duplicate_rows": duplicate_rows,
+                        "over_limit_rows": over_limit_rows,
+                        "updated_missing_translations": 0,
+                        "cached_generated_translations": 0,
+                        "google_calls_used": 0,
+                        "google_calls_max": IMPORT_MAX_CALLS,
+                        "batch_size": IMPORT_BATCH_SIZE,
+                        "max_words": IMPORT_MAX_WORDS,
+                        "message": summary,
+                    }), 400
+                msg = summary
                 return render_template("admin_import.html", msg=msg)
 
-            filename = (f.filename or "").lower().strip()
-            data = f.read()
+            total_chars = sum(len(x) for x in words)
+
+            inserted = 0
+            skipped = 0
+            failed = 0
+            cached_generated = 0
+            updated_missing_translations = 0
+            google_calls = 0
+
+            conn = sqlite3.connect(DB_NAME)
+
+            words_for_base_insert = []
+            words_for_cache = []
+
+            for en in words:
+                existing = _find_word_by_english(conn, en)
+                if existing:
+                    skipped += 1
+                    wid = int(existing[0])
+                    existing_en = normalize_text(existing[1] or "") or en
+                    words_for_cache.append((wid, existing_en))
+                else:
+                    words_for_base_insert.append(en)
+
+            for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
+                batch = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
+                if not batch:
+                    continue
+
+                google_calls += 1
+                oms = google_translate_batch_v2(batch, target="om", source="en")
+
+                if oms and len(oms) == len(batch):
+                    translated_pairs = list(zip(batch, oms))
+                else:
+                    translated_pairs = []
+                    for en in batch:
+                        google_calls += 1
+                        translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
+
+                for en, om in translated_pairs:
+                    om_text = normalize_text(om or "")
+                    if not om_text:
+                        failed += 1
+                        continue
+
+                    wid, was_inserted, _was_repaired = _upsert_pending_word_base(
+                        conn, en, om_text, status="approved"
+                    )
+                    if not wid:
+                        failed += 1
+                        continue
+
+                    if was_inserted:
+                        inserted += 1
+                    else:
+                        skipped += 1
+
+                    words_for_cache.append((wid, normalize_text(en)))
+
+            # Keep per-word items unique for cache accounting.
+            unique_cache_items = []
+            seen_ids = set()
+            for wid, en in words_for_cache:
+                if not wid or not en or wid in seen_ids:
+                    continue
+                seen_ids.add(wid)
+                unique_cache_items.append((wid, en))
+
+            missing_before = {}
+            for wid, _en in unique_cache_items:
+                missing_before[wid] = _count_missing_generated_langs(conn, wid)
+
+            # Commit base inserts before cache warmup.
+            # Cache warmup writes through separate SQLite connections; holding this
+            # transaction open can trigger "database is locked" and skip cache writes.
+            conn.commit()
+            conn.close()
+            conn = None
 
             try:
-                if filename.endswith(".txt"):
-                    raw_words = parse_txt_english_rows(data)
-                elif filename.endswith(".csv"):
-                    raw_words = parse_csv_english_rows(data)
-                elif filename.endswith(".xlsx"):
-                    raw_words = parse_xlsx_english_rows(data)
-                else:
-                    msg = "Only .txt, .csv, .xlsx files are supported."
-                    return render_template("admin_import.html", msg=msg)
+                cached_generated = _cache_extra_translations_for_words(unique_cache_items)
             except Exception as e:
-                app.logger.exception(f"admin_import parse error: {repr(e)}")
-                msg = "Could not read the file. Please check its format."
-                return render_template("admin_import.html", msg=msg)
+                app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
+                cached_generated = 0
 
-        empty_rows = 0
-        duplicate_rows = 0
-        over_limit_rows = 0
-        seen_keys = set()
-        words = []
+            conn = sqlite3.connect(DB_NAME)
+            for wid in missing_before.keys():
+                before = missing_before.get(wid, 0)
+                after = _count_missing_generated_langs(conn, wid)
+                if after < before:
+                    updated_missing_translations += 1
 
-        for raw in raw_words:
-            w = normalize_text(raw or "")
-            k = make_search_key(_strip_edge_punct(w))
-            if not w or not k:
-                empty_rows += 1
-                continue
-            if k in seen_keys:
-                duplicate_rows += 1
-                continue
-            seen_keys.add(k)
-            if len(words) >= IMPORT_MAX_WORDS:
-                over_limit_rows += 1
-                continue
-            words.append(w)
+            conn.close()
+            conn = None
 
-        if not words:
-            summary = (
-                f"No valid English words to import. Empty rows: {empty_rows} | "
-                f"Duplicates: {duplicate_rows} | Over limit: {over_limit_rows}."
+            msg2 = (
+                f"Import done. Processed: {len(words)} | Imported: {inserted} | Skipped existing: {skipped} | "
+                f"Failed: {failed} | Empty rows: {empty_rows} | Duplicates: {duplicate_rows} | "
+                f"Over limit: {over_limit_rows} | Updated missing translations: {updated_missing_translations} | "
+                f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
             )
+            msg = msg2
+
             if request.is_json:
                 return jsonify({
-                    "processed": 0,
-                    "imported": 0,
-                    "skipped": 0,
-                    "failed": 0,
+                    "processed": len(words),
+                    "total_chars": total_chars,
+                    "imported": inserted,
+                    "skipped": skipped,
+                    "failed": failed,
                     "empty_rows": empty_rows,
                     "duplicate_rows": duplicate_rows,
                     "over_limit_rows": over_limit_rows,
-                    "updated_missing_translations": 0,
-                    "cached_generated_translations": 0,
-                    "google_calls_used": 0,
+                    "updated_missing_translations": updated_missing_translations,
+                    "cached_generated_translations": cached_generated,
+                    "google_calls_used": google_calls,
                     "google_calls_max": IMPORT_MAX_CALLS,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_words": IMPORT_MAX_WORDS,
-                    "message": summary,
-                }), 400
-            msg = summary
-            return render_template("admin_import.html", msg=msg)
+                    "message": msg
+                })
 
-        total_chars = sum(len(x) for x in words)
+    except Exception as e:
+        app.logger.exception(f"admin_import failed: {repr(e)}")
+        safe_msg = "Import failed safely due to an internal error. Please check file format and try again."
+        if request.method == "POST" and request.is_json:
+            return jsonify({"error": safe_msg}), 500
+        msg = safe_msg
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
-        inserted = 0
-        skipped = 0
-        failed = 0
-        cached_generated = 0
-        updated_missing_translations = 0
-        google_calls = 0
-
-        conn = sqlite3.connect(DB_NAME)
-
-        words_for_base_insert = []
-        words_for_cache = []
-
-        for en in words:
-            existing = _find_word_by_english(conn, en)
-            if existing:
-                skipped += 1
-                wid = int(existing[0])
-                existing_en = normalize_text(existing[1] or "") or en
-                words_for_cache.append((wid, existing_en))
-            else:
-                words_for_base_insert.append(en)
-
-        for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
-            batch = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
-            if not batch:
-                continue
-
-            google_calls += 1
-            oms = google_translate_batch_v2(batch, target="om", source="en")
-
-            if oms and len(oms) == len(batch):
-                translated_pairs = list(zip(batch, oms))
-            else:
-                translated_pairs = []
-                for en in batch:
-                    google_calls += 1
-                    translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
-
-            for en, om in translated_pairs:
-                om_text = normalize_text(om or "")
-                if not om_text:
-                    failed += 1
-                    continue
-
-                wid, was_inserted, _was_repaired = _upsert_pending_word_base(
-                    conn, en, om_text, status="approved"
-                )
-                if not wid:
-                    failed += 1
-                    continue
-
-                if was_inserted:
-                    inserted += 1
-                else:
-                    skipped += 1
-
-                words_for_cache.append((wid, normalize_text(en)))
-
-        # Keep per-word items unique for cache accounting.
-        unique_cache_items = []
-        seen_ids = set()
-        for wid, en in words_for_cache:
-            if not wid or not en or wid in seen_ids:
-                continue
-            seen_ids.add(wid)
-            unique_cache_items.append((wid, en))
-
-        missing_before = {}
-        for wid, _en in unique_cache_items:
-            missing_before[wid] = _count_missing_generated_langs(conn, wid)
-
-        try:
-            cached_generated = _cache_extra_translations_for_words(unique_cache_items)
-        except Exception as e:
-            app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
-            cached_generated = 0
-
-        for wid in missing_before.keys():
-            before = missing_before.get(wid, 0)
-            after = _count_missing_generated_langs(conn, wid)
-            if after < before:
-                updated_missing_translations += 1
-
-        conn.commit()
-        conn.close()
-
-        msg2 = (
-            f"Import done. Processed: {len(words)} | Imported: {inserted} | Skipped existing: {skipped} | "
-            f"Failed: {failed} | Empty rows: {empty_rows} | Duplicates: {duplicate_rows} | "
-            f"Over limit: {over_limit_rows} | Updated missing translations: {updated_missing_translations} | "
-            f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
-        )
-        msg = msg2
-
-        if request.is_json:
-            return jsonify({
-                "processed": len(words),
-                "total_chars": total_chars,
-                "imported": inserted,
-                "skipped": skipped,
-                "failed": failed,
-                "empty_rows": empty_rows,
-                "duplicate_rows": duplicate_rows,
-                "over_limit_rows": over_limit_rows,
-                "updated_missing_translations": updated_missing_translations,
-                "cached_generated_translations": cached_generated,
-                "google_calls_used": google_calls,
-                "google_calls_max": IMPORT_MAX_CALLS,
-                "batch_size": IMPORT_BATCH_SIZE,
-                "max_words": IMPORT_MAX_WORDS,
-                "message": msg
-            })
-
-    return render_template("admin_import.html", msg=msg)
+    try:
+        return render_template("admin_import.html", msg=msg)
+    except Exception as e:
+        app.logger.exception(f"admin_import render failed: {repr(e)}")
+        # Final guardrail: GET/POST should fail safely without a hard 500.
+        return (
+            "<h3>Admin import is temporarily unavailable.</h3>"
+            "<p>Please return to dashboard and try again.</p>"
+        ), 200
 
 
 # ------------------ APPROVE / REJECT WORDS ------------------
