@@ -1532,7 +1532,7 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
     if not word_id or not english_text:
         return out
 
-    for lang in ("am", "ar", "fr", "zh-CN"):
+    for lang in EXTRA_GENERATED_LANGS:
         try:
             translated, tts_url, _ = _get_or_generate_word_translation(word_id, english_text, lang)
             if translated:
@@ -1885,9 +1885,6 @@ def home():
 
 @app.route("/dictionary", methods=["GET", "POST"])
 def dictionary():
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-
     result = None
     result_id = None
     suggestions = None
@@ -1954,13 +1951,16 @@ def dictionary():
                 "tts_audio_url": None
             }
 
-    # full dictionary list
+    # full dictionary list (load after lookup work so on-use cache writes are
+    # not competing with this route-level DB handle)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
     c.execute("""
-        SELECT id, english, oromo
-        FROM words
-        WHERE status='approved'
-        ORDER BY english ASC
-    """)
+            SELECT id, english, oromo
+            FROM words
+            WHERE status='approved'
+            ORDER BY english ASC
+        """)
     all_words = c.fetchall()
     list_other_translations = {}
 
