@@ -677,53 +677,158 @@ def _cache_extra_translations_for_words(word_items):
     Best-effort cache warmup for extra languages.
     word_items: list[(word_id, english_text)]
     """
+    cached_count, _ = ensure_missing_generated_translations_for_words(
+        word_items,
+        langs=EXTRA_GENERATED_LANGS,
+        chunk_size=IMPORT_BATCH_SIZE,
+        log_context="cache_warmup",
+    )
+    return cached_count
+
+
+def ensure_missing_generated_translations_for_words(
+    word_items,
+    langs=None,
+    chunk_size: int = None,
+    log_context: str = "generated_backfill",
+):
+    """
+    Robust best-effort generated translation backfill.
+    word_items: list[(word_id, english_text)]
+    Returns: (saved_count, stats_by_lang)
+    """
     if not word_items:
-        return 0
+        return 0, {}
 
-    cached_count = 0
+    langs = tuple(langs or EXTRA_GENERATED_LANGS)
+    if not langs:
+        return 0, {}
 
-    for lang in EXTRA_GENERATED_LANGS:
-        try:
-            missing_ids = []
-            missing_english = []
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
 
-            for wid, en in word_items:
-                if not wid or not en:
-                    continue
-                cached = _get_cached_generated_translation(wid, lang)
-                if cached and normalize_text(cached[0] or ""):
-                    continue
-                missing_ids.append(wid)
-                missing_english.append(en)
+    unique_items = []
+    seen_ids = set()
+    for wid, en in word_items:
+        wid_int = int(wid or 0)
+        en_norm = normalize_text(en or "")
+        if not wid_int or not en_norm or wid_int in seen_ids:
+            continue
+        seen_ids.add(wid_int)
+        unique_items.append((wid_int, en_norm))
 
-            if not missing_english:
+    if not unique_items:
+        return 0, {}
+
+    total_saved = 0
+    stats = {}
+
+    for lang in langs:
+        lang_stats = {
+            "items_seen": len(unique_items),
+            "already_cached": 0,
+            "missing_before": 0,
+            "saved": 0,
+            "empty_results": 0,
+            "batch_mismatch_fallback": 0,
+            "provider_errors": 0,
+        }
+        stats[lang] = lang_stats
+
+        missing_pairs = []
+        for wid, en in unique_items:
+            cached = _get_cached_generated_translation(wid, lang)
+            if cached and normalize_text(cached[0] or ""):
+                lang_stats["already_cached"] += 1
                 continue
+            missing_pairs.append((wid, en))
 
-            translated_list = google_translate_batch_v2(
-                missing_english,
-                target=_google_lang_code(lang),
-                source="en",
-            )
-            if not translated_list or len(translated_list) != len(missing_english):
-                continue
-
-            for wid, translated in zip(missing_ids, translated_list):
-                translated_text = normalize_text(translated or "")
-                if not translated_text:
-                    continue
-                _save_generated_translation(
-                    wid,
-                    lang,
-                    translated_text,
-                    provider="google_translate_v2",
-                    tts_audio_url=None,
-                )
-                cached_count += 1
-        except Exception as e:
-            app.logger.exception(f"extra translation cache warmup failed for lang={lang}: {repr(e)}")
+        lang_stats["missing_before"] = len(missing_pairs)
+        if not missing_pairs:
             continue
 
-    return cached_count
+        target_code = _google_lang_code(lang)
+
+        for i in range(0, len(missing_pairs), safe_chunk):
+            chunk_pairs = missing_pairs[i:i + safe_chunk]
+            if not chunk_pairs:
+                continue
+
+            used_batch = False
+            try:
+                english_batch = [en for _wid, en in chunk_pairs]
+                translated_list = google_translate_batch_v2(
+                    english_batch,
+                    target=target_code,
+                    source="en",
+                )
+                if translated_list and len(translated_list) == len(chunk_pairs):
+                    used_batch = True
+                    for (wid, _en), translated in zip(chunk_pairs, translated_list):
+                        translated_text = normalize_text(translated or "")
+                        if not translated_text:
+                            lang_stats["empty_results"] += 1
+                            continue
+                        _save_generated_translation(
+                            wid,
+                            lang,
+                            translated_text,
+                            provider="google_translate_v2",
+                            tts_audio_url=None,
+                        )
+                        lang_stats["saved"] += 1
+                        total_saved += 1
+                else:
+                    lang_stats["batch_mismatch_fallback"] += len(chunk_pairs)
+            except Exception:
+                lang_stats["provider_errors"] += 1
+
+            if used_batch:
+                continue
+
+            # Per-item fallback avoids all-or-nothing loss when batch fails/mismatches.
+            for wid, en in chunk_pairs:
+                try:
+                    translated = google_translate_text_v2(en, target=target_code, source="en")
+                    translated_text = normalize_text(translated or "")
+                    if not translated_text:
+                        lang_stats["empty_results"] += 1
+                        continue
+                    _save_generated_translation(
+                        wid,
+                        lang,
+                        translated_text,
+                        provider="google_translate_v2",
+                        tts_audio_url=None,
+                    )
+                    lang_stats["saved"] += 1
+                    total_saved += 1
+                except Exception:
+                    lang_stats["provider_errors"] += 1
+
+    try:
+        compact = {
+            lang: {
+                "missing": st["missing_before"],
+                "saved": st["saved"],
+                "cached": st["already_cached"],
+                "empty": st["empty_results"],
+                "fallback": st["batch_mismatch_fallback"],
+                "errors": st["provider_errors"],
+            }
+            for lang, st in stats.items()
+        }
+        app.logger.info(
+            "generated backfill summary context=%s total_saved=%s details=%s",
+            log_context,
+            total_saved,
+            compact,
+        )
+    except Exception:
+        pass
+
+    return total_saved, stats
 
 
 def google_translate_text_v2(text: str, target: str, source: str = "en") -> str:
@@ -1588,9 +1693,25 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
     if not word_id or not english_text:
         return out
 
+    try:
+        ensure_missing_generated_translations_for_words(
+            [(word_id, english_text)],
+            langs=EXTRA_GENERATED_LANGS,
+            chunk_size=len(EXTRA_GENERATED_LANGS),
+            log_context="lookup_single_word",
+        )
+    except Exception as e:
+        app.logger.exception(f"lookup generated backfill bootstrap failed for word_id={word_id}: {repr(e)}")
+
     for lang in EXTRA_GENERATED_LANGS:
         try:
-            translated, tts_url, _ = _get_or_generate_word_translation(word_id, english_text, lang)
+            cached = _get_cached_generated_translation(word_id, lang)
+            translated = normalize_text((cached or [""])[0] or "")
+            tts_url = (cached or [None, None])[1] if cached else None
+
+            if not translated:
+                translated, tts_url, _ = _get_or_generate_word_translation(word_id, english_text, lang)
+
             if translated:
                 out[lang] = {
                     "text": translated,
@@ -2066,6 +2187,7 @@ def dictionary():
         lookup_error=lookup_error,
         other_translations=other_translations,
         list_other_translations=list_other_translations,
+        extra_generated_langs=EXTRA_GENERATED_LANGS,
         audio=audio,
         words=all_words,
         suggestions=suggestions,
@@ -2269,6 +2391,21 @@ def translate():
 
         if source_lang in ("om", "en"):
             matched, audio = find_exact_base_match(text, source_lang)
+            if matched and matched.get("type") == "word":
+                matched_word_id = int(matched.get("id") or 0)
+                matched_en = _get_word_english_by_id(matched_word_id)
+                if matched_word_id and matched_en:
+                    try:
+                        ensure_missing_generated_translations_for_words(
+                            [(matched_word_id, matched_en)],
+                            langs=EXTRA_GENERATED_LANGS,
+                            chunk_size=len(EXTRA_GENERATED_LANGS),
+                            log_context="translate_base_hit",
+                        )
+                    except Exception as e:
+                        app.logger.exception(
+                            f"/translate generated backfill failed for word_id={matched_word_id}: {repr(e)}"
+                        )
 
         # âœ… IMPORTANT: use multipart translator (handles commas + sentences correctly)
         tr = safe_translate_multilingual(text, source_lang, target_lang)
@@ -3646,6 +3783,33 @@ def admin_manage():
             LIMIT 50
         """)
     approved_words = c.fetchall()
+    generated_translations_by_word = {}
+
+    try:
+        word_ids = [int(w[0]) for w in approved_words if w and w[0]]
+        if word_ids:
+            word_placeholders = ",".join("?" for _ in word_ids)
+            lang_placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+            c.execute(
+                f"""
+                SELECT word_id, lang_code, translated_text
+                FROM generated_translations
+                WHERE word_id IN ({word_placeholders})
+                  AND lang_code IN ({lang_placeholders})
+                  AND translated_text IS NOT NULL
+                  AND TRIM(translated_text) != ''
+                """,
+                (*word_ids, *EXTRA_GENERATED_LANGS),
+            )
+            for wid, lang, txt in c.fetchall():
+                wid_int = int(wid or 0)
+                text_norm = normalize_text(txt or "")
+                if not wid_int or not text_norm:
+                    continue
+                generated_translations_by_word.setdefault(wid_int, {})[lang] = text_norm
+    except Exception as e:
+        app.logger.exception(f"admin_manage generated translation read failed: {repr(e)}")
+        generated_translations_by_word = {}
 
     if phrase_q:
         q = "%" + normalize_text(phrase_q) + "%"
@@ -3672,6 +3836,9 @@ def admin_manage():
         "admin_manage.html",
         msg=msg,
         approved_words=approved_words,
+        generated_translations_by_word=generated_translations_by_word,
+        extra_generated_langs=EXTRA_GENERATED_LANGS,
+        language_options=LANGUAGE_OPTIONS,
         approved_phrases=approved_phrases,
         word_q=word_q,
         phrase_q=phrase_q
@@ -3746,9 +3913,10 @@ def _insert_admin_import_word_english_only(
     en = english_norm or ""
     en_key = english_key or ""
     om = normalize_text(oromo_text or "")
-    om_key = make_search_key(_strip_edge_punct(om))
+    om_key = make_search_key(_strip_edge_punct(om)) if om else ""
 
-    if not en or not en_key or not om or not om_key:
+    # English is identity for import. Oromo can be empty and corrected later.
+    if not en or not en_key:
         return None, False, "invalid"
 
     c = conn.cursor()
@@ -3766,6 +3934,23 @@ def _insert_admin_import_word_english_only(
         (en, om, en_key, om_key, safe_status),
     )
     return c.lastrowid, True, "inserted"
+
+
+def _get_word_english_by_id(word_id: int) -> str:
+    if not word_id:
+        return ""
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "SELECT english FROM words WHERE id=? AND status='approved' LIMIT 1",
+            (word_id,),
+        )
+        row = c.fetchone()
+        conn.close()
+        return normalize_text((row or [""])[0] or "")
+    except Exception:
+        return ""
 
 
 def _count_missing_generated_langs(conn, word_id: int) -> int:
@@ -3835,14 +4020,22 @@ def admin_import():
                     msg = "Could not read the file. Please check its format."
                     return render_template("admin_import.html", msg=msg)
 
+            app.logger.info(
+                "admin_import diagnostics: parsed_raw_count=%s first10_raw=%s",
+                len(raw_words),
+                raw_words[:10],
+            )
+
             empty_rows = 0
             duplicate_rows = 0
             over_limit_rows = 0
             seen_keys = set()
             unique_words = []
             unique_word_items = []
+            unique_word_debug = []
 
             for raw in raw_words:
+                raw_orig = str(raw or "")
                 w = normalize_text(raw or "")
                 k = make_search_key(_strip_edge_punct(w))
                 if not w or not k:
@@ -3854,6 +4047,14 @@ def admin_import():
                 seen_keys.add(k)
                 unique_words.append(w)
                 unique_word_items.append((w, k))
+                if len(unique_word_debug) < 10:
+                    unique_word_debug.append((raw_orig, w, k))
+
+            app.logger.info(
+                "admin_import diagnostics: unique_count=%s first10_unique_norm=%s",
+                len(unique_words),
+                unique_words[:10],
+            )
 
             if not unique_words:
                 summary = (
@@ -3889,17 +4090,46 @@ def admin_import():
             skipped_existing_precheck = 0
             skipped_existing_during_insert = 0
             failed = 0
+            failed_base_inserts = 0
+            oromo_missing_on_insert = 0
             cached_generated = 0
+            generated_stats = {}
             updated_missing_translations = 0
             google_calls = 0
 
             conn = sqlite3.connect(DB_NAME)
+            app.logger.info(
+                "admin_import diagnostics: db_path=%s abs_db_path=%s",
+                DB_NAME,
+                os.path.abspath(DB_NAME),
+            )
+            try:
+                c_diag = conn.cursor()
+                c_diag.execute("SELECT COUNT(*) FROM words")
+                total_words_in_db = int((c_diag.fetchone() or [0])[0] or 0)
+            except Exception as e:
+                app.logger.exception(f"admin_import diagnostics: count words failed: {repr(e)}")
+                total_words_in_db = -1
+            app.logger.info(
+                "admin_import diagnostics: words_count_active_db=%s",
+                total_words_in_db,
+            )
 
             new_words = []
             words_for_cache = []
 
-            for en, en_key in unique_word_items:
+            for idx, (en, en_key) in enumerate(unique_word_items):
                 existing = _find_word_by_english(conn, en)
+                if idx < 10:
+                    raw_orig = unique_word_debug[idx][0] if idx < len(unique_word_debug) else en
+                    app.logger.info(
+                        "admin_import diagnostics: probe idx=%s raw=%r norm=%r key=%r existing=%r",
+                        idx,
+                        raw_orig,
+                        en,
+                        en_key,
+                        existing,
+                    )
                 if existing:
                     skipped_existing_precheck += 1
                     wid = int(existing[0])
@@ -3909,8 +4139,25 @@ def admin_import():
                     # Keep canonical English text + key together through insert path.
                     new_words.append((en, en_key))
 
+            app.logger.info(
+                "admin_import diagnostics: existing_bucket=%s new_bucket=%s",
+                skipped_existing_precheck,
+                len(new_words),
+            )
+
             words_for_base_insert = new_words[:IMPORT_MAX_WORDS]
             over_limit_rows = max(0, len(new_words) - len(words_for_base_insert))
+            app.logger.info(
+                "admin_import diagnostics: pre_translation_summary valid_unique=%s attempted_new=%s imported_so_far=%s skipped_precheck=%s failed_so_far=%s over_limit=%s empty=%s dup_rows=%s",
+                len(unique_words),
+                len(words_for_base_insert),
+                inserted,
+                skipped_existing_precheck,
+                failed,
+                over_limit_rows,
+                empty_rows,
+                duplicate_rows,
+            )
 
             for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
                 batch_items = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
@@ -3942,8 +4189,7 @@ def admin_import():
                     try:
                         om_text = normalize_text(om or "")
                         if not om_text:
-                            failed += 1
-                            continue
+                            oromo_missing_on_insert += 1
 
                         wid, was_inserted, insert_reason = _insert_admin_import_word_english_only(
                             conn,
@@ -3954,6 +4200,7 @@ def admin_import():
                         )
                         if not wid:
                             failed += 1
+                            failed_base_inserts += 1
                             continue
 
                         if was_inserted:
@@ -3962,12 +4209,14 @@ def admin_import():
                             skipped_existing_during_insert += 1
                         else:
                             failed += 1
+                            failed_base_inserts += 1
                             continue
 
                         words_for_cache.append((wid, en))
                     except Exception as row_err:
                         app.logger.exception(f"admin_import row insert failed for en={repr(en)}: {repr(row_err)}")
                         failed += 1
+                        failed_base_inserts += 1
                         continue
 
             # Keep per-word items unique for cache accounting.
@@ -3991,10 +4240,16 @@ def admin_import():
             conn = None
 
             try:
-                cached_generated = _cache_extra_translations_for_words(unique_cache_items)
+                cached_generated, generated_stats = ensure_missing_generated_translations_for_words(
+                    unique_cache_items,
+                    langs=EXTRA_GENERATED_LANGS,
+                    chunk_size=IMPORT_BATCH_SIZE,
+                    log_context="admin_import",
+                )
             except Exception as e:
                 app.logger.exception(f"admin_import extra cache warmup failed: {repr(e)}")
                 cached_generated = 0
+                generated_stats = {}
 
             conn = sqlite3.connect(DB_NAME)
             for wid in missing_before.keys():
@@ -4007,15 +4262,30 @@ def admin_import():
             conn = None
 
             skipped_existing_total = skipped_existing_precheck + skipped_existing_during_insert
+            generation_parts = []
+            for lang in EXTRA_GENERATED_LANGS:
+                st = generated_stats.get(lang, {})
+                generation_parts.append(
+                    f"{lang}: saved={int(st.get('saved', 0))}, "
+                    f"missing={int(st.get('missing_before', 0))}, "
+                    f"cached={int(st.get('already_cached', 0))}, "
+                    f"empty={int(st.get('empty_results', 0))}, "
+                    f"errors={int(st.get('provider_errors', 0))}"
+                )
+            generation_summary = " | ".join(generation_parts)
             msg2 = (
                 f"Import done. Valid unique rows: {len(unique_words)} | Attempted new rows: {len(words_for_base_insert)} | "
                 f"Imported: {inserted} | Skipped existing (pre-check): {skipped_existing_precheck} | "
                 f"Existing found during insert: {skipped_existing_during_insert} | "
                 f"Skipped existing total: {skipped_existing_total} | Failed: {failed} | "
+                f"Failed base inserts: {failed_base_inserts} | "
+                f"Oromo missing on insert: {oromo_missing_on_insert} | "
                 f"Ignored due to limit: {over_limit_rows} | Empty rows: {empty_rows} | Duplicate rows in file: {duplicate_rows} | "
                 f"Updated missing translations: {updated_missing_translations} | "
                 f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
             )
+            if generation_summary:
+                msg2 += f" | Generation by lang -> {generation_summary}"
             msg = msg2
 
             if request.is_json:
@@ -4031,12 +4301,17 @@ def admin_import():
                     "skipped_existing_total": skipped_existing_total,
                     "skipped_duplicate_rows": duplicate_rows,
                     "failed": failed,
+                    "imported_base_words": inserted,
+                    "failed_base_inserts": failed_base_inserts,
+                    "oromo_missing_on_insert": oromo_missing_on_insert,
                     "ignored_due_limit": over_limit_rows,
                     "empty_rows": empty_rows,
                     "duplicate_rows": duplicate_rows,
                     "over_limit_rows": over_limit_rows,
                     "updated_missing_translations": updated_missing_translations,
                     "cached_generated_translations": cached_generated,
+                    "generated_translations_saved": cached_generated,
+                    "generated_by_lang": generated_stats,
                     "google_calls_used": google_calls,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_words": IMPORT_MAX_WORDS,

@@ -123,10 +123,6 @@
         {% if result.oromo or other_translations %}
           <div style="margin-top:12px;">
             <div class="subtle"><b>Available meanings</b></div>
-            {% set am_text = other_translations.get("am", {}).get("text", "-") %}
-            {% set ar_text = other_translations.get("ar", {}).get("text", "-") %}
-            {% set zh_text = other_translations.get("zh-CN", {}).get("text", "-") %}
-            {% set fr_text = other_translations.get("fr", {}).get("text", "-") %}
             <table class="translation-table">
               <thead>
                 <tr>
@@ -135,22 +131,14 @@
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td>Amharic</td>
-                  <td>{{ am_text }}</td>
-                </tr>
-                <tr>
-                  <td>Arabic</td>
-                  <td dir="rtl">{{ ar_text }}</td>
-                </tr>
-                <tr>
-                  <td>Chinese</td>
-                  <td>{{ zh_text }}</td>
-                </tr>
-                <tr>
-                  <td>French</td>
-                  <td>{{ fr_text }}</td>
-                </tr>
+                {% for lang in extra_generated_langs %}
+                  {% set cfg = language_options.get(lang, {}) %}
+                  {% set translated = other_translations.get(lang, {}).get("text", "-") %}
+                  <tr>
+                    <td>{{ cfg.get("label", lang) }}</td>
+                    <td {% if cfg.get("rtl") %}dir="rtl" style="text-align:right;"{% endif %}>{{ translated }}</td>
+                  </tr>
+                {% endfor %}
               </tbody>
             </table>
           </div>
@@ -198,10 +186,19 @@
                   {% set wt = list_other_translations.get(w[0], {}) %}
                   {% if wt %}
                     <div class="muted" style="margin-top:4px; font-size:13px; line-height:1.45;">
-                      {% if wt.get("am") %}<span><b>Am:</b> {{ wt.get("am") }}</span>{% endif %}
-                      {% if wt.get("ar") %}{% if wt.get("am") %} | {% endif %}<span><b>Ar:</b> <span dir="rtl" style="unicode-bidi:isolate; display:inline-block;">{{ wt.get("ar") }}</span></span>{% endif %}
-                      {% if wt.get("fr") %}{% if wt.get("am") or wt.get("ar") %} | {% endif %}<span><b>Fr:</b> {{ wt.get("fr") }}</span>{% endif %}
-                      {% if wt.get("zh-CN") %}{% if wt.get("am") or wt.get("ar") or wt.get("fr") %} | {% endif %}<span><b>Zh:</b> {{ wt.get("zh-CN") }}</span>{% endif %}
+                      {% set ns = namespace(first=true) %}
+                      {% for lang in extra_generated_langs %}
+                        {% set txt = wt.get(lang) %}
+                        {% if txt %}
+                          {% set cfg = language_options.get(lang, {}) %}
+                          {% if not ns.first %} | {% endif %}
+                          <span>
+                            <b>{{ cfg.get("label", lang)[:2] }}:</b>
+                            <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block;"{% endif %}>{{ txt }}</span>
+                          </span>
+                          {% set ns.first = false %}
+                        {% endif %}
+                      {% endfor %}
                     </div>
                   {% endif %}
                 </div>
