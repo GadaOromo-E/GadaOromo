@@ -56,38 +56,41 @@
       <b>Oromo:</b> {{ word.om }}
     </p>
 
-    {% if word.om or other_translations %}
+    {% if other_translations %}
       <div style="margin-top:12px;">
         <b>Available meanings</b>
-        {% set am_text = other_translations.get("am", {}).get("text", "-") %}
-        {% set ar_text = other_translations.get("ar", {}).get("text", "-") %}
-        {% set zh_text = other_translations.get("zh-CN", {}).get("text", "-") %}
-        {% set fr_text = other_translations.get("fr", {}).get("text", "-") %}
         <table class="translation-table">
           <thead>
             <tr>
-              <th></th>
-              <th>Amharic</th>
-              <th>Arabic</th>
-              <th>Chinese</th>
-              <th>French</th>
+              <th>Language</th>
+              <th>Meaning</th>
             </tr>
           </thead>
           <tbody>
-            <tr>
-              <td>English</td>
-              <td>{{ am_text }}</td>
-              <td dir="rtl">{{ ar_text }}</td>
-              <td>{{ zh_text }}</td>
-              <td>{{ fr_text }}</td>
-            </tr>
-            <tr>
-              <td>Oromo</td>
-              <td>{{ am_text }}</td>
-              <td dir="rtl">{{ ar_text }}</td>
-              <td>{{ zh_text }}</td>
-              <td>{{ fr_text }}</td>
-            </tr>
+            {% if other_translations.get("am", {}).get("text") %}
+              <tr>
+                <td>Amharic</td>
+                <td>{{ other_translations.get("am", {}).get("text") }}</td>
+              </tr>
+            {% endif %}
+            {% if other_translations.get("ar", {}).get("text") %}
+              <tr>
+                <td>Arabic</td>
+                <td dir="rtl">{{ other_translations.get("ar", {}).get("text") }}</td>
+              </tr>
+            {% endif %}
+            {% if other_translations.get("zh-CN", {}).get("text") %}
+              <tr>
+                <td>Chinese</td>
+                <td>{{ other_translations.get("zh-CN", {}).get("text") }}</td>
+              </tr>
+            {% endif %}
+            {% if other_translations.get("fr", {}).get("text") %}
+              <tr>
+                <td>French</td>
+                <td>{{ other_translations.get("fr", {}).get("text") }}</td>
+              </tr>
+            {% endif %}
           </tbody>
         </table>
       </div>
