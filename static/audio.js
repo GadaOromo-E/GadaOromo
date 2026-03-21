@@ -367,8 +367,27 @@
     };
 
     recog.onerror = (e) => {
-      console.error(e);
-      alert("Voice search failed: " + (e.error || "unknown error"));
+      const err = (e && e.error) ? String(e.error) : "unknown";
+
+      if (err === "aborted") {
+        return;
+      }
+      if (err === "no-speech") {
+        console.log("Voice input: no speech detected.");
+        return;
+      }
+      if (err === "audio-capture") {
+        console.log("Voice input: no microphone detected.");
+        alert("Microphone not detected. Please check your audio device.");
+        return;
+      }
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        alert("Please allow microphone access.");
+        return;
+      }
+
+      console.error("Speech error:", err, e);
+      alert("Voice input failed. Please try again.");
     };
 
     try { recog.start(); } catch (e) { console.error(e); alert("Could not start voice search."); }

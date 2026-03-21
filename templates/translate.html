@@ -233,7 +233,24 @@ function startVoice(){
     ta.focus();
   };
   recognition.onerror=function(event){
-    console.error("startVoice error:", event);
+    const err = (event && event.error) ? String(event.error) : "unknown";
+    if(err === "aborted"){
+      return;
+    }
+    if(err === "no-speech"){
+      console.log("Voice input: no speech detected.");
+      return;
+    }
+    if(err === "audio-capture"){
+      console.log("Voice input: no microphone detected.");
+      alert("Microphone not detected. Please check your audio device.");
+      return;
+    }
+    if(err === "not-allowed" || err === "service-not-allowed"){
+      alert("Please allow microphone access.");
+      return;
+    }
+    console.error("Speech error:", err, event);
     alert("Voice input failed. Please try again.");
   };
   recognition.start();
