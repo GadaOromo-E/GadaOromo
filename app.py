@@ -4117,12 +4117,14 @@ def admin_repair_generated():
 
     default_max_words = 5000
     max_words = default_max_words
-    summary = None
-    msg = None
+    summary = {}
+    msg = ""
+    has_run = False
     conn = None
 
     try:
         if request.method == "POST":
+            has_run = True
             max_words_raw = normalize_text(request.form.get("max_words") or "")
             if max_words_raw.isdigit():
                 max_words = max(1, min(int(max_words_raw), 50000))
@@ -4215,23 +4217,17 @@ def admin_repair_generated():
                 pass
 
     try:
-        has_summary = summary is not None
-        safe_summary = summary or {
-            "words_scanned": 0,
-            "words_needing_repair": 0,
-            "translations_generated": 0,
-            "cached_reused": 0,
-            "failures_per_lang": {},
-            "stats_by_lang": {},
-            "max_words": max_words,
-        }
+        safe_summary = summary or {}
+        safe_stats = (safe_summary.get("stats_by_lang", {}) if isinstance(safe_summary, dict) else {}) or {}
         safe_language_options = LANGUAGE_OPTIONS if isinstance(LANGUAGE_OPTIONS, dict) else {}
         safe_extra_langs = EXTRA_GENERATED_LANGS if EXTRA_GENERATED_LANGS else tuple()
         return render_template(
             "admin_repair_generated.html",
             msg=msg,
+            message=(msg or ""),
             summary=safe_summary,
-            has_summary=has_summary,
+            stats=safe_stats,
+            has_run=has_run,
             max_words=max_words,
             extra_generated_langs=safe_extra_langs,
             language_options=safe_language_options,
