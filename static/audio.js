@@ -376,9 +376,12 @@
         console.log("Voice input: no speech detected.");
         return;
       }
+      if (err === "network") {
+        console.log("Voice input: transient network issue.");
+        return;
+      }
       if (err === "audio-capture") {
-        console.log("Voice input: no microphone detected.");
-        alert("Microphone not detected. Please check your audio device.");
+        alert("No microphone detected.");
         return;
       }
       if (err === "not-allowed" || err === "service-not-allowed") {
@@ -386,8 +389,7 @@
         return;
       }
 
-      console.error("Speech error:", err, e);
-      alert("Voice input failed. Please try again.");
+      console.error("Speech recognition error:", err, e);
     };
 
     try { recog.start(); } catch (e) { console.error(e); alert("Could not start voice search."); }
