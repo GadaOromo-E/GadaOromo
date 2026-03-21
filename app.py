@@ -3731,6 +3731,42 @@ def _find_word_by_english(conn, english_word: str):
         c.execute("SELECT id, english, oromo FROM words WHERE english=? LIMIT 1", (norm,))
     return c.fetchone()
 
+def _insert_admin_import_word_english_only(
+    conn,
+    english_norm: str,
+    english_key: str,
+    oromo_text: str,
+    status: str = "approved",
+):
+    """
+    Admin import insert path: English identity only.
+    Returns: (word_id, inserted_new, reason)
+    reason in {"inserted", "existing_english", "invalid"}
+    """
+    en = english_norm or ""
+    en_key = english_key or ""
+    om = normalize_text(oromo_text or "")
+    om_key = make_search_key(_strip_edge_punct(om))
+
+    if not en or not en_key or not om or not om_key:
+        return None, False, "invalid"
+
+    c = conn.cursor()
+    c.execute(
+        "SELECT id FROM words WHERE english_key=? OR english=? LIMIT 1",
+        (en_key, en),
+    )
+    row = c.fetchone()
+    if row:
+        return int(row[0]), False, "existing_english"
+
+    safe_status = status if status in ("pending", "approved") else "approved"
+    c.execute(
+        "INSERT INTO words (english, oromo, english_key, oromo_key, status) VALUES (?, ?, ?, ?, ?)",
+        (en, om, en_key, om_key, safe_status),
+    )
+    return c.lastrowid, True, "inserted"
+
 
 def _count_missing_generated_langs(conn, word_id: int) -> int:
     if not word_id:
@@ -3804,6 +3840,7 @@ def admin_import():
             over_limit_rows = 0
             seen_keys = set()
             unique_words = []
+            unique_word_items = []
 
             for raw in raw_words:
                 w = normalize_text(raw or "")
@@ -3816,6 +3853,7 @@ def admin_import():
                     continue
                 seen_keys.add(k)
                 unique_words.append(w)
+                unique_word_items.append((w, k))
 
             if not unique_words:
                 summary = (
@@ -3848,7 +3886,8 @@ def admin_import():
             total_chars = sum(len(x) for x in unique_words)
 
             inserted = 0
-            skipped_existing = 0
+            skipped_existing_precheck = 0
+            skipped_existing_during_insert = 0
             failed = 0
             cached_generated = 0
             updated_missing_translations = 0
@@ -3859,48 +3898,59 @@ def admin_import():
             new_words = []
             words_for_cache = []
 
-            for en in unique_words:
+            for en, en_key in unique_word_items:
                 existing = _find_word_by_english(conn, en)
                 if existing:
-                    skipped_existing += 1
+                    skipped_existing_precheck += 1
                     wid = int(existing[0])
                     existing_en = normalize_text(existing[1] or "") or en
                     words_for_cache.append((wid, existing_en))
                 else:
-                    new_words.append(en)
+                    # Keep canonical English text + key together through insert path.
+                    new_words.append((en, en_key))
 
             words_for_base_insert = new_words[:IMPORT_MAX_WORDS]
             over_limit_rows = max(0, len(new_words) - len(words_for_base_insert))
 
             for i in range(0, len(words_for_base_insert), IMPORT_BATCH_SIZE):
-                batch = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
-                if not batch:
+                batch_items = words_for_base_insert[i:i + IMPORT_BATCH_SIZE]
+                if not batch_items:
                     continue
+                batch = [en for en, _en_key in batch_items]
 
                 try:
                     google_calls += 1
                     oms = google_translate_batch_v2(batch, target="om", source="en")
 
                     if oms and len(oms) == len(batch):
-                        translated_pairs = list(zip(batch, oms))
+                        translated_pairs = [
+                            (en, en_key, om)
+                            for (en, en_key), om in zip(batch_items, oms)
+                        ]
                     else:
                         translated_pairs = []
-                        for en in batch:
+                        for en, en_key in batch_items:
                             google_calls += 1
-                            translated_pairs.append((en, google_translate_text_v2(en, target="om", source="en")))
+                            translated_pairs.append(
+                                (en, en_key, google_translate_text_v2(en, target="om", source="en"))
+                            )
                 except Exception as batch_err:
                     app.logger.exception(f"admin_import batch translate failed: {repr(batch_err)}")
-                    translated_pairs = [(en, "") for en in batch]
+                    translated_pairs = [(en, en_key, "") for en, en_key in batch_items]
 
-                for en, om in translated_pairs:
+                for en, en_key, om in translated_pairs:
                     try:
                         om_text = normalize_text(om or "")
                         if not om_text:
                             failed += 1
                             continue
 
-                        wid, was_inserted, _was_repaired = _upsert_pending_word_base(
-                            conn, en, om_text, status="approved"
+                        wid, was_inserted, insert_reason = _insert_admin_import_word_english_only(
+                            conn,
+                            english_norm=en,
+                            english_key=en_key,
+                            oromo_text=om_text,
+                            status="approved",
                         )
                         if not wid:
                             failed += 1
@@ -3908,12 +3958,15 @@ def admin_import():
 
                         if was_inserted:
                             inserted += 1
+                        elif insert_reason == "existing_english":
+                            skipped_existing_during_insert += 1
                         else:
-                            skipped_existing += 1
+                            failed += 1
+                            continue
 
-                        words_for_cache.append((wid, normalize_text(en)))
+                        words_for_cache.append((wid, en))
                     except Exception as row_err:
-                        app.logger.exception(f"admin_import row upsert failed for en={repr(en)}: {repr(row_err)}")
+                        app.logger.exception(f"admin_import row insert failed for en={repr(en)}: {repr(row_err)}")
                         failed += 1
                         continue
 
@@ -3953,9 +4006,12 @@ def admin_import():
             conn.close()
             conn = None
 
+            skipped_existing_total = skipped_existing_precheck + skipped_existing_during_insert
             msg2 = (
                 f"Import done. Valid unique rows: {len(unique_words)} | Attempted new rows: {len(words_for_base_insert)} | "
-                f"Imported: {inserted} | Skipped existing: {skipped_existing} | Failed: {failed} | "
+                f"Imported: {inserted} | Skipped existing (pre-check): {skipped_existing_precheck} | "
+                f"Existing found during insert: {skipped_existing_during_insert} | "
+                f"Skipped existing total: {skipped_existing_total} | Failed: {failed} | "
                 f"Ignored due to limit: {over_limit_rows} | Empty rows: {empty_rows} | Duplicate rows in file: {duplicate_rows} | "
                 f"Updated missing translations: {updated_missing_translations} | "
                 f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
@@ -3969,8 +4025,10 @@ def admin_import():
                     "attempted_new_rows": len(words_for_base_insert),
                     "total_chars": total_chars,
                     "imported": inserted,
-                    "skipped": skipped_existing,
-                    "skipped_existing": skipped_existing,
+                    "skipped": skipped_existing_precheck,
+                    "skipped_existing": skipped_existing_precheck,
+                    "skipped_existing_during_insert": skipped_existing_during_insert,
+                    "skipped_existing_total": skipped_existing_total,
                     "skipped_duplicate_rows": duplicate_rows,
                     "failed": failed,
                     "ignored_due_limit": over_limit_rows,
