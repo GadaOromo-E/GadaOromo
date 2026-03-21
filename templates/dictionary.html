@@ -30,44 +30,17 @@
       text-align: left;
       white-space: nowrap;
     }
-    .generated-panel {
-      margin-top: 12px;
-      padding: 10px;
-      border: 1px solid #d9d9d9;
-      border-radius: 8px;
-      background: #fafafa;
-    }
-    .generated-title {
+    .multi-values {
+      margin-top: 8px;
       font-size: 13px;
+      line-height: 1.45;
+      color: #4a4a4a;
+      display: flex;
+      gap: 8px 12px;
+      flex-wrap: wrap;
+    }
+    .multi-values b {
       font-weight: 700;
-      margin-bottom: 8px;
-    }
-    .generated-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(140px, 1fr));
-      gap: 8px;
-    }
-    .generated-item {
-      border: 1px solid #e6e6e6;
-      border-radius: 6px;
-      padding: 8px;
-      background: #fff;
-      font-size: 13px;
-      line-height: 1.35;
-    }
-    .generated-label {
-      display: block;
-      font-weight: 700;
-      margin-bottom: 2px;
-    }
-    .generated-missing {
-      color: #777;
-      font-style: italic;
-    }
-    @media (max-width: 700px) {
-      .generated-grid {
-        grid-template-columns: 1fr;
-      }
     }
   </style>
 </head>
@@ -160,8 +133,8 @@
         {% endif %}
 
         {% if other_translations %}
-          <div class="generated-panel">
-            <div class="generated-title">Generated Languages</div>
+          <div style="margin-top:12px;">
+            <div class="subtle"><b>Available meanings</b></div>
             <table class="translation-table">
               <thead>
                 <tr>
@@ -226,20 +199,17 @@
                   <div class="subtle">{{ w[2] }}</div>
                   {% set wt = list_other_translations.get(w[0], {}) %}
                   {% if wt %}
-                    <div class="generated-panel">
-                      <div class="generated-title">Generated Languages</div>
-                      <div class="generated-grid">
-                        {% for lang in extra_generated_langs %}
-                          {% set cfg = language_options.get(lang, {}) %}
-                          {% set txt = wt.get(lang) %}
-                          {% if txt %}
-                            <div class="generated-item">
-                              <span class="generated-label">{{ cfg.get("label", lang) }}</span>
-                              <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block; text-align:right;"{% endif %}>{{ txt }}</span>
-                            </div>
-                          {% endif %}
-                        {% endfor %}
-                      </div>
+                    <div class="multi-values">
+                      {% for lang in extra_generated_langs %}
+                        {% set cfg = language_options.get(lang, {}) %}
+                        {% set txt = wt.get(lang) %}
+                        {% if txt %}
+                          <span>
+                            <b>{{ cfg.get("label", lang) }}:</b>
+                            <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block;"{% endif %}>{{ txt }}</span>
+                          </span>
+                        {% endif %}
+                      {% endfor %}
                     </div>
                   {% endif %}
                 </div>

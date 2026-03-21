@@ -353,6 +353,25 @@ def normalize_text(text: str) -> str:
     return t
 
 
+_INVALID_GENERATED_TEXT_VALUES = {
+    "-",
+    "—",
+    "n/a",
+    "na",
+    "none",
+    "null",
+    "missing",
+    "not generated yet",
+}
+
+
+def _is_meaningful_generated_text(text: str) -> bool:
+    t = normalize_text(text or "")
+    if not t:
+        return False
+    return t.casefold() not in _INVALID_GENERATED_TEXT_VALUES
+
+
 def normalize_tokens(text: str):
     t = normalize_text(text)
     return t.split() if t else []
@@ -728,6 +747,7 @@ def ensure_missing_generated_translations_for_words(
         lang_stats = {
             "items_seen": len(unique_items),
             "already_cached": 0,
+            "invalid_cached_treated_missing": 0,
             "missing_before": 0,
             "saved": 0,
             "empty_results": 0,
@@ -737,11 +757,32 @@ def ensure_missing_generated_translations_for_words(
         stats[lang] = lang_stats
 
         missing_pairs = []
+        cache_skip_log_count = 0
+        invalid_cache_log_count = 0
         for wid, en in unique_items:
             cached = _get_cached_generated_translation(wid, lang)
-            if cached and normalize_text(cached[0] or ""):
-                lang_stats["already_cached"] += 1
-                continue
+            if cached:
+                cached_text = normalize_text((cached or [""])[0] or "")
+                if _is_meaningful_generated_text(cached_text):
+                    lang_stats["already_cached"] += 1
+                    if cache_skip_log_count < 5:
+                        app.logger.info(
+                            "generated cache hit; skipping generation word_id=%s lang=%s value=%r",
+                            wid,
+                            lang,
+                            cached_text[:120],
+                        )
+                        cache_skip_log_count += 1
+                    continue
+                lang_stats["invalid_cached_treated_missing"] += 1
+                if invalid_cache_log_count < 5:
+                    app.logger.info(
+                        "generated cache invalid; regenerating word_id=%s lang=%s value=%r",
+                        wid,
+                        lang,
+                        cached_text[:120],
+                    )
+                    invalid_cache_log_count += 1
             missing_pairs.append((wid, en))
 
         lang_stats["missing_before"] = len(missing_pairs)
@@ -767,7 +808,7 @@ def ensure_missing_generated_translations_for_words(
                     used_batch = True
                     for (wid, _en), translated in zip(chunk_pairs, translated_list):
                         translated_text = normalize_text(translated or "")
-                        if not translated_text:
+                        if not _is_meaningful_generated_text(translated_text):
                             lang_stats["empty_results"] += 1
                             continue
                         _save_generated_translation(
@@ -792,7 +833,7 @@ def ensure_missing_generated_translations_for_words(
                 try:
                     translated = google_translate_text_v2(en, target=target_code, source="en")
                     translated_text = normalize_text(translated or "")
-                    if not translated_text:
+                    if not _is_meaningful_generated_text(translated_text):
                         lang_stats["empty_results"] += 1
                         continue
                     _save_generated_translation(
@@ -813,6 +854,7 @@ def ensure_missing_generated_translations_for_words(
                 "missing": st["missing_before"],
                 "saved": st["saved"],
                 "cached": st["already_cached"],
+                "invalid_cached": st["invalid_cached_treated_missing"],
                 "empty": st["empty_results"],
                 "fallback": st["batch_mismatch_fallback"],
                 "errors": st["provider_errors"],
@@ -1447,6 +1489,8 @@ def _get_cached_generated_translation(word_id: int, lang_code: str):
             SELECT translated_text, tts_audio_url
             FROM generated_translations
             WHERE word_id=? AND lang_code=?
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
             LIMIT 1
         """, (word_id, lang_code))
         row = c.fetchone()
@@ -1466,7 +1510,7 @@ def _save_generated_translation(
     provider: str = "google_translate_v2",
     tts_audio_url: str = None
 ):
-    if not translated_text:
+    if not _is_meaningful_generated_text(translated_text):
         return
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -1572,7 +1616,7 @@ def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
 
 def _get_or_generate_word_translation(word_id: int, english_text: str, target_lang: str):
     cached = _get_cached_generated_translation(word_id, target_lang)
-    if cached and normalize_text(cached[0] or ""):
+    if cached and _is_meaningful_generated_text((cached or [""])[0]):
         return normalize_text(cached[0]), cached[1], True
 
     translated = _auto_translate_from_english(english_text, target_lang)
@@ -1690,18 +1734,58 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
     Failures per language are isolated so one provider/cache error does not break the page.
     """
     out = {}
-    if not word_id or not english_text:
+    if not word_id:
         return out
 
+    en_text = normalize_text(english_text or "")
+    if not en_text:
+        en_text = _get_word_english_by_id(word_id)
+    if not en_text:
+        app.logger.info("extra translation skipped: missing english text for word_id=%s", word_id)
+        return out
+
+    saved_count = 0
+    backfill_stats = {}
     try:
-        ensure_missing_generated_translations_for_words(
-            [(word_id, english_text)],
+        saved_count, backfill_stats = ensure_missing_generated_translations_for_words(
+            [(word_id, en_text)],
             langs=EXTRA_GENERATED_LANGS,
             chunk_size=len(EXTRA_GENERATED_LANGS),
             log_context="lookup_single_word",
         )
     except Exception as e:
         app.logger.exception(f"lookup generated backfill bootstrap failed for word_id={word_id}: {repr(e)}")
+        backfill_stats = {}
+
+    missing_langs = []
+    cached_langs = []
+    generated_langs = []
+    failed_langs = []
+    for lang in EXTRA_GENERATED_LANGS:
+        st = backfill_stats.get(lang, {})
+        missing_before = int(st.get("missing_before", 0) or 0)
+        already_cached = int(st.get("already_cached", 0) or 0)
+        saved = int(st.get("saved", 0) or 0)
+        provider_errors = int(st.get("provider_errors", 0) or 0)
+
+        if missing_before > 0:
+            missing_langs.append(lang)
+        if already_cached > 0:
+            cached_langs.append(lang)
+        if saved > 0:
+            generated_langs.append(lang)
+        if (missing_before > 0 and saved == 0) or provider_errors > 0:
+            failed_langs.append(lang)
+
+    app.logger.info(
+        "lookup backfill word_id=%s missing=%s generated=%s cached=%s failed=%s saved_count=%s",
+        word_id,
+        missing_langs,
+        generated_langs,
+        cached_langs,
+        failed_langs,
+        saved_count,
+    )
 
     for lang in EXTRA_GENERATED_LANGS:
         try:
@@ -1709,10 +1793,10 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
             translated = normalize_text((cached or [""])[0] or "")
             tts_url = (cached or [None, None])[1] if cached else None
 
-            if not translated:
-                translated, tts_url, _ = _get_or_generate_word_translation(word_id, english_text, lang)
+            if not _is_meaningful_generated_text(translated):
+                translated, tts_url, _ = _get_or_generate_word_translation(word_id, en_text, lang)
 
-            if translated:
+            if _is_meaningful_generated_text(translated):
                 out[lang] = {
                     "text": translated,
                     "tts_audio_url": tts_url
@@ -1720,6 +1804,12 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
         except Exception as e:
             app.logger.exception(f"extra translation failed for lang={lang}, word_id={word_id}: {repr(e)}")
             continue
+
+    app.logger.info(
+        "lookup backfill final word_id=%s available_langs=%s",
+        word_id,
+        sorted(out.keys()),
+    )
 
     return out
 
@@ -2106,6 +2196,18 @@ def dictionary():
                 except Exception as e:
                     app.logger.exception(f"/dictionary extra translations failed: {repr(e)}")
                     other_translations = {}
+            elif source_lang in ("om", "en"):
+                # If the primary lookup path did not surface result_id, still try an
+                # exact base-word probe so search can backfill missing generated langs.
+                wkey = make_search_key(_strip_edge_punct(q))
+                if wkey:
+                    fallback_base = _get_word_by_any_key(wkey)
+                    if fallback_base:
+                        try:
+                            fb_wid, fb_en, _fb_om = fallback_base
+                            get_or_generate_extra_translations(int(fb_wid or 0), normalize_text(fb_en or ""))
+                        except Exception as e:
+                            app.logger.exception(f"/dictionary fallback backfill failed: {repr(e)}")
 
             if (not from_base) and source_lang in ("om", "en"):
                 word = make_search_key(q)
@@ -2158,7 +2260,7 @@ def dictionary():
         for wid, lang_code, translated_text in c.fetchall():
             wid_int = int(wid or 0)
             txt = normalize_text(translated_text or "")
-            if not wid_int or not txt:
+            if not wid_int or not _is_meaningful_generated_text(txt):
                 continue
             row = list_other_translations.setdefault(wid_int, {})
             row[lang_code] = txt
@@ -3804,7 +3906,7 @@ def admin_manage():
             for wid, lang, txt in c.fetchall():
                 wid_int = int(wid or 0)
                 text_norm = normalize_text(txt or "")
-                if not wid_int or not text_norm:
+                if not wid_int or not _is_meaningful_generated_text(text_norm):
                     continue
                 generated_translations_by_word.setdefault(wid_int, {})[lang] = text_norm
     except Exception as e:
@@ -3961,7 +4063,7 @@ def _count_missing_generated_langs(conn, word_id: int) -> int:
         placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
         c.execute(
             f"""
-            SELECT COUNT(*)
+            SELECT lang_code, translated_text
             FROM generated_translations
             WHERE word_id=?
               AND lang_code IN ({placeholders})
@@ -3970,8 +4072,11 @@ def _count_missing_generated_langs(conn, word_id: int) -> int:
             """,
             (word_id, *EXTRA_GENERATED_LANGS),
         )
-        row = c.fetchone()
-        have_count = int((row or [0])[0] or 0)
+        have_langs = set()
+        for lang_code, translated_text in c.fetchall():
+            if _is_meaningful_generated_text(translated_text):
+                have_langs.add(lang_code)
+        have_count = len(have_langs)
         missing = len(EXTRA_GENERATED_LANGS) - have_count
         return missing if missing > 0 else 0
     except Exception:
@@ -4282,7 +4387,7 @@ def admin_import():
                 f"Oromo missing on insert: {oromo_missing_on_insert} | "
                 f"Ignored due to limit: {over_limit_rows} | Empty rows: {empty_rows} | Duplicate rows in file: {duplicate_rows} | "
                 f"Updated missing translations: {updated_missing_translations} | "
-                f"Cached generated translations: {cached_generated} | Google calls used: {google_calls}."
+                f"Generated translations saved: {cached_generated} | Google calls used: {google_calls}."
             )
             if generation_summary:
                 msg2 += f" | Generation by lang -> {generation_summary}"
