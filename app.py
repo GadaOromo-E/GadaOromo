@@ -337,7 +337,6 @@ def uploads(filename):
 
 IMPORT_BATCH_SIZE = 100
 IMPORT_MAX_WORDS = 200
-IMPORT_MAX_CALLS = max(1, (IMPORT_MAX_WORDS + IMPORT_BATCH_SIZE - 1) // IMPORT_BATCH_SIZE)
 
 
 # ------------------ STOPWORDS ------------------
@@ -3839,7 +3838,6 @@ def admin_import():
                         "updated_missing_translations": 0,
                         "cached_generated_translations": 0,
                         "google_calls_used": 0,
-                        "google_calls_max": IMPORT_MAX_CALLS,
                         "batch_size": IMPORT_BATCH_SIZE,
                         "max_words": IMPORT_MAX_WORDS,
                         "message": summary,
@@ -3982,7 +3980,6 @@ def admin_import():
                     "updated_missing_translations": updated_missing_translations,
                     "cached_generated_translations": cached_generated,
                     "google_calls_used": google_calls,
-                    "google_calls_max": IMPORT_MAX_CALLS,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_words": IMPORT_MAX_WORDS,
                     "message": msg
