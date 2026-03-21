@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repair Missing Languages | Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .summary-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .summary-table th, .summary-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    .summary-table th { background: #f5f5f5; }
+    .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+    .summary-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px; background: #fafafa; }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Repair Missing Languages</h2>
+        <div class="subtle">Admin-only bulk repair for missing/invalid generated translations (am/ar/zh-CN/fr).</div>
+      </div>
+      <a class="btn danger" href="/dashboard">Back</a>
+    </div>
+  </div>
+
+  {% if message %}
+    <div class="result-box">{{ message }}</div>
+  {% endif %}
+
+  <div class="card">
+    <form method="POST" action="/admin/repair-generated" class="row" style="align-items:flex-end;">
+      <div style="display:flex; flex-direction:column; gap:6px; min-width:220px;">
+        <label class="subtle">Max approved words to scan this run</label>
+        <input type="number" min="1" max="50000" step="1" name="max_words" value="{{ max_words or 5000 }}" />
+      </div>
+      <button type="submit" class="btn primary">Run Repair</button>
+    </form>
+    <div class="muted" style="margin-top:10px; font-size:14px;">
+      This action keeps valid cached values, regenerates missing/invalid values, and upserts without duplicates.
+    </div>
+  </div>
+
+  {% set s = summary or {} %}
+  {% set per_lang_stats = stats or s.get("stats_by_lang", {}) or {} %}
+  {% set failures = s.get("failures_per_lang", {}) if s else {} %}
+  {% if has_run %}
+    <div class="card">
+      <h2>Summary</h2>
+      <div class="summary-grid">
+        <div class="summary-card"><b>Words scanned:</b> {{ s.get("words_scanned", 0) }}</div>
+        <div class="summary-card"><b>Words needing repair:</b> {{ s.get("words_needing_repair", 0) }}</div>
+        <div class="summary-card"><b>Translations generated:</b> {{ s.get("translations_generated", 0) }}</div>
+        <div class="summary-card"><b>Cached reused:</b> {{ s.get("cached_reused", 0) }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Per Language</h2>
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>Language</th>
+            <th>Missing Before</th>
+            <th>Saved</th>
+            <th>Cached Reused</th>
+            <th>Failures</th>
+            <th>Provider Errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for lang in (extra_generated_langs or []) %}
+            {% set cfg = language_options.get(lang, {}) %}
+            {% set st = per_lang_stats.get(lang, {}) if per_lang_stats else {} %}
+            <tr>
+              <td>{{ cfg.get("label", lang) }}</td>
+              <td>{{ st.get("missing_before", 0) }}</td>
+              <td>{{ st.get("saved", 0) }}</td>
+              <td>{{ st.get("already_cached", 0) }}</td>
+              <td>{{ failures.get(lang, 0) }}</td>
+              <td>{{ st.get("provider_errors", 0) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>
