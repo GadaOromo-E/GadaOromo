@@ -5,6 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin Management | Gada Oromo Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .gen-grid {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(170px, 1fr));
+      gap: 8px;
+    }
+    .gen-card {
+      border: 1px solid #e2e2e2;
+      border-radius: 6px;
+      background: #fafafa;
+      padding: 8px;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .gen-card b {
+      display: block;
+      margin-bottom: 2px;
+    }
+    .gen-missing {
+      color: #777;
+      font-style: italic;
+    }
+    @media (max-width: 700px) {
+      .gen-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
 </head>
 <body>
 <div class="container">
@@ -57,18 +86,20 @@
               {% set gen = generated_translations_by_word.get(w[0], {}) %}
               <div class="muted" style="margin-top:8px; font-size:13px; line-height:1.5;">
                 <b>Generated:</b>
-                {% for lang in extra_generated_langs %}
-                  {% set cfg = language_options.get(lang, {}) %}
-                  {% set txt = gen.get(lang) %}
-                  <span style="margin-right:8px;">
-                    <b>{{ cfg.get("label", lang) }}:</b>
-                    {% if txt %}
-                      <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block;"{% endif %}>{{ txt }}</span>
-                    {% else %}
-                      <span>missing</span>
-                    {% endif %}
-                  </span>
-                {% endfor %}
+                <div class="gen-grid">
+                  {% for lang in extra_generated_langs %}
+                    {% set cfg = language_options.get(lang, {}) %}
+                    {% set txt = gen.get(lang) %}
+                    <div class="gen-card">
+                      <b>{{ cfg.get("label", lang) }}</b>
+                      {% if txt %}
+                        <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block; text-align:right;"{% endif %}>{{ txt }}</span>
+                      {% else %}
+                        <span class="gen-missing">Not generated yet</span>
+                      {% endif %}
+                    </div>
+                  {% endfor %}
+                </div>
               </div>
 
               <div class="small-actions" style="margin-top:10px;">

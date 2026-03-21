@@ -30,6 +30,45 @@
       text-align: left;
       white-space: nowrap;
     }
+    .generated-panel {
+      margin-top: 12px;
+      padding: 10px;
+      border: 1px solid #d9d9d9;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+    .generated-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .generated-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(140px, 1fr));
+      gap: 8px;
+    }
+    .generated-item {
+      border: 1px solid #e6e6e6;
+      border-radius: 6px;
+      padding: 8px;
+      background: #fff;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .generated-label {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .generated-missing {
+      color: #777;
+      font-style: italic;
+    }
+    @media (max-width: 700px) {
+      .generated-grid {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -121,8 +160,8 @@
         {% endif %}
 
         {% if result.oromo or other_translations %}
-          <div style="margin-top:12px;">
-            <div class="subtle"><b>Available meanings</b></div>
+          <div class="generated-panel">
+            <div class="generated-title">Generated Languages</div>
             <table class="translation-table">
               <thead>
                 <tr>
@@ -133,7 +172,7 @@
               <tbody>
                 {% for lang in extra_generated_langs %}
                   {% set cfg = language_options.get(lang, {}) %}
-                  {% set translated = other_translations.get(lang, {}).get("text", "-") %}
+                  {% set translated = other_translations.get(lang, {}).get("text", "Not generated yet") %}
                   <tr>
                     <td>{{ cfg.get("label", lang) }}</td>
                     <td {% if cfg.get("rtl") %}dir="rtl" style="text-align:right;"{% endif %}>{{ translated }}</td>
@@ -184,23 +223,23 @@
                   <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;">{{ w[1] }}</a>
                   <div class="subtle">{{ w[2] }}</div>
                   {% set wt = list_other_translations.get(w[0], {}) %}
-                  {% if wt %}
-                    <div class="muted" style="margin-top:4px; font-size:13px; line-height:1.45;">
-                      {% set ns = namespace(first=true) %}
+                  <div class="generated-panel">
+                    <div class="generated-title">Generated Languages</div>
+                    <div class="generated-grid">
                       {% for lang in extra_generated_langs %}
+                        {% set cfg = language_options.get(lang, {}) %}
                         {% set txt = wt.get(lang) %}
-                        {% if txt %}
-                          {% set cfg = language_options.get(lang, {}) %}
-                          {% if not ns.first %} | {% endif %}
-                          <span>
-                            <b>{{ cfg.get("label", lang)[:2] }}:</b>
-                            <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block;"{% endif %}>{{ txt }}</span>
-                          </span>
-                          {% set ns.first = false %}
-                        {% endif %}
+                        <div class="generated-item">
+                          <span class="generated-label">{{ cfg.get("label", lang) }}</span>
+                          {% if txt %}
+                            <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block; text-align:right;"{% endif %}>{{ txt }}</span>
+                          {% else %}
+                            <span class="generated-missing">Not generated yet</span>
+                          {% endif %}
+                        </div>
                       {% endfor %}
                     </div>
-                  {% endif %}
+                  </div>
                 </div>
               </div>
             {% endfor %}
