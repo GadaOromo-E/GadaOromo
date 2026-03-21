@@ -1503,6 +1503,37 @@ def _get_cached_generated_translation(word_id: int, lang_code: str):
         return None
 
 
+def _get_cached_extra_translations_for_word(word_id: int, langs=None, log_hits: bool = False):
+    """
+    DB-first read for extra generated translations.
+    Returns only meaningful cached values and never calls provider APIs.
+    """
+    out = {}
+    wid = int(word_id or 0)
+    if not wid:
+        return out
+
+    lang_list = tuple(langs or EXTRA_GENERATED_LANGS)
+    for lang in lang_list:
+        cached = _get_cached_generated_translation(wid, lang)
+        translated = normalize_text((cached or [""])[0] or "")
+        if not _is_meaningful_generated_text(translated):
+            continue
+        if log_hits:
+            app.logger.info(
+                "using cached translation word_id=%s lang=%s value=%r",
+                wid,
+                lang,
+                translated[:120],
+            )
+        out[lang] = {
+            "text": translated,
+            "tts_audio_url": (cached or [None, None])[1] if cached else None,
+        }
+
+    return out
+
+
 def _save_generated_translation(
     word_id: int,
     lang_code: str,
@@ -1617,10 +1648,16 @@ def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
 def _get_or_generate_word_translation(word_id: int, english_text: str, target_lang: str):
     cached = _get_cached_generated_translation(word_id, target_lang)
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
+        app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
         return normalize_text(cached[0]), cached[1], True
 
     translated = _auto_translate_from_english(english_text, target_lang)
     if not translated:
+        app.logger.info(
+            "skipping generation due to API failure word_id=%s lang=%s",
+            word_id,
+            target_lang,
+        )
         return "", None, False
 
     # TODO: server-side TTS generation can populate tts_audio_url later.
@@ -1744,18 +1781,24 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
         app.logger.info("extra translation skipped: missing english text for word_id=%s", word_id)
         return out
 
+    # Display is always DB-first so public routes remain API-independent.
+    out = _get_cached_extra_translations_for_word(word_id, EXTRA_GENERATED_LANGS, log_hits=True)
+
+    missing_for_display = [lang for lang in EXTRA_GENERATED_LANGS if lang not in out]
+
     saved_count = 0
     backfill_stats = {}
-    try:
-        saved_count, backfill_stats = ensure_missing_generated_translations_for_words(
-            [(word_id, en_text)],
-            langs=EXTRA_GENERATED_LANGS,
-            chunk_size=len(EXTRA_GENERATED_LANGS),
-            log_context="lookup_single_word",
-        )
-    except Exception as e:
-        app.logger.exception(f"lookup generated backfill bootstrap failed for word_id={word_id}: {repr(e)}")
-        backfill_stats = {}
+    if missing_for_display:
+        try:
+            saved_count, backfill_stats = ensure_missing_generated_translations_for_words(
+                [(word_id, en_text)],
+                langs=missing_for_display,
+                chunk_size=len(EXTRA_GENERATED_LANGS),
+                log_context="lookup_single_word",
+            )
+        except Exception as e:
+            app.logger.exception(f"lookup generated backfill bootstrap failed for word_id={word_id}: {repr(e)}")
+            backfill_stats = {}
 
     missing_langs = []
     cached_langs = []
@@ -1787,23 +1830,17 @@ def get_or_generate_extra_translations(word_id: int, english_text: str):
         saved_count,
     )
 
-    for lang in EXTRA_GENERATED_LANGS:
-        try:
-            cached = _get_cached_generated_translation(word_id, lang)
-            translated = normalize_text((cached or [""])[0] or "")
-            tts_url = (cached or [None, None])[1] if cached else None
+    if missing_for_display:
+        refreshed = _get_cached_extra_translations_for_word(word_id, missing_for_display, log_hits=False)
+        out.update(refreshed)
 
-            if not _is_meaningful_generated_text(translated):
-                translated, tts_url, _ = _get_or_generate_word_translation(word_id, en_text, lang)
-
-            if _is_meaningful_generated_text(translated):
-                out[lang] = {
-                    "text": translated,
-                    "tts_audio_url": tts_url
-                }
-        except Exception as e:
-            app.logger.exception(f"extra translation failed for lang={lang}, word_id={word_id}: {repr(e)}")
-            continue
+        still_missing = [lang for lang in missing_for_display if lang not in out]
+        if still_missing:
+            app.logger.info(
+                "skipping generation due to API failure word_id=%s langs=%s",
+                word_id,
+                still_missing,
+            )
 
     app.logger.info(
         "lookup backfill final word_id=%s available_langs=%s",
