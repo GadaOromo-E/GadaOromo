@@ -78,7 +78,7 @@
           <input type="text" name="q" id="dictionaryQuery" value="{{ q or '' }}" placeholder="Search word..." autocomplete="off" autofocus />
           <select name="source_lang" id="sourceLangSelect">
             {% for code, cfg in language_options.items() %}
-              <option value="{{ code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
+              <option value="{{ code }}" data-speech-lang="{{ cfg.speech_code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
             {% endfor %}
           </select>
           <select name="target_lang" id="targetLangSelect">

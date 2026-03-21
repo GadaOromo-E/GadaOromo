@@ -41,7 +41,7 @@
         <div class="row">
           <select name="source_lang" id="sourceLangSelect">
             {% for code, cfg in language_options.items() %}
-              <option value="{{ code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
+              <option value="{{ code }}" data-speech-lang="{{ cfg.speech_code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
             {% endfor %}
           </select>
 
@@ -188,9 +188,56 @@ function loadVoices(){ cachedVoices = window.speechSynthesis ? window.speechSynt
 if ('speechSynthesis' in window) { loadVoices(); window.speechSynthesis.onvoiceschanged = loadVoices; }
 function pickBestVoice(langCode){ if(!cachedVoices || cachedVoices.length===0) return null; const lc=(langCode||"").toLowerCase(); let v=cachedVoices.find(x => (x.lang||"").toLowerCase()===lc); if(v) return v; const base=lc.split("-")[0]; v=cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith(base)); if(v) return v; return cachedVoices.find(x => (x.lang||"").toLowerCase().startsWith("en")) || null; }
 function speakText(text, langCode){ if(!('speechSynthesis' in window) || !text || !text.trim()) return; const u=new SpeechSynthesisUtterance(text); const best=pickBestVoice(langCode); if(best){ u.voice=best; u.lang=best.lang; } else { u.lang=langCode; } window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
-function speakInput(){ const txt=document.getElementById("textInput").value; speakText(txt, "{{ source_speech_lang }}"); }
+function currentSourceSpeechLang(){
+  const src = document.getElementById("sourceLangSelect");
+  if(src && src.options && src.selectedIndex >= 0){
+    const speech = (src.options[src.selectedIndex].getAttribute("data-speech-lang") || "").trim();
+    if(speech) return speech;
+  }
+  return "{{ source_speech_lang }}";
+}
+function speakInput(){
+  const ta=document.getElementById("textInput");
+  if(!ta){
+    console.error("speakInput selector mismatch: #textInput not found");
+    alert("Input field is temporarily unavailable.");
+    return;
+  }
+  const txt=(ta.value||"").trim();
+  if(!txt){
+    alert("Please enter text first.");
+    return;
+  }
+  speakText(txt, currentSourceSpeechLang());
+}
 function speakResult(){ const el=document.getElementById("resultText"); speakText(el?el.innerText:"", "{{ target_speech_lang }}"); }
-function startVoice(){ const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition; if(!SpeechRecognition) return; const recognition=new SpeechRecognition(); recognition.lang="{{ source_speech_lang }}"; recognition.interimResults=false; recognition.onresult=function(event){ const text=event.results[0][0].transcript; const ta=document.getElementById("textInput"); ta.value=text; autoGrow(ta); }; recognition.start(); }
+function startVoice(){
+  const ta=document.getElementById("textInput");
+  if(!ta){
+    console.error("startVoice selector mismatch: #textInput not found");
+    alert("Voice input is temporarily unavailable on this page.");
+    return;
+  }
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    alert("Voice input is not supported in this browser. Try Chrome.");
+    return;
+  }
+  const recognition=new SpeechRecognition();
+  recognition.lang=currentSourceSpeechLang();
+  recognition.interimResults=false;
+  recognition.onresult=function(event){
+    const text=event.results[0][0].transcript;
+    ta.value=text;
+    autoGrow(ta);
+    ta.focus();
+  };
+  recognition.onerror=function(event){
+    console.error("startVoice error:", event);
+    alert("Voice input failed. Please try again.");
+  };
+  recognition.start();
+}
 </script>
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>

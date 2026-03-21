@@ -323,16 +323,40 @@
     widget._recordedBlob = null;
   }
 
-  // Voice search (home)
+  function findVoiceInputTarget() {
+    // Prefer current page fields first, then legacy fallback.
+    return (
+      document.getElementById("dictionaryQuery") ||
+      document.getElementById("textInput") ||
+      document.getElementById("searchWord")
+    );
+  }
+
+  function findSpeechLangForInput(inputEl) {
+    if (!inputEl) return "en-US";
+    const srcSelect = document.getElementById("sourceLangSelect");
+    if (srcSelect && srcSelect.options && srcSelect.selectedIndex >= 0) {
+      const opt = srcSelect.options[srcSelect.selectedIndex];
+      const speech = (opt && (opt.getAttribute("data-speech-lang") || "")).trim();
+      if (speech) return speech;
+    }
+    return "en-US";
+  }
+
+  // Voice search (home/dictionary/translate)
   window.startVoiceSearch = function () {
-    const input = document.getElementById("searchWord");
-    if (!input) return alert("Search input not found.");
+    const input = findVoiceInputTarget();
+    if (!input) {
+      console.error("startVoiceSearch selector mismatch: no input target found (#dictionaryQuery, #textInput, #searchWord).");
+      alert("Voice input is temporarily unavailable on this page.");
+      return;
+    }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return alert("Voice search not supported. Try Chrome on Android/Desktop.");
+    if (!SpeechRecognition) return alert("Voice input is not supported in this browser. Try Chrome.");
 
     const recog = new SpeechRecognition();
-    recog.lang = "en-US";
+    recog.lang = findSpeechLangForInput(input);
     recog.interimResults = false;
     recog.maxAlternatives = 1;
 
