@@ -4083,6 +4083,132 @@ def _count_missing_generated_langs(conn, word_id: int) -> int:
         return len(EXTRA_GENERATED_LANGS)
 
 
+def _merge_generated_stats(acc: dict, stats: dict):
+    for lang in EXTRA_GENERATED_LANGS:
+        src = stats.get(lang, {}) if isinstance(stats, dict) else {}
+        dst = acc.setdefault(lang, {
+            "items_seen": 0,
+            "already_cached": 0,
+            "invalid_cached_treated_missing": 0,
+            "missing_before": 0,
+            "saved": 0,
+            "empty_results": 0,
+            "batch_mismatch_fallback": 0,
+            "provider_errors": 0,
+        })
+        for k in (
+            "items_seen",
+            "already_cached",
+            "invalid_cached_treated_missing",
+            "missing_before",
+            "saved",
+            "empty_results",
+            "batch_mismatch_fallback",
+            "provider_errors",
+        ):
+            dst[k] = int(dst.get(k, 0) or 0) + int(src.get(k, 0) or 0)
+    return acc
+
+
+@app.route("/admin/repair-generated", methods=["GET", "POST"])
+def admin_repair_generated():
+    if not require_admin():
+        return redirect("/admin")
+
+    default_max_words = 5000
+    max_words = default_max_words
+    summary = None
+    msg = None
+
+    if request.method == "POST":
+        max_words_raw = normalize_text(request.form.get("max_words") or "")
+        if max_words_raw.isdigit():
+            max_words = max(1, min(int(max_words_raw), 50000))
+        else:
+            max_words = default_max_words
+
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id, english
+            FROM words
+            WHERE status='approved'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (max_words,),
+        )
+        rows = c.fetchall()
+
+        words_scanned = len(rows)
+        words_needing_repair = []
+        for wid, en in rows:
+            wid_int = int(wid or 0)
+            en_norm = normalize_text(en or "")
+            if not wid_int or not en_norm:
+                continue
+            missing = _count_missing_generated_langs(conn, wid_int)
+            if missing > 0:
+                words_needing_repair.append((wid_int, en_norm))
+
+        conn.close()
+
+        words_repair_count = len(words_needing_repair)
+        generated_saved = 0
+        merged_stats = {lang: {} for lang in EXTRA_GENERATED_LANGS}
+
+        for i in range(0, words_repair_count, IMPORT_BATCH_SIZE):
+            chunk = words_needing_repair[i:i + IMPORT_BATCH_SIZE]
+            if not chunk:
+                continue
+            try:
+                saved_count, stats = ensure_missing_generated_translations_for_words(
+                    chunk,
+                    langs=EXTRA_GENERATED_LANGS,
+                    chunk_size=IMPORT_BATCH_SIZE,
+                    log_context="admin_bulk_repair",
+                )
+                generated_saved += int(saved_count or 0)
+                _merge_generated_stats(merged_stats, stats)
+            except Exception as e:
+                app.logger.exception(f"admin bulk repair chunk failed: {repr(e)}")
+
+        failures_per_lang = {}
+        for lang in EXTRA_GENERATED_LANGS:
+            st = merged_stats.get(lang, {}) or {}
+            missing_before = int(st.get("missing_before", 0) or 0)
+            saved = int(st.get("saved", 0) or 0)
+            failed = missing_before - saved
+            failures_per_lang[lang] = failed if failed > 0 else 0
+
+        summary = {
+            "words_scanned": words_scanned,
+            "words_needing_repair": words_repair_count,
+            "translations_generated": generated_saved,
+            "cached_reused": sum(int((merged_stats.get(lang, {}) or {}).get("already_cached", 0) or 0) for lang in EXTRA_GENERATED_LANGS),
+            "failures_per_lang": failures_per_lang,
+            "stats_by_lang": merged_stats,
+            "max_words": max_words,
+        }
+
+        msg = (
+            f"Repair done. Words scanned: {words_scanned} | "
+            f"Words needing repair: {words_repair_count} | "
+            f"Generated translations saved: {generated_saved}."
+        )
+        app.logger.info("admin bulk repair summary: %s", summary)
+
+    return render_template(
+        "admin_repair_generated.html",
+        msg=msg,
+        summary=summary,
+        max_words=max_words,
+        extra_generated_langs=EXTRA_GENERATED_LANGS,
+        language_options=LANGUAGE_OPTIONS,
+    )
+
+
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
     if not require_admin():
