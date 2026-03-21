@@ -4215,13 +4215,26 @@ def admin_repair_generated():
                 pass
 
     try:
+        has_summary = summary is not None
+        safe_summary = summary or {
+            "words_scanned": 0,
+            "words_needing_repair": 0,
+            "translations_generated": 0,
+            "cached_reused": 0,
+            "failures_per_lang": {},
+            "stats_by_lang": {},
+            "max_words": max_words,
+        }
+        safe_language_options = LANGUAGE_OPTIONS if isinstance(LANGUAGE_OPTIONS, dict) else {}
+        safe_extra_langs = EXTRA_GENERATED_LANGS if EXTRA_GENERATED_LANGS else tuple()
         return render_template(
             "admin_repair_generated.html",
             msg=msg,
-            summary=summary,
+            summary=safe_summary,
+            has_summary=has_summary,
             max_words=max_words,
-            extra_generated_langs=EXTRA_GENERATED_LANGS,
-            language_options=LANGUAGE_OPTIONS,
+            extra_generated_langs=safe_extra_langs,
+            language_options=safe_language_options,
         )
     except Exception as e:
         app.logger.exception(f"admin_repair_generated render failed: {repr(e)}")
