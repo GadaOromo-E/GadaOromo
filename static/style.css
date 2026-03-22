@@ -223,19 +223,21 @@ button:disabled,
 /* Chips */
 .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top: 10px; }
 .chip{
-  display:inline-block;
-  width: auto;
-  padding: 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: #fff;
+  display:inline-flex;
+  align-items:center;
+  width:auto;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 6px 10px;
+  border-radius: 16px;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
   color: var(--black);
   cursor:pointer;
   user-select:none;
 }
 .chip:hover{
-  border-color: rgba(179,0,0,0.35);
-  color: var(--red);
+  background: #eee;
 }
 
 .sr-only{
