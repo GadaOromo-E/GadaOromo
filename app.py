@@ -157,6 +157,12 @@ def add_security_headers(resp):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     if resp.mimetype == "text/html":
         resp.headers.setdefault("Cache-Control", "no-cache")
+        # Keep utility/private surfaces out of search indexing.
+        noindex_prefixes = ("/admin", "/recorder", "/create_admin", "/api/", "/recorder/api/")
+        noindex_exact = ("/offline", "/health")
+        req_path = (request.path or "").strip()
+        if req_path in noindex_exact or any(req_path.startswith(p) for p in noindex_prefixes):
+            resp.headers["X-Robots-Tag"] = "noindex, nofollow"
     return resp
 
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
@@ -1224,49 +1230,60 @@ def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int)
     q = normalize_text(raw_query)
     if not q:
         return
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
 
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
+        c.execute(
+            "INSERT INTO search_logs (query, direction, is_phrase, is_exact) VALUES (?, ?, ?, ?)",
+            (q, direction, int(is_phrase), int(is_exact))
+        )
 
-    c.execute(
-        "INSERT INTO search_logs (query, direction, is_phrase, is_exact) VALUES (?, ?, ?, ?)",
-        (q, direction, int(is_phrase), int(is_exact))
-    )
+        c.execute("SELECT total_count FROM search_counts WHERE query=?", (q,))
+        row = c.fetchone()
 
-    c.execute("SELECT total_count FROM search_counts WHERE query=?", (q,))
-    row = c.fetchone()
+        if row:
+            c.execute("""
+                UPDATE search_counts
+                SET total_count = total_count + 1,
+                    today_count = today_count + 1,
+                    week_count = week_count + 1,
+                    last_searched_at = CURRENT_TIMESTAMP
+                WHERE query=?
+            """, (q,))
+        else:
+            c.execute("""
+                INSERT INTO search_counts (query, total_count, today_count, week_count, last_searched_at)
+                VALUES (?, 1, 1, 1, CURRENT_TIMESTAMP)
+            """, (q,))
 
-    if row:
-        c.execute("""
-            UPDATE search_counts
-            SET total_count = total_count + 1,
-                today_count = today_count + 1,
-                week_count = week_count + 1,
-                last_searched_at = CURRENT_TIMESTAMP
-            WHERE query=?
-        """, (q,))
-    else:
-        c.execute("""
-            INSERT INTO search_counts (query, total_count, today_count, week_count, last_searched_at)
-            VALUES (?, 1, 1, 1, CURRENT_TIMESTAMP)
-        """, (q,))
-
-    conn.commit()
-    conn.close()
+        conn.commit()
+    except Exception as e:
+        app.logger.exception(f"record_search failed: {repr(e)}")
+    finally:
+        if conn:
+            conn.close()
 
 
 def get_trending(limit=20):
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute("""
-        SELECT query, today_count, week_count, total_count
-        FROM search_counts
-        ORDER BY today_count DESC, week_count DESC, total_count DESC
-        LIMIT ?
-    """, (limit,))
-    rows = c.fetchall()
-    conn.close()
-    return rows
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT query, today_count, week_count, total_count
+            FROM search_counts
+            ORDER BY today_count DESC, week_count DESC, total_count DESC
+            LIMIT ?
+        """, (limit,))
+        return c.fetchall()
+    except Exception as e:
+        app.logger.exception(f"get_trending failed: {repr(e)}")
+        return []
+    finally:
+        if conn:
+            conn.close()
 
 # ------------------ SUGGESTIONS (KEY-BASED, CASE-INSENSITIVE) ------------------
 
@@ -2364,6 +2381,15 @@ def word_detail(term):
         abort(404)
 
     wid, en, om = row
+    english_word = (en or "").strip()
+    if not english_word:
+        abort(404)
+
+    canonical_path = f"/word/{quote(english_word, safe='')}"
+    incoming_term = normalize_text(unquote(term or ""))
+    # Canonicalize to one stable URL per base entry to reduce duplicate indexing.
+    if incoming_term.casefold() != english_word.casefold():
+        return redirect(canonical_path, code=301)
 
     audio = {}
     try:
@@ -2390,7 +2416,6 @@ def word_detail(term):
         app.logger.exception(f"/word extra translations failed: {repr(e)}")
         other_translations = {}
 
-    english_word = (en or "").strip()
     oromo_word = (om or "").strip()
 
     page_title = f"{english_word} meaning in Oromo"
@@ -2403,7 +2428,7 @@ def word_detail(term):
         f"Find translations in Oromo, Amharic, Arabic, French, and Chinese on {APP_NAME}."
     )[:160]
 
-    canonical_url = f"https://gadaadictionary.com/word/{quote(english_word)}"
+    canonical_url = f"https://gadaadictionary.com/word/{quote(english_word, safe='')}"
 
     return render_template(
         "words.html",

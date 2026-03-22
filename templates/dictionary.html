@@ -4,9 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="description" content="Gadaa Dictionary - Oromo and multilingual lookup using English pivot.">
   <link rel="canonical" href="https://gadaadictionary.com/dictionary">
-  {% if request.args or q %}
-  <meta name="robots" content="noindex,follow">
-  {% endif %}
+  <meta name="robots" content="index,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dictionary | {{ APP_NAME }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
@@ -74,6 +72,9 @@
       <div class="subtle">Search words using Oromo, English, Amharic, Arabic, French, or Chinese.</div>
 
       <form method="GET" action="/dictionary" id="dictionarySearchForm" style="margin-top:12px;">
+        <label for="dictionaryQuery" class="sr-only">Search word</label>
+        <label for="sourceLangSelect" class="sr-only">Source language</label>
+        <label for="targetLangSelect" class="sr-only">Target language</label>
         <div class="row" style="align-items:stretch;">
           <input type="text" name="q" id="dictionaryQuery" value="{{ q or '' }}" placeholder="Search word..." autocomplete="off" autofocus />
           <select name="source_lang" id="sourceLangSelect">
@@ -86,7 +87,7 @@
               <option value="{{ code }}" {% if target_lang == code %}selected{% endif %}>To: {{ cfg.label }}</option>
             {% endfor %}
           </select>
-          <button type="button" onclick="startVoiceSearch()">Speak</button>
+          <button type="button" onclick="startVoiceSearch()" aria-label="Speak search query">Speak</button>
           <button type="submit">Search</button>
         </div>
       </form>
@@ -228,17 +229,17 @@
         {% if suggestions.en %}
           <div class="subtle">English suggestions</div>
           <div class="chips">
-            {% for s in suggestions.en.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
-            {% for s in suggestions.en.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
-            {% for s in suggestions.en.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.en.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
+            {% for s in suggestions.en.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
+            {% for s in suggestions.en.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
           </div>
         {% endif %}
         {% if suggestions.om %}
           <div class="subtle" style="margin-top:10px;">Oromo suggestions</div>
           <div class="chips">
-            {% for s in suggestions.om.closest %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
-            {% for s in suggestions.om.prefix %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
-            {% for s in suggestions.om.partial %}<span class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</span>{% endfor %}
+            {% for s in suggestions.om.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
+            {% for s in suggestions.om.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
+            {% for s in suggestions.om.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
           </div>
         {% endif %}
       </div>

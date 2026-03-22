@@ -224,6 +224,7 @@ button:disabled,
 .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top: 10px; }
 .chip{
   display:inline-block;
+  width: auto;
   padding: 8px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -235,6 +236,18 @@ button:disabled,
 .chip:hover{
   border-color: rgba(179,0,0,0.35);
   color: var(--red);
+}
+
+.sr-only{
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0, 0, 0, 0);
+  white-space:nowrap;
+  border:0;
 }
 
 /* Word list rows */

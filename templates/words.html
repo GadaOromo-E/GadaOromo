@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
 
   {% set english_word = (word.english if word and word.english is defined and word.english else (word.en if word and word.en is defined and word.en else "")) %}
   {% set oromo_word = (word.oromo if word and word.oromo is defined and word.oromo else (word.om if word and word.om is defined and word.om else "")) %}
@@ -159,6 +160,7 @@
       <h1>{{ APP_NAME }}</h1>
       <p class="muted">Oromo ↔ English Dictionary</p>
     </header>
+    <main id="main">
 
     {% if not word %}
       <section class="word-card not-found">
@@ -290,6 +292,7 @@
     <footer style="margin-top:24px;">
       <p class="muted">&copy; {{ current_year }} {{ APP_NAME }}</p>
     </footer>
+    </main>
   </div>
 </body>
 </html>

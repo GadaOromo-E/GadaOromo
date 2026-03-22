@@ -7,6 +7,7 @@
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
   const isAndroid = /android/i.test(navigator.userAgent);
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 
   // ---------- Small helpers ----------
   function vibrate(msOrPattern) {
