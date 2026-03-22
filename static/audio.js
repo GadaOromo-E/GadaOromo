@@ -1,10 +1,13 @@
-/* static/audio.js
+/* static/audio.js (FIXED)
    Public recording:
    - Records Oromo pronunciation and uploads to POST /api/submit-audio
-   - Stores entry info on the widget when recording starts
-   - Robust widget detection
+   - FIXES "Missing entry info (entry_type/entry_id)" by:
+       ✅ storing entry info on the widget when recording starts
+       ✅ also reading from widget._entryInfo fallback
+   - FIXES "Stop button disappears / cannot stop" by:
+       ✅ always showing stop button inside the same widget
+       ✅ robust widget detection (result-box / word-row)
    - Keeps your voice search startVoiceSearch()
-   - Accessibility cleanup only: live status, labels, hidden state
 */
 
 (function () {
@@ -26,6 +29,7 @@
   }
 
   function findWidget(el) {
+    // Most reliable for your pages
     return (
       el.closest(".result-box") ||
       el.closest(".word-row") ||
@@ -34,34 +38,16 @@
     );
   }
 
-  function ensureStatusA11y(el) {
-    if (!el) return;
-    if (!el.hasAttribute("role")) el.setAttribute("role", "status");
-    if (!el.hasAttribute("aria-live")) el.setAttribute("aria-live", "polite");
-    if (!el.hasAttribute("aria-atomic")) el.setAttribute("aria-atomic", "true");
-  }
-
-  function ensureButtonA11y(btn, label) {
-    if (!btn) return;
-    if (label && !btn.hasAttribute("aria-label")) btn.setAttribute("aria-label", label);
-  }
-
-  function ensurePreviewA11y(preview) {
-    if (!preview) return;
-    if (!preview.hasAttribute("aria-label")) {
-      preview.setAttribute("aria-label", "Recorded audio preview");
-    }
-  }
-
   function setWidgetInfo(widget, info) {
     if (!widget || !info) return;
-    widget._entryInfo = info;
+    widget._entryInfo = info; // ✅ IMPORTANT: store for submit/stop buttons
     widget.dataset.entryType = info.entryType || widget.dataset.entryType || "";
     widget.dataset.entryId = info.entryId || widget.dataset.entryId || "";
     widget.dataset.lang = info.lang || widget.dataset.lang || "oromo";
   }
 
   function readInfo(widget, btn) {
+    // Try button dataset, widget dataset, then widget._entryInfo
     const fromBtn = {
       entryType: (btn?.dataset.entryType || "").trim().toLowerCase(),
       entryId: (btn?.dataset.entryId || "").trim(),
@@ -76,37 +62,22 @@
 
     const fromStored = widget?._entryInfo || {};
 
-    const entryType =
-      fromBtn.entryType ||
-      fromWidget.entryType ||
-      (fromStored.entryType || "").trim().toLowerCase();
-
-    const entryId =
-      fromBtn.entryId ||
-      fromWidget.entryId ||
-      String(fromStored.entryId || "").trim();
-
-    const lang =
-      fromBtn.lang ||
-      fromWidget.lang ||
-      (fromStored.lang || "oromo").trim().toLowerCase();
+    const entryType = fromBtn.entryType || fromWidget.entryType || (fromStored.entryType || "").trim().toLowerCase();
+    const entryId = fromBtn.entryId || fromWidget.entryId || String(fromStored.entryId || "").trim();
+    const lang = fromBtn.lang || fromWidget.lang || (fromStored.lang || "oromo").trim().toLowerCase();
 
     return { entryType, entryId, lang };
   }
 
   function setStatus(widget, entryId, msg) {
+    // local status area if present
     const local = $(widget, "[data-status]");
-    if (local) {
-      ensureStatusA11y(local);
-      local.textContent = msg || "";
-    }
+    if (local) local.textContent = msg || "";
 
+    // global fallback (your index.html uses this)
     if (entryId) {
       const globalEl = document.querySelector(`[data-status-for="${entryId}"]`);
-      if (globalEl) {
-        ensureStatusA11y(globalEl);
-        globalEl.textContent = msg || "";
-      }
+      if (globalEl) globalEl.textContent = msg || "";
     }
   }
 
@@ -120,9 +91,7 @@
   }
 
   function stopTracks(stream) {
-    try {
-      stream?.getTracks()?.forEach((t) => t.stop());
-    } catch (_) {}
+    try { stream?.getTracks()?.forEach(t => t.stop()); } catch (_) {}
   }
 
   function resetActive() {
@@ -141,44 +110,28 @@
     const rerecordBtn = $(widget, "[data-rerecord-btn]");
     const preview = $(widget, "[data-preview-audio]");
 
-    ensureButtonA11y(rb, "Record Oromo pronunciation");
-    ensureButtonA11y(sb, "Stop recording Oromo pronunciation");
-    ensureButtonA11y(submitBtn, "Submit Oromo recording");
-    ensureButtonA11y(rerecordBtn, "Record Oromo pronunciation again");
-    ensurePreviewA11y(preview);
-
     if (rb) rb.style.display = "inline-block";
     if (sb) sb.style.display = "none";
     if (submitBtn) submitBtn.style.display = "none";
     if (rerecordBtn) rerecordBtn.style.display = "none";
-    if (preview) {
-      preview.style.display = "none";
-      preview.hidden = true;
-    }
-
-    if (widget) widget.setAttribute("aria-busy", "false");
+    if (preview) preview.style.display = "none";
   }
 
   function requestStop(reasonText) {
     if (!active.recorder || active.recorder.state === "inactive") {
       stopTracks(active.stream);
-      if (active.widget) active.widget.setAttribute("aria-busy", "false");
       resetActive();
       return;
     }
     if (active.stopping) return;
     active.stopping = true;
 
-    if (active.widget) {
-      active.widget.setAttribute("aria-busy", "true");
-      setStatus(active.widget, active.entryId, reasonText || "⏹ Stopping…");
-    }
+    if (active.widget) setStatus(active.widget, active.entryId, reasonText || "⏹ Stopping…");
 
     try {
       active.recorder.stop();
     } catch (_) {
       stopTracks(active.stream);
-      if (active.widget) active.widget.setAttribute("aria-busy", "false");
       resetActive();
     }
   }
@@ -196,19 +149,20 @@
       throw new Error("Only Oromo audio is allowed.");
     }
 
+    // ✅ store info so Submit/Stop buttons work later
     setWidgetInfo(widget, info);
 
+    // Stop old recording
     if (active.recorder && active.recorder.state !== "inactive") {
       requestStop("⏹ Stopped (new recording started).");
-      await new Promise((r) => setTimeout(r, 250));
+      await new Promise(r => setTimeout(r, 250));
     }
 
     const stopBtn = $(widget, "[data-stop-btn]");
-    if (stopBtn) stopBtn.style.display = "inline-block";
+    if (stopBtn) stopBtn.style.display = "inline-block"; // ✅ ensure visible
 
     const { mime, ext } = pickMime();
     widget.dataset.ext = ext;
-    widget.setAttribute("aria-busy", "true");
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -227,7 +181,6 @@
     recorder.onerror = () => {
       setStatus(widget, info.entryId, "❌ Recorder error.");
       stopTracks(stream);
-      widget.setAttribute("aria-busy", "false");
       resetRowUI(widget);
       resetActive();
     };
@@ -242,7 +195,6 @@
       const blob = new Blob(chunks, { type: mime2 });
       if (!blob || blob.size === 0) {
         setStatus(widget, info.entryId, "⚠️ No audio captured. Try again.");
-        widget.setAttribute("aria-busy", "false");
         resetRowUI(widget);
         resetActive();
         return;
@@ -252,11 +204,9 @@
 
       const preview = $(widget, "[data-preview-audio]");
       if (preview) {
-        ensurePreviewA11y(preview);
         const url = URL.createObjectURL(blob);
         preview.src = url;
         preview.style.display = "block";
-        preview.hidden = false;
         preview.load();
       }
 
@@ -271,10 +221,10 @@
       if (sb) sb.style.display = "none";
 
       setStatus(widget, info.entryId, "✅ Recording ready. Click Submit.");
-      widget.setAttribute("aria-busy", "false");
       resetActive();
     };
 
+    // Start (no timeslice is more stable for some browsers)
     recorder.start();
   }
 
@@ -310,7 +260,6 @@
       return;
     }
 
-    widget.setAttribute("aria-busy", "true");
     setStatus(widget, info.entryId, "⏳ Uploading…");
 
     const fd = new FormData();
@@ -331,17 +280,22 @@
         body: fd,
         credentials: "same-origin",
         cache: "no-store",
-        headers,
       });
+
+ // Try to parse JSON (your backend returns JSON)
+  try {
+    data = await res.json();
+  } catch (_) {
+    data = null;
+  }
+
     } catch (e) {
       console.error(e);
-      widget.setAttribute("aria-busy", "false");
       setStatus(widget, info.entryId, "❌ Network error uploading audio.");
       return;
     }
 
     if (looksLikeLoginRedirect(res)) {
-      widget.setAttribute("aria-busy", "false");
       setStatus(widget, info.entryId, "⚠️ Not authorized / session expired. Please log in and try again.");
       return;
     }
@@ -350,14 +304,13 @@
 
     if (!res.ok || !data?.ok) {
       const msg = data?.error || `Upload failed (HTTP ${res.status})`;
-      widget.setAttribute("aria-busy", "false");
       setStatus(widget, info.entryId, "❌ " + msg);
       return;
     }
 
-    widget.setAttribute("aria-busy", "false");
     setStatus(widget, info.entryId, "✅ Submitted! Waiting for admin approval.");
 
+    // Hide buttons after success
     const rb = $(widget, "[data-record-btn]");
     const sb = $(widget, "[data-stop-btn]");
     const submitBtn = $(widget, "[data-submit-btn]");
@@ -371,6 +324,7 @@
   }
 
   function findVoiceInputTarget() {
+    // Prefer current page fields first, then legacy fallback.
     return (
       document.getElementById("dictionaryQuery") ||
       document.getElementById("textInput") ||
@@ -389,6 +343,7 @@
     return "en-US";
   }
 
+  // Voice search (home/dictionary/translate)
   window.startVoiceSearch = function () {
     const input = findVoiceInputTarget();
     if (!input) {
@@ -414,7 +369,9 @@
     recog.onerror = (e) => {
       const err = (e && e.error) ? String(e.error) : "unknown";
 
-      if (err === "aborted") return;
+      if (err === "aborted") {
+        return;
+      }
       if (err === "no-speech") {
         console.log("Voice input: no speech detected.");
         return;
@@ -435,12 +392,7 @@
       console.error("Speech recognition error:", err, e);
     };
 
-    try {
-      recog.start();
-    } catch (e) {
-      console.error(e);
-      alert("Could not start voice search.");
-    }
+    try { recog.start(); } catch (e) { console.error(e); alert("Could not start voice search."); }
   };
 
   function wire() {
@@ -454,28 +406,18 @@
         const widget = findWidget(recordBtn);
         const info = readInfo(widget, recordBtn);
 
+        // ✅ store info now (so submit works later even if submit has no data-*)
         setWidgetInfo(widget, info);
 
-        const rb = $(widget, "[data-record-btn]");
-        const sb = $(widget, "[data-stop-btn]");
-        const preview = $(widget, "[data-preview-audio]");
-        const sbtn = $(widget, "[data-submit-btn]");
-        const rbtn = $(widget, "[data-rerecord-btn]");
-
-        ensureButtonA11y(rb, "Record Oromo pronunciation");
-        ensureButtonA11y(sb, "Stop recording Oromo pronunciation");
-        ensureButtonA11y(sbtn, "Submit Oromo recording");
-        ensureButtonA11y(rbtn, "Record Oromo pronunciation again");
-        ensurePreviewA11y(preview);
-
         recordBtn.style.display = "none";
+        const sb = $(widget, "[data-stop-btn]");
         if (sb) sb.style.display = "inline-block";
 
-        if (preview) {
-          preview.style.display = "none";
-          preview.hidden = true;
-        }
+        const preview = $(widget, "[data-preview-audio]");
+        if (preview) preview.style.display = "none";
 
+        const sbtn = $(widget, "[data-submit-btn]");
+        const rbtn = $(widget, "[data-rerecord-btn]");
         if (sbtn) sbtn.style.display = "none";
         if (rbtn) rbtn.style.display = "none";
 
@@ -486,7 +428,7 @@
         } catch (err) {
           console.error(err);
           setStatus(widget, info.entryId, "❌ " + (err?.message || "Recording failed"));
-          if (rb) rb.style.display = "inline-block";
+          recordBtn.style.display = "inline-block";
           if (sb) sb.style.display = "none";
           requestStop();
         }
@@ -512,10 +454,7 @@
 
         widget._recordedBlob = null;
         const preview = $(widget, "[data-preview-audio]");
-        if (preview) {
-          preview.style.display = "none";
-          preview.hidden = true;
-        }
+        if (preview) preview.style.display = "none";
 
         const sbtn = $(widget, "[data-submit-btn]");
         const rbtn = $(widget, "[data-rerecord-btn]");
@@ -531,13 +470,12 @@
       if (submitBtn) {
         const widget = findWidget(submitBtn);
         await upload(widget, submitBtn);
+        return;
       }
     });
 
     window.addEventListener("beforeunload", () => {
-      try {
-        requestStop("⏹ Stopped.");
-      } catch (_) {}
+      try { requestStop("⏹ Stopped."); } catch (_) {}
       stopTracks(active.stream);
     });
   }
@@ -548,3 +486,5 @@
     wire();
   }
 })();
+
+

@@ -21,19 +21,10 @@
   // ---------- Ensure Toast exists ----------
   function ensureToastEl() {
     let toast = document.getElementById("pwaToast");
-    if (toast) {
-      if (!toast.hasAttribute("role")) toast.setAttribute("role", "status");
-      if (!toast.hasAttribute("aria-live")) toast.setAttribute("aria-live", "polite");
-      if (!toast.hasAttribute("aria-atomic")) toast.setAttribute("aria-atomic", "true");
-      return toast;
-    }
+    if (toast) return toast;
 
     toast = document.createElement("div");
     toast.id = "pwaToast";
-    toast.setAttribute("role", "status");
-    toast.setAttribute("aria-live", "polite");
-    toast.setAttribute("aria-atomic", "true");
-
     toast.style.position = "fixed";
     toast.style.left = "50%";
     toast.style.bottom = "18px";
@@ -48,11 +39,7 @@
     toast.style.display = "none";
     toast.style.opacity = "0";
     toast.style.transition = "opacity 160ms ease";
-
-    const msg = document.createElement("span");
-    msg.setAttribute("data-msg", "");
-    toast.appendChild(msg);
-
+    toast.innerHTML = `<span data-msg></span>`;
     document.body.appendChild(toast);
     return toast;
   }
@@ -66,33 +53,21 @@
     const msgEl = toast.querySelector("[data-msg]");
     if (msgEl) msgEl.textContent = msg;
 
-    toast.hidden = false;
     toast.style.display = "block";
-    requestAnimationFrame(() => {
-      toast.style.opacity = "1";
-    });
+    requestAnimationFrame(() => (toast.style.opacity = "1"));
 
     clearTimeout(showToast._t);
     showToast._t = setTimeout(() => {
       toast.style.opacity = "0";
-      setTimeout(() => {
-        toast.style.display = "none";
-        toast.hidden = true;
-      }, 200);
+      setTimeout(() => (toast.style.display = "none"), 200);
     }, durationMs);
   }
 
   // ---------- Splash overlay ----------
   function showSplashIfStandalone() {
     if (!isStandalone) return;
-    if (!document.body) return;
 
     const splash = document.createElement("div");
-    splash.id = "pwaStandaloneSplash";
-    splash.setAttribute("role", "status");
-    splash.setAttribute("aria-live", "polite");
-    splash.setAttribute("aria-label", "Application loading");
-
     splash.style.position = "fixed";
     splash.style.inset = "0";
     splash.style.zIndex = "99998";
@@ -103,51 +78,26 @@
 
     const title = (document.title || "").trim() || "Gadaa Dictionary";
 
-    const wrap = document.createElement("div");
-    wrap.style.textAlign = "center";
-    wrap.style.color = "#fff";
-    wrap.style.padding = "18px";
-
-    const iconWrap = document.createElement("div");
-    iconWrap.style.width = "84px";
-    iconWrap.style.height = "84px";
-    iconWrap.style.borderRadius = "22px";
-    iconWrap.style.background = "rgba(255,255,255,0.16)";
-    iconWrap.style.display = "inline-flex";
-    iconWrap.style.alignItems = "center";
-    iconWrap.style.justifyContent = "center";
-    iconWrap.style.marginBottom = "14px";
-
-    const icon = document.createElement("span");
-    icon.style.fontSize = "34px";
-    icon.setAttribute("aria-hidden", "true");
-    icon.textContent = "📘";
-    iconWrap.appendChild(icon);
-
-    const titleEl = document.createElement("div");
-    titleEl.style.fontSize = "20px";
-    titleEl.style.fontWeight = "700";
-    titleEl.textContent = title;
-
-    const loadingEl = document.createElement("div");
-    loadingEl.style.opacity = ".9";
-    loadingEl.style.fontSize = "13px";
-    loadingEl.style.marginTop = "6px";
-    loadingEl.textContent = "Loading…";
-
-    wrap.appendChild(iconWrap);
-    wrap.appendChild(titleEl);
-    wrap.appendChild(loadingEl);
-    splash.appendChild(wrap);
+    splash.innerHTML = `
+      <div style="text-align:center; color:#fff; padding:18px;">
+        <div style="
+          width:84px; height:84px; border-radius:22px;
+          background: rgba(255,255,255,0.16);
+          display:inline-flex; align-items:center; justify-content:center;
+          margin-bottom:14px;
+        ">
+          <span style="font-size:34px;">📘</span>
+        </div>
+        <div style="font-size:20px; font-weight:700;">${title}</div>
+        <div style="opacity:.9; font-size:13px; margin-top:6px;">Loading…</div>
+      </div>
+    `;
     document.body.appendChild(splash);
 
     window.addEventListener(
       "load",
       () => {
-        setTimeout(() => {
-          splash.setAttribute("hidden", "");
-          splash.remove();
-        }, 420);
+        setTimeout(() => splash.remove(), 420);
       },
       { once: true }
     );
@@ -155,10 +105,7 @@
 
   // ---------- Native-like transitions ----------
   function enableTransitions() {
-    if (!document.body) return;
-
-    document.body.style.transition =
-      document.body.style.transition || "opacity 140ms ease";
+    document.body.style.transition = document.body.style.transition || "opacity 140ms ease";
 
     window.addEventListener("pageshow", () => {
       document.body.classList.remove("page-fade-out");
@@ -175,79 +122,53 @@
         if (!href || href.startsWith("#")) return;
         if (a.target === "_blank") return;
         if (href.startsWith("http")) return;
-        if (a.hasAttribute("download")) return;
 
         if (href.startsWith("/")) {
           e.preventDefault();
           vibrate(10);
           document.body.classList.add("page-fade-out");
           document.body.style.opacity = "0";
-          setTimeout(() => {
-            window.location.href = href;
-          }, 110);
+          setTimeout(() => (window.location.href = href), 110);
         }
       },
       { passive: false }
     );
   }
 
-  // ---------- Install button ----------
-  const installBtn = document.getElementById("installBtn");
-  const installBtnQuick = document.getElementById("installBtnQuick");
-  let deferredPrompt = null;
-
-  function revealInstallButtons() {
-    if (installBtn) installBtn.style.display = "inline-block";
-    if (installBtnQuick) installBtnQuick.style.display = "inline-block";
-  }
-
-  function hideInstallButtons() {
-    if (installBtn) installBtn.style.display = "none";
-    if (installBtnQuick) installBtnQuick.style.display = "none";
-  }
-
-  async function handleInstallClick() {
-    vibrate(12);
-
-    if (!deferredPrompt) {
-      if (isIOS && !isStandalone) {
-        showToast("On iPhone: Share → Add to Home Screen", 10, 5500);
-      } else {
-        showToast("Install not available yet. Try again later.", 10);
-      }
-      return;
-    }
-
-    deferredPrompt.prompt();
-    const choice = await deferredPrompt.userChoice;
-    deferredPrompt = null;
-    hideInstallButtons();
-
-    if (choice && choice.outcome === "accepted") showToast("Installed ✅", 30);
-    else showToast("Install canceled", 10);
-  }
+ // ---------- Install button ----------
+const installBtn = document.getElementById("installBtn");
+let deferredPrompt = null;
 
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     deferredPrompt = e;
-    revealInstallButtons();
+
+    if (installBtn) installBtn.style.display = "inline-block";
     showToast("Install this app for faster access.", 10, 3500);
   });
 
   if (installBtn) {
-    installBtn.addEventListener("click", handleInstallClick);
-  }
-
-  if (installBtnQuick) {
-    installBtnQuick.addEventListener("click", handleInstallClick);
+    installBtn.addEventListener("click", async () => {
+      vibrate(12);
+      if (!deferredPrompt) {
+        if (isIOS && !isStandalone) {
+          showToast("On iPhone: Share → Add to Home Screen", 10, 5500);
+        } else {
+          showToast("Install not available yet. Try again later.", 10);
+        }
+        return;
+      }
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      installBtn.style.display = "none";
+      if (choice && choice.outcome === "accepted") showToast("Installed ✅", 30);
+      else showToast("Install canceled", 10);
+    });
   }
 
   // ---------- iOS install helper ----------
   const iosHelp = document.getElementById("iosInstallHelp");
-  if (iosHelp) {
-    if (!iosHelp.hasAttribute("aria-live")) iosHelp.setAttribute("aria-live", "polite");
-  }
-
   if (iosHelp && isIOS && isSafari && !isStandalone) {
     iosHelp.style.display = "block";
   } else if (isIOS && !isStandalone) {
@@ -269,10 +190,6 @@
       return;
     }
 
-    if (!updateBar.hasAttribute("role")) updateBar.setAttribute("role", "status");
-    if (!updateBar.hasAttribute("aria-live")) updateBar.setAttribute("aria-live", "polite");
-
-    updateBar.hidden = false;
     updateBar.style.display = "block";
 
     const reloadBtn = updateBar.querySelector("[data-reload]");
@@ -288,13 +205,7 @@
         setTimeout(() => location.reload(), 350);
       };
     }
-
-    if (closeBtn) {
-      closeBtn.onclick = () => {
-        updateBar.style.display = "none";
-        updateBar.hidden = true;
-      };
-    }
+    if (closeBtn) closeBtn.onclick = () => (updateBar.style.display = "none");
   }
 
   const SW_URL = "/service-worker.js";
@@ -319,9 +230,7 @@
         });
 
         navigator.serviceWorker.addEventListener("message", (event) => {
-          if (event?.data?.type === "OFFLINE_READY") {
-            showToast("Offline ready ✅", 10);
-          }
+          if (event?.data?.type === "OFFLINE_READY") showToast("Offline ready ✅", 10);
         });
       } catch (_) {
         // ignore
@@ -332,7 +241,6 @@
   window.addEventListener("offline", () => {
     showToast("You are offline. Some uploads may fail.", 10, 3500);
   });
-
   window.addEventListener("online", () => {
     showToast("Back online ✅", 10, 2500);
   });
@@ -352,3 +260,4 @@
   showSplashIfStandalone();
   enableTransitions();
 })();
+
