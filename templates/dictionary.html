@@ -1,6 +1,7 @@
 ﻿<!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- DICTIONARY_TEMPLATE_ACTIVE -->
   <meta charset="UTF-8" />
   <meta name="description" content="Gadaa Dictionary - Oromo and multilingual lookup using English pivot.">
   <link rel="canonical" href="https://gadaadictionary.com/dictionary">
@@ -252,21 +253,8 @@
 
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260125-4" defer></script>
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
 <script>
-function startVoiceSearch(){
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if(!SpeechRecognition) return;
-  const recognition = new SpeechRecognition();
-  recognition.lang = "{{ source_speech_lang }}";
-  recognition.interimResults = false;
-  recognition.onresult = function(event){
-    const text = event.results[0][0].transcript;
-    const inp = document.getElementById("dictionaryQuery");
-    if(inp) inp.value = text;
-  };
-  recognition.start();
-}
 function useSuggestion(text){ const inp=document.getElementById("dictionaryQuery"); const form=document.getElementById("dictionarySearchForm"); if(inp) inp.value=text; if(form) form.submit(); }
 function speakTextCompat(text, langCode){ if(!text || !('speechSynthesis' in window)) return; const u=new SpeechSynthesisUtterance(text); u.lang=langCode||'en-US'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
 function speakSource(){ const el=document.getElementById('srcText'); speakTextCompat(el?el.innerText:'', '{{ source_speech_lang }}'); }

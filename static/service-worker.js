@@ -1,110 +1,78 @@
-/* static/service-worker.js */
-const CACHE_NAME = "gada-v6";
+const CACHE_VERSION = "gada-v7";
+const STATIC_CACHE = `${CACHE_VERSION}-static`;
+const OFFLINE_URL = "/offline";
 
-const CORE_ASSETS = [
-  "/",
-  "/translate",
-  "/learn",
-  "/support",
-  "/offline",
-
+const STATIC_ASSETS = [
+  "/manifest.webmanifest",
   "/static/style.css",
   "/static/pwa-ui.js",
   "/static/audio.js",
-  "/static/recorder.js",
-
-  "/manifest.webmanifest",
+  "/static/speak.js",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
   "/static/icons/apple-touch-icon.png",
   "/static/icons/favicon-32x32.png",
   "/static/icons/favicon-16x16.png",
+  OFFLINE_URL
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(async (cache) => {
-      await cache.addAll(CORE_ASSETS);
-
-      // Notify pages that offline cache is ready
-      const clients = await self.clients.matchAll({ type: "window" });
-      clients.forEach((c) => c.postMessage({ type: "OFFLINE_READY" }));
-    })
+    caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS))
   );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.map((k) => (k !== CACHE_NAME ? caches.delete(k) : null)))
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => (k !== STATIC_CACHE ? caches.delete(k) : null)));
+    await self.clients.claim();
+  })());
 });
 
-if (event.request.method !== "GET") return;
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-
-  // ✅ NEVER intercept POST/PUT/DELETE (fix upload stuck)
-  if (req.method !== "GET") return;
-
   const url = new URL(req.url);
 
-  // only same-origin caching
+  if (req.method !== "GET") return;
   if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      return (
-        cached ||
-        fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open("static-v1").then((cache) => cache.put(req, copy));
-          return res;
-        })
-      );
-    })
-  );
-});
-
-
-  // Only same-origin
-  if (url.origin !== self.location.origin) return;
-
-  // ✅ Never cache / intercept any API routes (public + recorder)
+  // Never cache API responses.
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/recorder/api/")) {
     return;
   }
 
- if (req.mode === "navigate") {
-  event.respondWith((async () => {
-    try {
-      return await fetch(req);
-    } catch {
-      return caches.match("/offline");
-    }
-  })());
-  return;
-}
-
-  // Static assets: cache-first
-  if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
-    event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          return res;
-        });
-      })
-    );
+  // Navigation: network-first to avoid stale HTML/SEO markup.
+  if (req.mode === "navigate") {
+    event.respondWith((async () => {
+      try {
+        return await fetch(req, { cache: "no-store" });
+      } catch (_e) {
+        return (await caches.match(OFFLINE_URL)) || Response.error();
+      }
+    })());
     return;
   }
 
-  // Default: network-first fallback cache
+  // Static files: cache-first with background refresh.
+  if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.webmanifest") {
+    event.respondWith((async () => {
+      const cache = await caches.open(STATIC_CACHE);
+      const cached = await cache.match(req);
+      const networkPromise = fetch(req).then((res) => {
+        if (res && res.status === 200) {
+          cache.put(req, res.clone());
+        }
+        return res;
+      }).catch(() => null);
+
+      return cached || (await networkPromise) || Response.error();
+    })());
+    return;
+  }
+
+  // Everything else: network-first, no long-lived page cache.
   event.respondWith(fetch(req).catch(() => caches.match(req)));
 });
 
@@ -113,5 +81,3 @@ self.addEventListener("message", (event) => {
     self.skipWaiting();
   }
 });
-
-
