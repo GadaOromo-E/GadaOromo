@@ -208,7 +208,7 @@ let deferredPrompt = null;
     if (closeBtn) closeBtn.onclick = () => (updateBar.style.display = "none");
   }
 
-  const SW_URL = "/service-worker.js?v=20260322-1";
+  const SW_URL = "/static/service-worker.js?v=20260322-1";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
