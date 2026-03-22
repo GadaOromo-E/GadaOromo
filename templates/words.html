@@ -2,139 +2,294 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>{{ word.en }} in Oromo ({{ word.om }}) | Amharic, Arabic, French & Chinese Meanings | {{ APP_NAME }}</title>
-  <meta name="description" content="{{ word.en }} means {{ word.om }} in Oromo. Find meanings and translations in Amharic, Arabic, French, and Chinese on this Oromo-English dictionary word page.">
+
+  {% set english_word = (word.english if word and word.english is defined and word.english else (word.en if word and word.en is defined and word.en else "")) %}
+  {% set oromo_word = (word.oromo if word and word.oromo is defined and word.oromo else (word.om if word and word.om is defined and word.om else "")) %}
+
+  {% set am = other_translations.get("am") if other_translations else "" %}
+  {% set ar = other_translations.get("ar") if other_translations else "" %}
+  {% set zh = other_translations.get("zh-CN") if other_translations else "" %}
+  {% set fr = other_translations.get("fr") if other_translations else "" %}
+
+  {% set page_title = english_word ~ " meaning in Oromo" %}
+  {% if oromo_word %}
+    {% set page_title = page_title ~ " (" ~ oromo_word ~ ")" %}
+  {% endif %}
+  {% set page_title = page_title ~ " | Amharic, Arabic, French & Chinese | " ~ APP_NAME %}
+
+  {% set meta_desc = english_word ~ " means " ~ (oromo_word or "this Oromo translation") ~ ". Find translations in Oromo, Amharic, Arabic, French, and Chinese on " ~ APP_NAME ~ "." %}
+  {% set canonical_href = "https://gadaadictionary.com/word/" ~ (english_word|urlencode) %}
+
+  <title>{{ page_title }}</title>
+  <meta name="description" content="{{ meta_desc }}">
   <meta name="robots" content="index,follow">
-  <link rel="canonical" href="https://gadaadictionary.com/word/{{ word.en|urlencode }}">
+  <link rel="canonical" href="{{ canonical_href }}">
+
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ meta_desc }}">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="{{ canonical_href }}">
+  <meta property="og:site_name" content="{{ APP_NAME }}">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ page_title }}">
+  <meta name="twitter:description" content="{{ meta_desc }}">
+
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
   <style>
+    .page-wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .word-card {
+      background: #fff;
+      border: 1px solid #e5e5e5;
+      border-radius: 14px;
+      padding: 24px;
+      margin-top: 20px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.04);
+    }
+
+    .word-title {
+      margin: 0 0 8px 0;
+      font-size: 2rem;
+      line-height: 1.2;
+    }
+
+    .main-translation {
+      font-size: 1.15rem;
+      margin: 8px 0 18px 0;
+    }
+
+    .seo-copy {
+      margin-top: 18px;
+      line-height: 1.7;
+      color: #222;
+    }
+
     .translation-table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 10px;
+      margin-top: 12px;
     }
+
     .translation-table th,
     .translation-table td {
       border: 1px solid #ddd;
-      padding: 10px;
-      text-align: center;
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
     }
+
     .translation-table th {
-      background: #f5f5f5;
+      background: #f7f7f7;
+      font-weight: 700;
     }
+
     .translation-table td:first-child {
       font-weight: 700;
-      text-align: left;
       white-space: nowrap;
+      width: 180px;
+    }
+
+    .section-title {
+      margin-top: 24px;
+      margin-bottom: 10px;
+      font-size: 1.2rem;
+    }
+
+    .audio-block {
+      margin-top: 14px;
+    }
+
+    .quick-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+
+    .btn-link {
+      display: inline-block;
+      text-decoration: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      border: 1px solid #d8d8d8;
+      background: #fff;
+      color: #111;
+      font-weight: 600;
+    }
+
+    .btn-link.primary {
+      background: #c40000;
+      color: #fff;
+      border-color: #c40000;
+    }
+
+    .muted {
+      color: #666;
+    }
+
+    .not-found {
+      text-align: center;
+      padding: 48px 20px;
     }
   </style>
 
+  {% if english_word %}
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "DefinedTerm",
-    "name": "{{ word.en }} in Oromo: {{ word.om }}",
-    "description": "{{ word.en }} means {{ word.om }} in Oromo, with additional meanings in Amharic, Arabic, French, and Chinese.",
-    "url": "https://gadaadictionary.com/word/{{ word.en|urlencode }}",
-    "inDefinedTermSet": "https://gadaadictionary.com"
+    "name": "{{ english_word|e }}",
+    "description": "{{ meta_desc|e }}",
+    "url": "{{ canonical_href }}",
+    "inDefinedTermSet": "https://gadaadictionary.com/dictionary"
   }
   </script>
+  {% endif %}
 </head>
 
 <body>
-<div class="container">
+  <div class="page-wrap">
+    <header>
+      <h1>{{ APP_NAME }}</h1>
+      <p class="muted">Oromo ↔ English Dictionary</p>
+    </header>
 
-  <header class="topbar">
-    <h1>{{ APP_NAME }}</h1>
-    <p class="tagline">Oromo -> English Dictionary</p>
-  </header>
+    {% if not word %}
+      <section class="word-card not-found">
+        <h2>Word not found</h2>
+        <p class="muted">We could not find this word in the dictionary.</p>
+        <div class="quick-actions" style="justify-content:center;">
+          <a class="btn-link primary" href="/dictionary">Back to Dictionary</a>
+          <a class="btn-link" href="/">Home</a>
+        </div>
+      </section>
+    {% else %}
+      <section class="word-card">
+        <h2 class="word-title">{{ english_word }}</h2>
 
-  <section class="card">
-    <h2>{{ word.en }}</h2>
+        {% if oromo_word %}
+          <p class="main-translation">
+            <strong>Oromo:</strong> {{ oromo_word }}
+          </p>
+        {% endif %}
 
-    <p style="font-size:18px; margin-top:8px;">
-      <b>Oromo:</b> {{ word.om }}
-    </p>
+        {% if am or ar or zh or fr %}
+          <h3 class="section-title">Available meanings</h3>
+          <table class="translation-table">
+            <thead>
+              <tr>
+                <th>Language</th>
+                <th>Meaning</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if am %}
+                <tr>
+                  <td>Amharic</td>
+                  <td>{{ am }}</td>
+                </tr>
+              {% endif %}
+              {% if ar %}
+                <tr>
+                  <td>Arabic</td>
+                  <td dir="rtl">{{ ar }}</td>
+                </tr>
+              {% endif %}
+              {% if zh %}
+                <tr>
+                  <td>Chinese</td>
+                  <td>{{ zh }}</td>
+                </tr>
+              {% endif %}
+              {% if fr %}
+                <tr>
+                  <td>French</td>
+                  <td>{{ fr }}</td>
+                </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        {% endif %}
 
-    {% if other_translations %}
-      <div style="margin-top:12px;">
-        <b>Available meanings</b>
-        <table class="translation-table">
-          <thead>
-            <tr>
-              <th>Language</th>
-              <th>Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% if other_translations.get("am", {}).get("text") %}
-              <tr>
-                <td>Amharic</td>
-                <td>{{ other_translations.get("am", {}).get("text") }}</td>
-              </tr>
+        <div class="seo-copy">
+          <h3 class="section-title">Meaning of {{ english_word }}</h3>
+          <p>
+            <strong>{{ english_word }}</strong>
+            {% if oromo_word %}
+              means <strong>{{ oromo_word }}</strong> in Oromo.
+            {% else %}
+              is available in this multilingual dictionary.
             {% endif %}
-            {% if other_translations.get("ar", {}).get("text") %}
-              <tr>
-                <td>Arabic</td>
-                <td dir="rtl">{{ other_translations.get("ar", {}).get("text") }}</td>
-              </tr>
+            {% if am %}
+              In Amharic, it can be translated as <strong>{{ am }}</strong>.
             {% endif %}
-            {% if other_translations.get("zh-CN", {}).get("text") %}
-              <tr>
-                <td>Chinese</td>
-                <td>{{ other_translations.get("zh-CN", {}).get("text") }}</td>
-              </tr>
+            {% if ar %}
+              In Arabic, it can be translated as <strong>{{ ar }}</strong>.
             {% endif %}
-            {% if other_translations.get("fr", {}).get("text") %}
-              <tr>
-                <td>French</td>
-                <td>{{ other_translations.get("fr", {}).get("text") }}</td>
-              </tr>
+            {% if zh %}
+              In Chinese, it can be translated as <strong>{{ zh }}</strong>.
             {% endif %}
-          </tbody>
-        </table>
-      </div>
+            {% if fr %}
+              In French, it can be translated as <strong>{{ fr }}</strong>.
+            {% endif %}
+          </p>
+
+          <p>
+            This page helps users understand the meaning of <strong>{{ english_word }}</strong>
+            in Oromo and other languages through the {{ APP_NAME }} dictionary.
+          </p>
+        </div>
+
+        {% if word.explanation is defined and word.explanation %}
+          <div style="margin-top: 14px;">
+            <h3 class="section-title">Explanation</h3>
+            <p class="muted">{{ word.explanation }}</p>
+          </div>
+        {% endif %}
+
+        {% if word.audio_oromo is defined and word.audio_oromo %}
+          <div class="audio-block">
+            <h3 class="section-title">Oromo pronunciation</h3>
+            <audio controls style="width:100%;">
+              {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
+                <source src="{{ word.audio_oromo }}">
+              {% else %}
+                <source src="{{ url_for('static', filename=word.audio_oromo) }}">
+              {% endif %}
+            </audio>
+          </div>
+        {% endif %}
+
+        {% if word.audio_english is defined and word.audio_english %}
+          <div class="audio-block">
+            <h3 class="section-title">English pronunciation</h3>
+            <audio controls style="width:100%;">
+              {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
+                <source src="{{ word.audio_english }}">
+              {% else %}
+                <source src="{{ url_for('static', filename=word.audio_english) }}">
+              {% endif %}
+            </audio>
+          </div>
+        {% endif %}
+
+        <div class="quick-actions">
+          <a class="btn-link primary" href="/dictionary?q={{ english_word|urlencode }}&source_lang=en&target_lang=om">Search</a>
+          <a class="btn-link" href="/dictionary">Dictionary</a>
+          <a class="btn-link" href="/">Home</a>
+        </div>
+      </section>
     {% endif %}
 
-    {% if word.explanation %}
-      <p class="muted" style="margin-top:10px;">{{ word.explanation }}</p>
-    {% endif %}
-
-    {% if word.audio_oromo %}
-      <div style="margin-top:12px;">
-        <b>Oromo pronunciation</b>
-        <audio controls style="width:100%;">
-          {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
-            <source src="{{ word.audio_oromo }}">
-          {% else %}
-            <source src="{{ url_for('static', filename=word.audio_oromo) }}">
-          {% endif %}
-        </audio>
-      </div>
-    {% endif %}
-
-    {% if word.audio_english %}
-      <div style="margin-top:12px;">
-        <b>English pronunciation</b>
-        <audio controls style="width:100%;">
-          {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
-            <source src="{{ word.audio_english }}">
-          {% else %}
-            <source src="{{ url_for('static', filename=word.audio_english) }}">
-          {% endif %}
-        </audio>
-      </div>
-    {% endif %}
-  </section>
-
-  <div class="quick-actions">
-    <a class="btn primary" href="/dictionary?q={{ word.en|urlencode }}&source_lang=en&target_lang=om">Search</a>
-    <a class="btn" href="/">Home</a>
+    <footer style="margin-top:24px;">
+      <p class="muted">&copy; {{ current_year }} {{ APP_NAME }}</p>
+    </footer>
   </div>
-
-  <footer class="footer">
-    <p>&copy; {{ current_year }} {{ APP_NAME }}</p>
-  </footer>
-</div>
 </body>
 </html>

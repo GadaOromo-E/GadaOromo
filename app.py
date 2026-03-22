@@ -2334,7 +2334,6 @@ def dictionary():
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
     )
 
-
 @app.route("/word/<path:term>", methods=["GET"])
 def word_detail(term):
     raw = normalize_text(unquote(term or ""))
@@ -2342,15 +2341,19 @@ def word_detail(term):
     if not key:
         abort(404)
 
+    row = None
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("""
+        c.execute(
+            """
             SELECT id, english, oromo
             FROM words
             WHERE status='approved' AND (english_key=? OR oromo_key=?)
             LIMIT 1
-        """, (key, key))
+            """,
+            (key, key),
+        )
         row = c.fetchone()
         conn.close()
     except Exception as e:
@@ -2361,27 +2364,56 @@ def word_detail(term):
         abort(404)
 
     wid, en, om = row
-    audio = get_approved_audio("word", wid)
+
+    audio = {}
+    try:
+        audio = get_approved_audio("word", wid) or {}
+    except Exception as e:
+        app.logger.exception(f"/word audio lookup failed: {repr(e)}")
+        audio = {}
 
     word = {
-        "en": en,
-        "om": om,
+        "id": wid,
+        "english": en or "",
+        "oromo": om or "",
+        "en": en or "",
+        "om": om or "",
         "explanation": "",
         "audio_oromo": audio.get("oromo", ""),
-        "audio_english": audio.get("english", "")
+        "audio_english": audio.get("english", ""),
     }
 
     other_translations = {}
     try:
-        other_translations = get_or_generate_extra_translations(wid, en)
+        other_translations = get_or_generate_extra_translations(wid, en or "") or {}
     except Exception as e:
         app.logger.exception(f"/word extra translations failed: {repr(e)}")
+        other_translations = {}
+
+    english_word = (en or "").strip()
+    oromo_word = (om or "").strip()
+
+    page_title = f"{english_word} meaning in Oromo"
+    if oromo_word:
+        page_title += f" ({oromo_word})"
+    page_title += f" | Amharic, Arabic, French & Chinese | {APP_NAME}"
+
+    meta_description = (
+        f"{english_word} means {oromo_word or 'this Oromo translation'}. "
+        f"Find translations in Oromo, Amharic, Arabic, French, and Chinese on {APP_NAME}."
+    )[:160]
+
+    canonical_url = f"https://gadaadictionary.com/word/{quote(english_word)}"
 
     return render_template(
         "words.html",
         word=word,
         other_translations=other_translations,
-        current_year=datetime.utcnow().year
+        current_year=datetime.utcnow().year,
+        APP_NAME=APP_NAME,
+        page_title=page_title,
+        meta_description=meta_description,
+        canonical_url=canonical_url,
     )
 # ------------------ TRANSLATE ------------------
 
