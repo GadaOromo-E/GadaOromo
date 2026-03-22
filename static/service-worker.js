@@ -19,9 +19,23 @@ const STATIC_ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS))
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+
+    for (const assetPath of STATIC_ASSETS) {
+      try {
+        const req = new Request(assetPath, { cache: "no-cache" });
+        const res = await fetch(req);
+        if (res && res.ok) {
+          await cache.put(req, res.clone());
+        } else {
+          console.warn("[SW install] Skipped asset (non-OK):", assetPath, res && res.status);
+        }
+      } catch (err) {
+        console.warn("[SW install] Skipped asset (fetch failed):", assetPath, err);
+      }
+    }
+  })());
   self.skipWaiting();
 });
 

@@ -305,11 +305,6 @@ def service_worker():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
-@app.route("/sw.js")
-def service_worker_legacy_alias():
-    # Backward-compatible alias for older clients that still request /sw.js.
-    return service_worker()
-
 
 @app.route("/offline")
 def offline():
