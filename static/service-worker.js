@@ -1,6 +1,8 @@
-const CACHE_VERSION = "gada-v7";
+const CACHE_VERSION = "gada-v8";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
+const PAGE_CACHE = `${CACHE_VERSION}-pages`;
 const OFFLINE_URL = "/offline";
+const NAV_TIMEOUT_MS = 1800;
 
 const STATIC_ASSETS = [
   "/manifest.webmanifest",
@@ -26,10 +28,40 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys();
-    await Promise.all(keys.map((k) => (k !== STATIC_CACHE ? caches.delete(k) : null)));
+    await Promise.all(
+      keys.map((k) => (k !== STATIC_CACHE && k !== PAGE_CACHE ? caches.delete(k) : null))
+    );
     await self.clients.claim();
   })());
 });
+
+async function navigationNetworkFirstWithTimeout(req) {
+  const pageCache = await caches.open(PAGE_CACHE);
+  const cached = await pageCache.match(req);
+
+  // Start network request immediately; keep cache fresh whenever network succeeds.
+  const networkPromise = fetch(req)
+    .then((res) => {
+      if (res && res.status === 200) {
+        pageCache.put(req, res.clone());
+      }
+      return res;
+    })
+    .catch(() => null);
+
+  const timeoutPromise = new Promise((resolve) => {
+    setTimeout(() => resolve(null), NAV_TIMEOUT_MS);
+  });
+
+  const first = await Promise.race([networkPromise, timeoutPromise]);
+  if (first) return first;
+  if (cached) return cached;
+
+  const lateNetwork = await networkPromise;
+  if (lateNetwork) return lateNetwork;
+
+  return (await caches.match(OFFLINE_URL)) || Response.error();
+}
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
@@ -43,15 +75,10 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Navigation: network-first to avoid stale HTML/SEO markup.
+  // Navigation: network-first with short timeout fallback to cache.
+  // Keeps HTML fresh when network is healthy, but avoids long navigation stalls.
   if (req.mode === "navigate") {
-    event.respondWith((async () => {
-      try {
-        return await fetch(req, { cache: "no-store" });
-      } catch (_e) {
-        return (await caches.match(OFFLINE_URL)) || Response.error();
-      }
-    })());
+    event.respondWith(navigationNetworkFirstWithTimeout(req));
     return;
   }
 
