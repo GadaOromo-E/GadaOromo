@@ -12,169 +12,276 @@
   <meta name="theme-color" content="#0b5cff">
 </head>
 <body>
+<a href="#main" class="skip-link">Skip to main content</a>
+
 <div class="container">
-<header class="topbar">
-  <div class="brand">
-    <h1>Gada Translator</h1>
-    <p class="tagline">Selected: {{ language_options[source_lang].label }} -> {{ language_options[target_lang].label }}</p>
-  </div>
-</header>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Gada Translator</h1>
+      <p class="tagline">Selected: {{ language_options[source_lang].label }} -> {{ language_options[target_lang].label }}</p>
+    </div>
+  </header>
 
-<div class="app-shell">
-    <aside class="side-menu">
-    <a class="side-link" href="/">🏠 Home</a>
-    <a class="side-link" href="/dictionary">📖 Dictionary</a>
-    <a class="side-link" href="/translate">🌍 Translate</a>
-    <a class="side-link" href="/submit">➕ Submit Word</a>
-    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
-    <a class="side-link" href="/recorder">🎙 Add Voice</a>
-    <a class="side-link" href="/learn">📚 Learn</a>
-    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
-    <a class="side-link" href="/support">❤️ Donate</a>
-    <a class="side-link" href="/admin">🔒 Admin login</a>
-  </aside>
+  <div class="app-shell">
+    <nav class="side-menu" aria-label="Main navigation">
+      <a class="side-link" href="/">🏠 Home</a>
+      <a class="side-link" href="/dictionary">📖 Dictionary</a>
+      <a class="side-link" href="/translate" aria-current="page">🌍 Translate</a>
+      <a class="side-link" href="/submit">➕ Submit Word</a>
+      <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
+      <a class="side-link" href="/recorder">🎙 Add Voice</a>
+      <a class="side-link" href="/learn">📚 Learn</a>
+      <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
+      <a class="side-link" href="/support">❤️ Donate</a>
+      <a class="side-link" href="/admin">🔒 Admin login</a>
+    </nav>
 
-  <main class="content" id="main">
-    <div class="card">
-      <form method="POST" id="translateForm">
-        <label for="sourceLangSelect" class="sr-only">Source language</label>
-        <label for="targetLangSelect" class="sr-only">Target language</label>
-        <label for="textInput" class="sr-only">Text to translate</label>
-        <div class="row">
-          <select name="source_lang" id="sourceLangSelect">
-            {% for code, cfg in language_options.items() %}
-              <option value="{{ code }}" data-speech-lang="{{ cfg.speech_code }}" {% if source_lang == code %}selected{% endif %}>From: {{ cfg.label }}</option>
-            {% endfor %}
-          </select>
+    <main class="content" id="main" tabindex="-1">
+      <section class="card" aria-labelledby="translator-heading">
+        <h2 id="translator-heading" class="sr-only">Translator</h2>
 
-          <select name="target_lang" id="targetLangSelect">
-            {% for code, cfg in language_options.items() %}
-              <option value="{{ code }}" {% if target_lang == code %}selected{% endif %}>To: {{ cfg.label }}</option>
-            {% endfor %}
-          </select>
+        <form method="POST" id="translateForm">
+          <label for="sourceLangSelect" class="sr-only">Source language</label>
+          <label for="targetLangSelect" class="sr-only">Target language</label>
+          <label for="textInput" class="sr-only">Text to translate</label>
 
-          <button type="button" onclick="startVoice()" aria-label="Speak input text">Speak</button>
-        </div>
+          <div class="row">
+            <select name="source_lang" id="sourceLangSelect" aria-label="Source language">
+              {% for code, cfg in language_options.items() %}
+                <option value="{{ code }}" data-speech-lang="{{ cfg.speech_code }}" {% if source_lang == code %}selected{% endif %}>
+                  From: {{ cfg.label }}
+                </option>
+              {% endfor %}
+            </select>
 
-        <textarea name="text" id="textInput" placeholder="Type word or sentence..." required oninput="autoGrow(this)">{{ text or "" }}</textarea>
+            <select name="target_lang" id="targetLangSelect" aria-label="Target language">
+              {% for code, cfg in language_options.items() %}
+                <option value="{{ code }}" {% if target_lang == code %}selected{% endif %}>
+                  To: {{ cfg.label }}
+                </option>
+              {% endfor %}
+            </select>
 
-        <div class="bottom-bar">
-          <div class="bottom-actions">
-            <button type="submit">Translate</button>
-            <button type="button" class="btn" onclick="speakInput()">Speak Input</button>
+            <button type="button" onclick="startVoice()" aria-label="Speak input text" title="Speak input text">Speak</button>
           </div>
-        </div>
 
-        <div class="small-actions">
-          <button type="button" class="btn" onclick="clearInput()">Clear</button>
-          <button type="button" class="btn" onclick="swapDirection()">Swap</button>
-        </div>
-      </form>
+          <textarea
+            name="text"
+            id="textInput"
+            placeholder="Type word or sentence..."
+            required
+            oninput="autoGrow(this)"
+          >{{ text or "" }}</textarea>
 
-      {% if translate_error %}
-        <div class="result-box" style="margin-top:10px;"><div class="muted">{{ translate_error }}</div></div>
-      {% endif %}
+          <div class="bottom-bar">
+            <div class="bottom-actions">
+              <button type="submit" aria-label="Translate text">Translate</button>
+              <button type="button" class="btn" onclick="speakInput()" aria-label="Speak input text aloud">Speak Input</button>
+            </div>
+          </div>
 
-      {% if result %}
-        <div class="result-box">
-          <strong>Result:</strong>
-          <span id="resultText" {% if result_is_rtl %}dir="rtl" style="display:inline-block; text-align:right; width:100%;"{% endif %}>{{ result }}</span>
-          {% if is_auto_translation %}<span class="chip" style="margin-left:8px;">Auto translation</span>{% endif %}
-        </div>
+          <div class="small-actions">
+            <button type="button" class="btn" onclick="clearInput()" aria-label="Clear input text">Clear</button>
+            <button type="button" class="btn" onclick="swapDirection()" aria-label="Swap source and target languages">Swap</button>
+          </div>
+        </form>
 
-        <div class="small-actions">
-          <button type="button" class="btn" onclick="speakResult()">Speak Result</button>
-          <button type="button" class="btn" onclick="copyResult()">Copy Result</button>
-        </div>
-
-        {% if tts_audio_url %}
-          <div style="margin-top:10px;">
-            <div class="subtle">Generated audio</div>
-            <audio controls style="width:100%;"><source src="{{ tts_audio_url }}"></audio>
+        {% if translate_error %}
+          <div class="result-box" style="margin-top:10px;" role="status" aria-live="polite">
+            <div class="muted">{{ translate_error }}</div>
           </div>
         {% endif %}
-      {% else %}
-        <div class="result-box" style="opacity:0.85;">Result will appear here...</div>
-      {% endif %}
 
-      {% if audio and (audio.oromo or audio.english) %}
-        <div style="margin-top:14px;">
-          <h2>Community Pronunciation</h2>
-          {% if audio.oromo %}
-            <div class="subtle">Oromo audio (saved)</div>
-            <audio controls style="width:100%;"><source src="{{ audio.oromo }}"></audio>
-          {% endif %}
-          {% if audio.english %}
-            <div class="subtle" style="margin-top:10px;">English audio</div>
-            <audio controls style="width:100%;"><source src="{{ audio.english }}"></audio>
-          {% endif %}
-        </div>
-      {% elif result %}
-        <div style="margin-top:14px;">
-          <h2>Community Pronunciation</h2>
-          <div class="muted">No saved Oromo audio found for this translation yet.</div>
-        </div>
-      {% endif %}
+        {% if result %}
+          <section class="result-box" aria-labelledby="translation-result-heading" aria-live="polite">
+            <h2 id="translation-result-heading" class="sr-only">Translation result</h2>
+            <strong>Result:</strong>
+            <span id="resultText" {% if result_is_rtl %}dir="rtl" style="display:inline-block; text-align:right; width:100%;"{% endif %}>{{ result }}</span>
+            {% if is_auto_translation %}<span class="chip" style="margin-left:8px;">Auto translation</span>{% endif %}
+          </section>
 
-      {% if matched %}
-        <div style="margin-top:14px;">
-          <h2>Help the community</h2>
-          <div class="muted" style="margin-top:6px;">Record Oromo pronunciation here. It becomes public after admin approval.</div>
-
-          {% set is_word = (matched.type == "word") %}
-          {% set is_phrase = (matched.type == "phrase") %}
-          {% set has_approved_oromo = (is_word and (matched.id in approved_oromo_audio_word_ids)) or (is_phrase and (matched.id in approved_oromo_audio_phrase_ids)) %}
-
-          {% if not has_approved_oromo %}
-            <div class="card" style="margin-top:10px;" data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo">
-              <div class="small-actions" style="margin-top:6px;">
-                <button type="button" class="btn primary" data-record-btn data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo" title="Record Oromo pronunciation">Record Oromo</button>
-                <button type="button" class="btn" data-stop-btn data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo" style="display:none;">Stop</button>
-              </div>
-              <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;"></audio>
-              <div class="small-actions" style="margin-top:10px;">
-                <button type="button" class="btn primary" data-submit-btn data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo" style="display:none;">Submit</button>
-                <button type="button" class="btn" data-rerecord-btn data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo" style="display:none;">Re-record</button>
-              </div>
-              <div class="muted" data-status style="margin-top:8px;"></div>
-            </div>
-          {% else %}
-            <div class="muted" style="margin-top:10px;">Oromo audio already approved for this {{ matched.type }}.</div>
-          {% endif %}
-
-          <div class="small-actions" style="margin-top:10px;">
-            <a class="btn" href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo">Upload Oromo audio (file)</a>
+          <div class="small-actions">
+            <button type="button" class="btn" onclick="speakResult()" aria-label="Speak result">Speak Result</button>
+            <button type="button" class="btn" onclick="copyResult()" aria-label="Copy result text">Copy Result</button>
           </div>
-        </div>
-      {% endif %}
 
-      {% if suggestions %}
-        <div style="margin-top:14px;">
-          <h2>Did you mean...</h2>
-          {% if suggestions.closest and suggestions.closest|length > 0 %}
-            <div class="subtle">Closest matches</div>
-            <div class="chips">{% for s in suggestions.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}</div>
+          {% if tts_audio_url %}
+            <section style="margin-top:10px;" aria-labelledby="generated-audio-heading">
+              <h2 id="generated-audio-heading" class="subtle">Generated audio</h2>
+              <audio controls style="width:100%;">
+                <source src="{{ tts_audio_url }}">
+                Your browser does not support the audio element.
+              </audio>
+            </section>
           {% endif %}
-          {% if suggestions.prefix and suggestions.prefix|length > 0 %}
-            <div class="subtle" style="margin-top:10px;">Starts with</div>
-            <div class="chips">{% for s in suggestions.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}</div>
-          {% endif %}
-          {% if suggestions.partial and suggestions.partial|length > 0 %}
-            <div class="subtle" style="margin-top:10px;">Contains</div>
-            <div class="chips">{% for s in suggestions.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}</div>
-          {% endif %}
-        </div>
-      {% endif %}
+        {% else %}
+          <div class="result-box" style="opacity:0.85;" role="status" aria-live="polite">Result will appear here...</div>
+        {% endif %}
 
-      {% if trending %}
-        <div style="margin-top:14px;">
-          <h2>Trending</h2>
-          <div class="chips">{% for row in trending %}<button type="button" class="chip" onclick="useSuggestion('{{ row[0]|e }}')">{{ row[0] }}</button>{% endfor %}</div>
-        </div>
-      {% endif %}
+        {% if audio and (audio.oromo or audio.english) %}
+          <section style="margin-top:14px;" aria-labelledby="community-pronunciation-heading">
+            <h2 id="community-pronunciation-heading">Community Pronunciation</h2>
 
-    </div>
-  </main>
+            {% if audio.oromo %}
+              <div class="subtle">Oromo audio (saved)</div>
+              <audio controls style="width:100%;">
+                <source src="{{ audio.oromo }}">
+                Your browser does not support the audio element.
+              </audio>
+            {% endif %}
+
+            {% if audio.english %}
+              <div class="subtle" style="margin-top:10px;">English audio</div>
+              <audio controls style="width:100%;">
+                <source src="{{ audio.english }}">
+                Your browser does not support the audio element.
+              </audio>
+            {% endif %}
+          </section>
+        {% elif result %}
+          <section style="margin-top:14px;" aria-labelledby="community-pronunciation-heading-empty">
+            <h2 id="community-pronunciation-heading-empty">Community Pronunciation</h2>
+            <div class="muted">No saved Oromo audio found for this translation yet.</div>
+          </section>
+        {% endif %}
+
+        {% if matched %}
+          <section style="margin-top:14px;" aria-labelledby="help-community-heading">
+            <h2 id="help-community-heading">Help the community</h2>
+            <div class="muted" style="margin-top:6px;">Record Oromo pronunciation here. It becomes public after admin approval.</div>
+
+            {% set is_word = (matched.type == "word") %}
+            {% set is_phrase = (matched.type == "phrase") %}
+            {% set has_approved_oromo = (is_word and (matched.id in approved_oromo_audio_word_ids)) or (is_phrase and (matched.id in approved_oromo_audio_phrase_ids)) %}
+
+            {% if not has_approved_oromo %}
+              <div class="card" style="margin-top:10px;" data-entry-type="{{ matched.type }}" data-entry-id="{{ matched.id }}" data-lang="oromo">
+                <div class="small-actions" style="margin-top:6px;">
+                  <button
+                    type="button"
+                    class="btn primary"
+                    data-record-btn
+                    data-entry-type="{{ matched.type }}"
+                    data-entry-id="{{ matched.id }}"
+                    data-lang="oromo"
+                    title="Record Oromo pronunciation"
+                    aria-label="Record Oromo pronunciation"
+                  >
+                    Record Oromo
+                  </button>
+
+                  <button
+                    type="button"
+                    class="btn"
+                    data-stop-btn
+                    data-entry-type="{{ matched.type }}"
+                    data-entry-id="{{ matched.id }}"
+                    data-lang="oromo"
+                    style="display:none;"
+                    aria-label="Stop recording Oromo pronunciation"
+                  >
+                    Stop
+                  </button>
+                </div>
+
+                <audio data-preview-audio controls style="width:100%; display:none; margin-top:10px;">
+                  Your browser does not support the audio element.
+                </audio>
+
+                <div class="small-actions" style="margin-top:10px;">
+                  <button
+                    type="button"
+                    class="btn primary"
+                    data-submit-btn
+                    data-entry-type="{{ matched.type }}"
+                    data-entry-id="{{ matched.id }}"
+                    data-lang="oromo"
+                    style="display:none;"
+                    aria-label="Submit Oromo recording"
+                  >
+                    Submit
+                  </button>
+
+                  <button
+                    type="button"
+                    class="btn"
+                    data-rerecord-btn
+                    data-entry-type="{{ matched.type }}"
+                    data-entry-id="{{ matched.id }}"
+                    data-lang="oromo"
+                    style="display:none;"
+                    aria-label="Record Oromo pronunciation again"
+                  >
+                    Re-record
+                  </button>
+                </div>
+
+                <div class="muted" data-status style="margin-top:8px;" role="status" aria-live="polite"></div>
+              </div>
+            {% else %}
+              <div class="muted" style="margin-top:10px;" role="status">Oromo audio already approved for this {{ matched.type }}.</div>
+            {% endif %}
+
+            <div class="small-actions" style="margin-top:10px;">
+              <a
+                class="btn"
+                href="/upload_audio/{{ matched.type }}/{{ matched.id }}/oromo"
+                aria-label="Upload Oromo audio file for this {{ matched.type }}"
+              >
+                Upload Oromo audio (file)
+              </a>
+            </div>
+          </section>
+        {% endif %}
+
+        {% if suggestions %}
+          <section style="margin-top:14px;" aria-labelledby="suggestions-heading">
+            <h2 id="suggestions-heading">Did you mean...</h2>
+
+            {% if suggestions.closest and suggestions.closest|length > 0 %}
+              <h3 class="subtle">Closest matches</h3>
+              <div class="chips">
+                {% for s in suggestions.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+              </div>
+            {% endif %}
+
+            {% if suggestions.prefix and suggestions.prefix|length > 0 %}
+              <h3 class="subtle" style="margin-top:10px;">Starts with</h3>
+              <div class="chips">
+                {% for s in suggestions.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+              </div>
+            {% endif %}
+
+            {% if suggestions.partial and suggestions.partial|length > 0 %}
+              <h3 class="subtle" style="margin-top:10px;">Contains</h3>
+              <div class="chips">
+                {% for s in suggestions.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+              </div>
+            {% endif %}
+          </section>
+        {% endif %}
+
+        {% if trending %}
+          <section style="margin-top:14px;" aria-labelledby="trending-heading">
+            <h2 id="trending-heading">Trending</h2>
+            <div class="chips">
+              {% for row in trending %}<button type="button" class="chip" onclick="useSuggestion('{{ row[0]|e }}')" aria-label="Use trending term {{ row[0] }}">{{ row[0] }}</button>{% endfor %}
+            </div>
+          </section>
+        {% endif %}
+      </section>
+
+      <footer class="footer">
+        <p>Copyright 2026 Gadaa</p>
+        <nav aria-label="Footer navigation">
+          <a href="/">Home</a> ·
+          <a href="/dictionary">Dictionary</a> ·
+          <a href="/translate" aria-current="page">Translate</a> ·
+          <a href="/learn">Learn</a>
+        </nav>
+      </footer>
+    </main>
+  </div>
 </div>
 
 <script>

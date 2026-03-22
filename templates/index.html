@@ -2,28 +2,29 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="description" content="Gadaa Dictionary homepage for Oromo-English lookup, multilingual translations, and community pronunciation.">
-  <meta name="robots" content="index,follow">
-  <link rel="canonical" href="https://gadaadictionary.com/">
+  <meta
+    name="description"
+    content="Gadaa Dictionary homepage for Oromo-English lookup, multilingual translations, and community pronunciation."
+  />
+  <meta name="robots" content="index,follow" />
+  <link rel="canonical" href="https://gadaadictionary.com/" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ APP_NAME }}</title>
 
-<script>
-  (function () {
-    var ua = navigator.userAgent || "";
-    if (/Android/i.test(ua)) {
-      document.documentElement.classList.add("is-android");
-    }
-  })();
-</script>
+  <script>
+    (function () {
+      var ua = navigator.userAgent || "";
+      if (/Android/i.test(ua)) {
+        document.documentElement.classList.add("is-android");
+      }
+    })();
+  </script>
 
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 
-  <!-- ✅ PWA (Android + iPhone) -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
 
-  <!-- ✅ iPhone / iOS "real app" -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
@@ -36,303 +37,383 @@
 </head>
 
 <body>
+  <a href="#main" class="skip-link">Skip to main content</a>
 
-<!-- OPTIONAL: tiny splash overlay (native feel) -->
-<div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
-  <div style="text-align:center;">
-    <div style="font-size:42px;">📘</div>
-    <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
-    <div class="muted" style="margin-top:6px;">Loading…</div>
-  </div>
-</div>
-<script>
-  window.addEventListener("load", () => {
-    const el = document.getElementById("bootSplash");
-    if (el) el.style.display = "none";
-  });
-</script>
-
-<!-- PWA Update Bar -->
-<div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
-  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-    <div>
-      <b>Update available</b>
-      <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
-    </div>
-    <div style="display:flex; gap:8px;">
-      <button class="btn primary" type="button" data-reload>Reload</button>
-      <button class="btn" type="button" data-close>Later</button>
+  <!-- Splash -->
+  <div
+    id="bootSplash"
+    role="status"
+    aria-live="polite"
+    aria-label="Application loading"
+    style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;"
+  >
+    <div style="text-align:center;">
+      <div style="font-size:42px;" aria-hidden="true">📘</div>
+      <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
+      <div class="muted" style="margin-top:6px;">Loading…</div>
     </div>
   </div>
-</div>
 
-<!-- iOS Install Help (only shows on iPhone/iPad Safari when not installed) -->
-<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
-  <b>Install on iPhone</b>
-  <div class="muted" style="margin-top:6px; line-height:1.5;">
-    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
-  </div>
-</div>
+  <script>
+    window.addEventListener("load", () => {
+      const el = document.getElementById("bootSplash");
+      if (el) {
+        el.setAttribute("hidden", "");
+        el.style.display = "none";
+      }
+    });
+  </script>
 
-<!-- Toast -->
-<div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
-  <span data-msg></span>
-</div>
-
-<div class="container">
-
- <header class="topbar">
-  <div class="brand">
-    <h1>{{ APP_NAME }}</h1>
-    <p class="tagline">Your global translator and dictionary</p>
-  </div>
-
-  <div class="topbar-right">
-    <div class="mini-copy">
-      <span class="copy-year">© 2026</span>
-      <span class="copy-name">Gada</span>
+  <!-- PWA Update Bar -->
+  <div
+    id="pwaUpdateBar"
+    class="card"
+    style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;"
+    role="status"
+    aria-live="polite"
+  >
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div>
+        <strong>Update available</strong>
+        <div class="muted" style="font-size:14px;">Reload to get the latest version.</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn primary" type="button" data-reload aria-label="Reload to update app">Reload</button>
+        <button class="btn" type="button" data-close aria-label="Close update message">Later</button>
+      </div>
     </div>
+  </div>
 
-  <!-- Android: Play Store install -->
-  <a id="playBtn"
-     class="btn install-mini"
-     href="https://play.google.com/store/apps/details?id=com.gadaoromo.app"
-     style="display:none;">
-     ⬇️ Android App
-  </a>
-
-  <!-- PWA install (web app) -->
-  <button id="installBtn" class="btn install-mini" type="button" style="display:none;">
-    ⬇️ Install App
-  </button>
-</div>
-</header>
-
-<div class="layout">
-  <div class="app-shell">
-
-  <aside class="side-menu">
-    <a class="side-link" href="/">🏠 Home</a>
-    <a class="side-link" href="/dictionary">📖 Dictionary</a>
-    <a class="side-link" href="/translate">🌍 Translate</a>
-    <a class="side-link" href="/submit">➕ Submit Word</a>
-    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
-    <a class="side-link" href="/recorder">🎙 Add Voice</a>
-    <a class="side-link" href="/learn">📚 Learn</a>
-    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
-    <a class="side-link" href="/support">❤️ Donate</a>
-    <a class="side-link" href="/admin">🔒 Admin login</a>
-  </aside>
-
- <main class="content" id="main">
-   <section class="card">
-    <h2>Search Dictionary</h2>
-
-    <form method="POST" id="searchForm" class="row" style="align-items:stretch;">
-      <label for="searchWord" class="sr-only">Search English or Oromo word</label>
-      <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
-      <button type="button" onclick="startVoiceSearch()" title="Speak search" aria-label="Speak search word">🎤</button>
-      <button type="submit">Search</button>
-    </form>
-
-    <div class="subtle" style="margin-top:10px;">
-      Tip: press 🎤 and speak the word if you can’t type.
+  <!-- iOS Install Help -->
+  <section id="iosInstallHelp" class="card" style="display:none; margin-top:10px;" aria-labelledby="ios-install-title">
+    <h2 id="ios-install-title" class="sr-only">Install on iPhone</h2>
+    <strong>Install on iPhone</strong>
+    <div class="muted" style="margin-top:6px; line-height:1.5;">
+      Tap <strong>Share</strong> (⬆️) → <strong>Add to Home Screen</strong>.
     </div>
+  </section>
 
-    {% if result %}
-      <div class="result-box" style="margin-top:14px;">
-        <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
+  <!-- Toast -->
+  <div
+    id="pwaToast"
+    class="card"
+    style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+  >
+    <span data-msg></span>
+  </div>
 
-        <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-          <div><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
+  <div class="container">
+    <header class="topbar">
+      <div class="brand">
+        <h1>{{ APP_NAME }}</h1>
+        <p class="tagline">Your global translator and dictionary</p>
+      </div>
 
-          {% if result_id %}
-            {% if result_id not in approved_oromo_audio_word_ids %}
-              <button
-                type="button"
-                class="btn"
-                style="padding:8px 10px;"
-                data-record-btn
-                data-entry-type="word"
-                data-entry-id="{{ result_id }}"
-                data-lang="oromo"
-                title="Record Oromo pronunciation"
-              >🎙 Record Oromo</button>
+      <div class="topbar-right">
+        <div class="mini-copy">
+          <span class="copy-year">© 2026</span>
+          <span class="copy-name">Gada</span>
+        </div>
 
-              <button
-                type="button"
-                class="btn"
-                style="padding:8px 10px; display:none;"
-                data-stop-btn
-                data-entry-type="word"
-                data-entry-id="{{ result_id }}"
-                data-lang="oromo"
-              >⏹ Stop</button>
+        <a
+          id="playBtn"
+          class="btn install-mini"
+          href="https://play.google.com/store/apps/details?id=com.gadaoromo.app"
+          style="display:none;"
+          aria-label="Download Android app from Google Play"
+        >
+          ⬇️ Android App
+        </a>
 
-              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+        <button
+          id="installBtn"
+          class="btn install-mini"
+          type="button"
+          style="display:none;"
+          aria-label="Install web app"
+        >
+          ⬇️ Install App
+        </button>
+      </div>
+    </header>
 
-              <div style="margin-top:8px;">
-                <button
-                  type="button"
-                  class="btn primary"
-                  data-submit-btn
-                  data-entry-type="word"
-                  data-entry-id="{{ result_id }}"
-                  data-lang="oromo"
-                  style="display:none;"
-                >✅ Submit</button>
+    <div class="layout">
+      <nav class="side-menu" aria-label="Main navigation">
+        <a class="side-link" href="/" aria-current="page">🏠 Home</a>
+        <a class="side-link" href="/dictionary">📖 Dictionary</a>
+        <a class="side-link" href="/translate">🌍 Translate</a>
+        <a class="side-link" href="/submit">➕ Submit Word</a>
+        <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
+        <a class="side-link" href="/recorder">🎙 Add Voice</a>
+        <a class="side-link" href="/learn">📚 Learn</a>
+        <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
+        <a class="side-link" href="/support">❤️ Donate</a>
+        <a class="side-link" href="/admin">🔒 Admin login</a>
+      </nav>
 
-                <button
-                  type="button"
-                  class="btn"
-                  data-rerecord-btn
-                  data-entry-type="word"
-                  data-entry-id="{{ result_id }}"
-                  data-lang="oromo"
-                  style="display:none;"
-                >🔁 Re-record</button>
+      <main class="content" id="main" tabindex="-1">
+        <section class="card" aria-labelledby="search-heading">
+          <h2 id="search-heading">Search Dictionary</h2>
+
+          <form method="POST" id="searchForm" class="row" style="align-items:stretch;" role="search">
+            <label for="searchWord" class="sr-only">Search English or Oromo word</label>
+            <input
+              type="text"
+              name="word"
+              id="searchWord"
+              placeholder="Type English or Oromo word..."
+              required
+              autocomplete="off"
+            >
+            <button
+              type="button"
+              onclick="startVoiceSearch()"
+              aria-label="Speak search word"
+              title="Speak search word"
+            >
+              🎤
+            </button>
+            <button type="submit" aria-label="Search dictionary">Search</button>
+          </form>
+
+          <p class="subtle" style="margin-top:10px;">
+            Tip: press 🎤 and speak the word if you can’t type.
+          </p>
+
+          {% if result %}
+            <div class="result-box" style="margin-top:14px;" aria-live="polite">
+              <p><strong>English:</strong> <span id="enText">{{ result[0] }}</span></p>
+
+              <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <p><strong>Oromo:</strong> <span id="omText">{{ result[1] }}</span></p>
+
+                {% if result_id %}
+                  {% if result_id not in approved_oromo_audio_word_ids %}
+                    <button
+                      type="button"
+                      class="btn"
+                      style="padding:8px 10px;"
+                      data-record-btn
+                      data-entry-type="word"
+                      data-entry-id="{{ result_id }}"
+                      data-lang="oromo"
+                      aria-label="Record Oromo pronunciation"
+                      title="Record Oromo pronunciation"
+                    >
+                      🎙 Record Oromo
+                    </button>
+
+                    <button
+                      type="button"
+                      class="btn"
+                      style="padding:8px 10px; display:none;"
+                      data-stop-btn
+                      data-entry-type="word"
+                      data-entry-id="{{ result_id }}"
+                      data-lang="oromo"
+                      aria-label="Stop recording Oromo pronunciation"
+                    >
+                      ⏹ Stop
+                    </button>
+
+                    <audio
+                      data-preview-audio
+                      controls
+                      style="width:100%; display:none; margin-top:8px;"
+                    ></audio>
+
+                    <div style="margin-top:8px;">
+                      <button
+                        type="button"
+                        class="btn primary"
+                        data-submit-btn
+                        data-entry-type="word"
+                        data-entry-id="{{ result_id }}"
+                        data-lang="oromo"
+                        style="display:none;"
+                        aria-label="Submit Oromo recording"
+                      >
+                        ✅ Submit
+                      </button>
+
+                      <button
+                        type="button"
+                        class="btn"
+                        data-rerecord-btn
+                        data-entry-type="word"
+                        data-entry-id="{{ result_id }}"
+                        data-lang="oromo"
+                        style="display:none;"
+                        aria-label="Record Oromo pronunciation again"
+                      >
+                        🔁 Re-record
+                      </button>
+                    </div>
+
+                    <span
+                      class="muted"
+                      data-status-for="{{ result_id }}"
+                      style="font-size:14px;"
+                      role="status"
+                      aria-live="polite"
+                    ></span>
+                  {% else %}
+                    <span class="muted" style="font-size:14px;" role="status">✅ Oromo audio approved</span>
+                  {% endif %}
+                {% endif %}
               </div>
 
-              <!-- keep your old one too (compat) -->
-              <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
-            {% else %}
-              <span class="muted" style="font-size:14px;">✅ Oromo audio approved</span>
-            {% endif %}
+              {% if audio and (audio.oromo or audio.english) %}
+                <section style="margin-top:14px;" aria-labelledby="pronunciation-heading">
+                  <h3 id="pronunciation-heading" class="subtle">🎧 Pronunciation</h3>
+
+                  {% if audio.oromo %}
+                    <div class="subtle" style="margin-top:10px;">Oromo audio</div>
+                    <audio controls style="width:100%;">
+                      <source src="{{ audio.oromo }}">
+                      Your browser does not support the audio element.
+                    </audio>
+                  {% endif %}
+
+                  {% if audio.english %}
+                    <div class="subtle" style="margin-top:10px;">English audio</div>
+                    <audio controls style="width:100%;">
+                      <source src="{{ audio.english }}">
+                      Your browser does not support the audio element.
+                    </audio>
+                  {% endif %}
+                </section>
+              {% else %}
+                <p class="muted" style="margin-top:10px;">
+                  No approved audio yet. You can help by recording Oromo here.
+                </p>
+              {% endif %}
+
+              <div class="small-actions" style="margin-top:12px;">
+                <button type="button" class="btn" onclick="speakEnglish()" aria-label="Play English pronunciation">
+                  🔊 Speak English
+                </button>
+                <button type="button" class="btn" onclick="speakOromo()" aria-label="Play Oromo pronunciation">
+                  🔊 Speak Oromo
+                </button>
+              </div>
+
+              {% if result_id %}
+                <p class="muted" style="margin-top:8px; font-size:14px;">
+                  Recorded Oromo becomes public after admin approval.
+                </p>
+              {% endif %}
+            </div>
+
+          {% elif result is not none %}
+            <div
+              class="result-box"
+              style="margin-top:14px;"
+              data-entry-type="word"
+              data-entry-id="{{ result_id }}"
+              data-lang="oromo"
+              role="status"
+              aria-live="polite"
+            ></div>
           {% endif %}
-        </div>
 
-        {% if audio and (audio.oromo or audio.english) %}
-          <div style="margin-top:14px;">
-            <div class="subtle">🎧 Pronunciation</div>
+          {% if suggestions %}
+            <section style="margin-top:14px;" aria-labelledby="suggestions-heading">
+              <h2 id="suggestions-heading">Did you mean…</h2>
 
-            {% if audio.oromo %}
-              <div class="subtle" style="margin-top:10px;">Oromo audio</div>
-              <audio controls style="width:100%;">
-                <source src="{{ audio.oromo }}">
-              </audio>
-            {% endif %}
+              {% if suggestions.en %}
+                <h3 class="subtle">English suggestions</h3>
+                <div class="chips">
+                  {% for s in suggestions.en.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                  {% for s in suggestions.en.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                  {% for s in suggestions.en.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                </div>
+              {% endif %}
 
-            {% if audio.english %}
-              <div class="subtle" style="margin-top:10px;">English audio</div>
-              <audio controls style="width:100%;">
-                <source src="{{ audio.english }}">
-              </audio>
-            {% endif %}
-          </div>
-        {% else %}
-          <div class="muted" style="margin-top:10px;">
-            No approved audio yet. You can help by recording Oromo here.
-          </div>
-        {% endif %}
+              {% if suggestions.om %}
+                <h3 class="subtle" style="margin-top:10px;">Oromo suggestions</h3>
+                <div class="chips">
+                  {% for s in suggestions.om.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                  {% for s in suggestions.om.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                  {% for s in suggestions.om.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')" aria-label="Use suggestion {{ s }}">{{ s }}</button>{% endfor %}
+                </div>
+              {% endif %}
+            </section>
+          {% endif %}
 
-        <div class="small-actions" style="margin-top:12px;">
-          <button type="button" class="btn" onclick="speakEnglish()">🔊 Speak English</button>
-          <button type="button" class="btn" onclick="speakOromo()">🔊 Speak Oromo</button>
-        </div>
+          <nav class="quick-actions" aria-label="Quick actions">
+            <a class="btn primary" href="/translate">🌍 Translator</a>
+            <a class="btn primary" href="/dictionary">📖 Dictionary</a>
+            <a class="btn" href="/gadaa-ai">🤖 Gadaa AI</a>
+            <a class="btn" href="/learn">📚 Learning</a>
+            <a class="btn danger" href="/support">❤️ Donate</a>
+            <a class="btn" href="/submit">➕ Add Word</a>
+            <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
+            <button
+              id="installBtnQuick"
+              class="btn primary"
+              type="button"
+              style="display:none;"
+              aria-label="Install app"
+            >
+              ⬇️ Install App
+            </button>
+          </nav>
+        </section>
 
-        {% if result_id %}
-          <div class="muted" style="margin-top:8px; font-size:14px;">
-            Recorded Oromo becomes public after admin approval.
-          </div>
-        {% endif %}
-      </div>
+        <section class="card small-note">
+          <p class="muted" style="font-weight:600;">
+            © 2026 Gadaa — Open community dictionary
+          </p>
+        </section>
 
-    {% elif result is not none %}
-      <div class="result-box" style="margin-top:14px;"
-           data-entry-type="word"
-           data-entry-id="{{ result_id }}"
-           data-lang="oromo">
-      </div>
-    {% endif %}
+        <section class="card" aria-labelledby="approved-words-heading">
+          <h2 id="approved-words-heading">Approved Words</h2>
 
-    {% if suggestions %}
-      <div style="margin-top:14px;">
-        <h2>Did you mean…</h2>
+          {% if words and words|length > 0 %}
+            <div class="word-list">
+              {% for w in words %}
+                <div class="word-row">
+                  <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                    <span><strong>{{ w[1] }}</strong></span>
+                    <span class="muted" aria-hidden="true">→</span>
+                    <span><strong>{{ w[2] }}</strong></span>
 
-        {% if suggestions.en %}
-          <div class="subtle">English suggestions</div>
-          <div class="chips">
-            {% for s in suggestions.en.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.en.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.en.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-          </div>
-        {% endif %}
+                    {% if w[0] in approved_oromo_audio_word_ids %}
+                      <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
+                    {% endif %}
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="muted">No approved words yet. Be the first to submit!</p>
+          {% endif %}
+        </section>
 
-        {% if suggestions.om %}
-          <div class="subtle" style="margin-top:10px;">Oromo suggestions</div>
-          <div class="chips">
-            {% for s in suggestions.om.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.om.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.om.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-          </div>
-        {% endif %}
-      </div>
-    {% endif %}
+        <footer class="footer">
+          <p>© 2026 Gadaa — Open community dictionary</p>
 
-    <div class="quick-actions">
-      <a class="btn primary" href="/translate">🌍 Translator</a>
-      <a class="btn primary" href="/dictionary">📖 Dictionary</a>
-      <a class="btn" href="/gadaa-ai">🤖 Gadaa AI</a>
-      <a class="btn" href="/learn">📚 Learning</a>
-      <a class="btn danger" href="/support">❤️ Donate</a>
-      <a class="btn" href="/submit">➕ Add Word</a>
-      <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
-      <button id="installBtnQuick" class="btn primary" type="button" style="display:none;">⬇️ Install App</button>
-    </div>
-  </section>
-
-  <section class="card small-note" aria-label="copyright">
-  <div class="muted" style="font-weight:600;">
-    © 2026 Gadaa — Open community dictionary
-  </div>
-</section>
-
-  <section class="card">
-    <h2>Approved Words</h2>
-
-    {% if words and words|length > 0 %}
-      <div class="word-list">
-    {% for w in words %}
-  <div class="word-row">
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span><b>{{ w[1] }}</b></span>
-      <span class="muted">→</span>
-      <span><b>{{ w[2] }}</b></span>
-
-      {% if w[0] in approved_oromo_audio_word_ids %}
-        <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
-      {% endif %}
+          <nav style="margin-top:8px;" aria-label="Footer navigation">
+            <a href="/dictionary"><strong>Dictionary</strong></a> ·
+            <a href="/translate">Translate</a> ·
+            <a href="/gadaa-ai">Gadaa AI</a> ·
+            <a href="/learn">Learn</a>
+          </nav>
+        </footer>
+      </main>
     </div>
   </div>
-{% endfor %}
-             
-</div>
-    {% else %}
-      <p class="muted">No approved words yet. Be the first to submit!</p>
-    {% endif %}
-  </section>
 
- <footer class="footer">
-  <p>© 2026 Gadaa — Open community dictionary</p>
+  <script>
+    /* your existing JS unchanged */
+  </script>
 
-  <div style="margin-top:8px;">
-    <a href="/dictionary"><strong>Dictionary</strong></a> ·
-    <a href="/translate">Translate</a> ·
-    <a href="/gadaa-ai">Gadaa AI</a> ·
-    <a href="/learn">Learn</a>
-  </div>
-</footer>
-
-</div>
-
-<script>
-/* your existing JS unchanged */
-</script>
-
-
-<script src="{{ url_for('static', filename='speak.js') }}" defer></script>
-<script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
-
+  <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
 </body>
 </html>
