@@ -40,6 +40,7 @@ import sqlite3
 import logging
 import csv
 import hashlib
+import shutil
 import click
 from uuid import uuid4
 from difflib import get_close_matches
@@ -282,8 +283,16 @@ else:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-STATIC_UPLOADS_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+# Static assets are always served from the app's code static folder.
+# Do not derive from BASE_DIR (which may be /var/data on Render).
+STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
+app.logger.info(
+    "Audio storage configured is_render_disk=%s upload_folder=%s static_uploads=%s",
+    IS_RENDER_DISK,
+    UPLOAD_FOLDER,
+    STATIC_UPLOADS_FOLDER,
+)
 
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
 MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
@@ -353,9 +362,24 @@ def google_verification():
 def uploads(filename):
     safe_name = os.path.basename(filename)
     full_path = os.path.join(UPLOAD_FOLDER, safe_name)
-    if not os.path.isfile(full_path):
-        abort(404)
-    return send_from_directory(UPLOAD_FOLDER, safe_name)
+    if os.path.isfile(full_path):
+        return send_from_directory(UPLOAD_FOLDER, safe_name)
+
+    # Backward compatibility: some historical TTS jobs wrote files to static/uploads.
+    if safe_name.startswith("tts_"):
+        static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
+        if os.path.isfile(static_path):
+            try:
+                if IS_RENDER_DISK:
+                    # Promote legacy files into persistent disk when possible.
+                    shutil.copy2(static_path, full_path)
+                    if os.path.isfile(full_path):
+                        return send_from_directory(UPLOAD_FOLDER, safe_name)
+            except Exception:
+                app.logger.exception("Failed to promote legacy TTS file to upload folder: %s", safe_name)
+            return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
+
+    abort(404)
 
 
 # ------------------ ADMIN IMPORT CONFIG ------------------
@@ -946,6 +970,19 @@ def allowed_audio(filename: str) -> bool:
     return ext in ALLOWED_AUDIO
 
 
+def _maybe_promote_tts_to_persistent(name: str, src_abs: str):
+    if (not IS_RENDER_DISK) or (not (name or "").startswith("tts_")):
+        return
+    dst_abs = os.path.join(UPLOAD_FOLDER, name)
+    if os.path.isfile(dst_abs) or (not os.path.isfile(src_abs)):
+        return
+    try:
+        shutil.copy2(src_abs, dst_abs)
+        app.logger.info("Promoted TTS file to persistent storage: %s", name)
+    except Exception:
+        app.logger.exception("Failed promoting TTS file to persistent storage: %s", name)
+
+
 def _public_audio_url(file_path: str) -> str:
     """
     DB stores file_path like: 'uploads/xyz.webm'
@@ -959,12 +996,14 @@ def _public_audio_url(file_path: str) -> str:
     # Generated Azure TTS assets may exist in either uploads root or static/uploads,
     # depending on where the job ran. Resolve to whichever real file exists.
     if name.startswith("tts_"):
-        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
         uploads_abs = os.path.join(UPLOAD_FOLDER, name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
         if os.path.isfile(static_abs):
-            return "/static/uploads/" + name
+            _maybe_promote_tts_to_persistent(name, static_abs)
         if os.path.isfile(uploads_abs):
             return "/uploads/" + name
+        if os.path.isfile(static_abs):
+            return "/static/uploads/" + name
         # Conservative fallback for historical jobs that wrote to static/uploads.
         return "/static/uploads/" + name
 
@@ -983,14 +1022,17 @@ def _audio_abs_path(file_path: str) -> str:
     if name.startswith("tts_"):
         # generated_tts_audio may point to files created under static/uploads
         # or uploads root depending on runtime context.
-        candidates = [
-            os.path.join(UPLOAD_FOLDER, name),
-            os.path.join(STATIC_UPLOADS_FOLDER, name),
-        ]
+        uploads_abs = os.path.join(UPLOAD_FOLDER, name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        candidates = [uploads_abs, static_abs]
         for c in candidates:
             if os.path.isfile(c):
+                if c == static_abs:
+                    _maybe_promote_tts_to_persistent(name, static_abs)
+                    if os.path.isfile(uploads_abs):
+                        return uploads_abs
                 return c
-        return candidates[0]
+        return uploads_abs
     return os.path.join(UPLOAD_FOLDER, name)
 
 
