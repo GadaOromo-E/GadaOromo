@@ -61,6 +61,13 @@ from openpyxl import load_workbook
 from services.translation_service import google_translate_batch as service_google_translate_batch
 from services.translation_service import google_translate_text as service_google_translate_text
 from services.tts_service import azure_synthesize_mp3
+try:
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    from azure.core.exceptions import ResourceExistsError
+except Exception:
+    BlobServiceClient = None
+    ContentSettings = None
+    ResourceExistsError = Exception
 
 # ------------------ APP SETUP ------------------
 
@@ -666,6 +673,7 @@ LANGUAGE_OPTIONS = {
 EXTRA_GENERATED_LANGS = ("am", "ar", "zh-CN", "fr")
 LEARN_TTS_LANGS = ("en", "am", "ar", "fr", "zh-CN", "om")
 AZURE_TTS_PROVIDER = "azure_speech"
+AZURE_BLOB_PROVIDER = "azure_blob"
 
 # Env vars (production):
 # - GOOGLE_TRANSLATE_API_KEY
@@ -691,6 +699,13 @@ except Exception:
 LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
 TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "1").strip() == "1")
 TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
+
+AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
+AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
+AZURE_BLOB_PREFIX = (os.environ.get("AZURE_BLOB_PREFIX") or "tts").strip().strip("/")
+
+_blob_client_cache = None
+_blob_client_error_logged = False
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -970,6 +985,76 @@ def allowed_audio(filename: str) -> bool:
     return ext in ALLOWED_AUDIO
 
 
+def _is_remote_audio_ref(file_path: str) -> bool:
+    fp = (file_path or "").strip().lower()
+    return fp.startswith("https://") or fp.startswith("http://")
+
+
+def _has_usable_audio_ref(file_path: str) -> bool:
+    if _is_remote_audio_ref(file_path):
+        return True
+    abs_path = _audio_abs_path(file_path)
+    return bool(abs_path and os.path.isfile(abs_path))
+
+
+def _azure_blob_enabled() -> bool:
+    return bool(AZURE_BLOB_CONNECTION_STRING and AZURE_BLOB_CONTAINER and BlobServiceClient)
+
+
+def _blob_key_for_file(file_name: str) -> str:
+    if AZURE_BLOB_PREFIX:
+        return f"{AZURE_BLOB_PREFIX}/{file_name}"
+    return file_name
+
+
+def _get_blob_container_client():
+    global _blob_client_cache, _blob_client_error_logged
+    if _blob_client_cache is not None:
+        return _blob_client_cache
+    if not _azure_blob_enabled():
+        if (not _blob_client_error_logged) and (AZURE_BLOB_CONNECTION_STRING or AZURE_BLOB_CONTAINER):
+            app.logger.warning(
+                "Azure Blob TTS disabled: missing dependency or incomplete config "
+                "(AZURE_BLOB_CONNECTION_STRING / AZURE_BLOB_CONTAINER)."
+            )
+            _blob_client_error_logged = True
+        return None
+    try:
+        svc = BlobServiceClient.from_connection_string(AZURE_BLOB_CONNECTION_STRING)
+        container = svc.get_container_client(AZURE_BLOB_CONTAINER)
+        try:
+            container.create_container()
+        except Exception:
+            pass
+        _blob_client_cache = container
+        return _blob_client_cache
+    except Exception:
+        if not _blob_client_error_logged:
+            app.logger.exception("Failed to initialize Azure Blob client for TTS storage.")
+            _blob_client_error_logged = True
+        return None
+
+
+def _upload_tts_bytes_to_blob(file_name: str, audio_bytes: bytes) -> str:
+    container = _get_blob_container_client()
+    if not container or (not audio_bytes):
+        return ""
+    blob_name = _blob_key_for_file(file_name)
+    blob_client = container.get_blob_client(blob_name)
+    content_settings = ContentSettings(content_type="audio/mpeg") if ContentSettings else None
+    try:
+        blob_client.upload_blob(audio_bytes, overwrite=False, content_settings=content_settings)
+    except ResourceExistsError:
+        pass
+    except Exception:
+        app.logger.exception("Failed to upload TTS audio to Azure Blob: %s", blob_name)
+        return ""
+    try:
+        return blob_client.url or ""
+    except Exception:
+        return ""
+
+
 def _maybe_promote_tts_to_persistent(name: str, src_abs: str):
     if (not IS_RENDER_DISK) or (not (name or "").startswith("tts_")):
         return
@@ -985,12 +1070,14 @@ def _maybe_promote_tts_to_persistent(name: str, src_abs: str):
 
 def _public_audio_url(file_path: str) -> str:
     """
-    DB stores file_path like: 'uploads/xyz.webm'
-    Returns URL: '/uploads/xyz.webm'
+    DB may store a local relative path ('uploads/xyz.webm') or a full blob URL.
+    Returns a browser-usable URL.
     """
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
         return ""
+    if _is_remote_audio_ref(fp):
+        return fp
     name = os.path.basename(fp)
 
     # Generated Azure TTS assets may exist in either uploads root or static/uploads,
@@ -1017,6 +1104,8 @@ def _public_audio_url(file_path: str) -> str:
 def _audio_abs_path(file_path: str) -> str:
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
+        return ""
+    if _is_remote_audio_ref(fp):
         return ""
     name = fp.split("/")[-1]
     if name.startswith("tts_"):
@@ -2051,8 +2140,7 @@ def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, t
     file_path = (row[1] or "").strip()
     if not file_path:
         return None
-    abs_path = _audio_abs_path(file_path)
-    if not abs_path or (not os.path.isfile(abs_path)):
+    if not _has_usable_audio_ref(file_path):
         return None
     return {"id": int(row[0]), "file_path": file_path, "url": _public_audio_url(file_path), "text_hash": th}
 
@@ -2092,6 +2180,22 @@ def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code
         """, (tts_url, int(entry_id), lang_code))
     conn.commit()
     conn.close()
+
+
+def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
+    """
+    Persist generated TTS bytes and return (stored_ref, public_url).
+    stored_ref is what we write to generated_tts_audio.file_path.
+    """
+    blob_url = _upload_tts_bytes_to_blob(file_name, audio_bytes)
+    if blob_url:
+        return blob_url, blob_url
+
+    abs_path = os.path.join(UPLOAD_FOLDER, file_name)
+    rel_path = f"uploads/{file_name}"
+    with open(abs_path, "wb") as f:
+        f.write(audio_bytes)
+    return rel_path, _public_audio_url(rel_path)
 
 
 def _resolve_or_generate_tts_for_text(
@@ -2141,13 +2245,9 @@ def _resolve_or_generate_tts_for_text(
 
     text_hash = _text_hash(txt)
     file_name = _generated_tts_file_name(entry_type, int(entry_id), lang_code, text_hash, voice_name)
-    abs_path = os.path.join(UPLOAD_FOLDER, file_name)
-    rel_path = f"uploads/{file_name}"
     try:
-        with open(abs_path, "wb") as f:
-            f.write(audio_bytes)
-        _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, rel_path)
-        public_url = _public_audio_url(rel_path)
+        stored_ref, public_url = _persist_generated_tts_audio(file_name, audio_bytes)
+        _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored_ref)
         if lang_code in EXTRA_GENERATED_LANGS:
             _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
         return public_url
@@ -2278,13 +2378,9 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
 
         text_hash = _text_hash(text)
         file_name = _generated_tts_file_name(entry_type, entry_id, lang, text_hash, voice_name)
-        abs_path = os.path.join(UPLOAD_FOLDER, file_name)
-        rel_path = f"uploads/{file_name}"
         try:
-            with open(abs_path, "wb") as f:
-                f.write(audio_bytes)
-            _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, rel_path)
-            public_url = _public_audio_url(rel_path)
+            stored_ref, public_url = _persist_generated_tts_audio(file_name, audio_bytes)
+            _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, stored_ref)
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
             result["generated"] += 1
@@ -2321,6 +2417,132 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
         summary["processed_items"] += 1
         for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
             summary[key] += int(row.get(key, 0) or 0)
+    return summary
+
+
+def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100):
+    """
+    One-time storage migration:
+    - read generated_tts_audio rows
+    - upload existing local files to Azure Blob
+    - update generated_tts_audio.file_path to blob URL
+    No TTS regeneration is performed.
+    """
+    summary = {
+        "rows_scanned": 0,
+        "rows_migrated": 0,
+        "rows_missing_file": 0,
+        "rows_already_blob_backed": 0,
+        "failures": 0,
+    }
+
+    if not _azure_blob_enabled():
+        app.logger.error(
+            "migrate-tts-to-blob skipped: Azure Blob not configured "
+            "(AZURE_BLOB_CONNECTION_STRING / AZURE_BLOB_CONTAINER)."
+        )
+        return summary
+
+    safe_chunk = max(1, min(int(chunk_size or 100), 1000))
+    safe_limit = max(0, int(limit or 0))
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = """
+        SELECT id, entry_type, entry_id, lang_code, file_path
+        FROM generated_tts_audio
+        WHERE file_path IS NOT NULL AND TRIM(file_path) != ''
+        ORDER BY id ASC
+    """
+    params = ()
+    if safe_limit > 0:
+        sql += " LIMIT ?"
+        params = (safe_limit,)
+    c.execute(sql, params)
+
+    while True:
+        rows = c.fetchmany(safe_chunk)
+        if not rows:
+            break
+
+        for row_id, entry_type, entry_id, lang_code, file_path in rows:
+            summary["rows_scanned"] += 1
+            fp = (file_path or "").strip()
+
+            if _is_remote_audio_ref(fp):
+                summary["rows_already_blob_backed"] += 1
+                continue
+
+            abs_path = _audio_abs_path(fp)
+            if not abs_path or (not os.path.isfile(abs_path)):
+                summary["rows_missing_file"] += 1
+                app.logger.warning(
+                    "migrate-tts-to-blob missing local file row_id=%s entry=%s:%s lang=%s file_path=%s",
+                    row_id,
+                    entry_type,
+                    entry_id,
+                    lang_code,
+                    fp,
+                )
+                continue
+
+            try:
+                with open(abs_path, "rb") as fh:
+                    audio_bytes = fh.read()
+                if not audio_bytes:
+                    summary["failures"] += 1
+                    app.logger.warning(
+                        "migrate-tts-to-blob empty local file row_id=%s abs_path=%s",
+                        row_id,
+                        abs_path,
+                    )
+                    continue
+
+                blob_url = _upload_tts_bytes_to_blob(os.path.basename(abs_path), audio_bytes)
+                if not blob_url:
+                    summary["failures"] += 1
+                    continue
+
+                c.execute(
+                    "UPDATE generated_tts_audio SET file_path=? WHERE id=?",
+                    (blob_url, int(row_id)),
+                )
+
+                # Keep translation cache URLs aligned for direct dictionary/translate lookups.
+                if lang_code in EXTRA_GENERATED_LANGS:
+                    if entry_type == "word":
+                        c.execute(
+                            """
+                            UPDATE generated_translations
+                            SET tts_audio_url=?, updated_at=CURRENT_TIMESTAMP
+                            WHERE word_id=? AND lang_code=?
+                            """,
+                            (blob_url, int(entry_id or 0), lang_code),
+                        )
+                    elif entry_type == "phrase":
+                        c.execute(
+                            """
+                            UPDATE generated_phrase_translations
+                            SET tts_audio_url=?, updated_at=CURRENT_TIMESTAMP
+                            WHERE phrase_id=? AND lang_code=?
+                            """,
+                            (blob_url, int(entry_id or 0), lang_code),
+                        )
+
+                summary["rows_migrated"] += 1
+            except Exception:
+                summary["failures"] += 1
+                app.logger.exception(
+                    "migrate-tts-to-blob failed row_id=%s entry=%s:%s lang=%s",
+                    row_id,
+                    entry_type,
+                    entry_id,
+                    lang_code,
+                )
+
+        conn.commit()
+
+    conn.close()
     return summary
 
 
@@ -3042,8 +3264,7 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     for eid, lang_code, text_hash, file_path in rows:
         key = (int(eid or 0), lang_code)
         expected_hash = text_by_key.get(key)
-        abs_path = _audio_abs_path(file_path or "")
-        if not abs_path or not os.path.isfile(abs_path):
+        if not _has_usable_audio_ref(file_path or ""):
             continue
         url = _public_audio_url(file_path)
         # Prefer exact text-hash matches when available.
@@ -3086,8 +3307,7 @@ def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
         eid = int(entry_id or 0)
         if eid in out:
             continue
-        abs_path = _audio_abs_path(file_path or "")
-        if not abs_path or (not os.path.isfile(abs_path)):
+        if not _has_usable_audio_ref(file_path or ""):
             continue
         out[eid] = _public_audio_url(file_path)
     return out
@@ -6375,6 +6595,32 @@ def cli_backfill_tts(entry_type, entry_id, force_regenerate, limit):
         f"failed={summary.get('failed', 0)} "
         f"skipped_missing_text={summary.get('skipped_missing_text', 0)} "
         f"skipped_missing_voice={summary.get('skipped_missing_voice', 0)}"
+    )
+
+
+@app.cli.command("migrate-tts-to-blob")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit rows scanned (0 = all).")
+@click.option("--chunk-size", type=int, default=100, show_default=True, help="Rows processed per chunk.")
+def cli_migrate_tts_to_blob(limit, chunk_size):
+    """
+    Migrate existing generated_tts_audio local file_path rows to Azure Blob URLs.
+    Storage migration only; does not regenerate audio.
+    """
+    _log_db_context("cli:migrate-tts-to-blob")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+
+    summary = run_generated_tts_blob_migration(
+        limit=int(limit or 0),
+        chunk_size=int(chunk_size or 100),
+    )
+    click.echo("TTS blob migration completed.")
+    click.echo(
+        f"rows_scanned={summary.get('rows_scanned', 0)} "
+        f"rows_migrated={summary.get('rows_migrated', 0)} "
+        f"rows_missing_file={summary.get('rows_missing_file', 0)} "
+        f"rows_already_blob_backed={summary.get('rows_already_blob_backed', 0)} "
+        f"failures={summary.get('failures', 0)}"
     )
 
 @app.after_request
