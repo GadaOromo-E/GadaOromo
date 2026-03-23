@@ -282,6 +282,8 @@ else:
     UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+STATIC_UPLOADS_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
 
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
 MAX_AUDIO_MB = int(os.environ.get("MAX_AUDIO_MB", "15"))
@@ -954,9 +956,16 @@ def _public_audio_url(file_path: str) -> str:
         return ""
     name = os.path.basename(fp)
 
-    # Generated Azure TTS assets are served from static/uploads.
-    # Keep manual/community audio on /uploads to preserve existing behavior.
+    # Generated Azure TTS assets may exist in either uploads root or static/uploads,
+    # depending on where the job ran. Resolve to whichever real file exists.
     if name.startswith("tts_"):
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        uploads_abs = os.path.join(UPLOAD_FOLDER, name)
+        if os.path.isfile(static_abs):
+            return "/static/uploads/" + name
+        if os.path.isfile(uploads_abs):
+            return "/uploads/" + name
+        # Conservative fallback for historical jobs that wrote to static/uploads.
         return "/static/uploads/" + name
 
     if fp.startswith("uploads/"):
@@ -971,7 +980,31 @@ def _audio_abs_path(file_path: str) -> str:
     if not fp:
         return ""
     name = fp.split("/")[-1]
+    if name.startswith("tts_"):
+        # generated_tts_audio may point to files created under static/uploads
+        # or uploads root depending on runtime context.
+        candidates = [
+            os.path.join(UPLOAD_FOLDER, name),
+            os.path.join(STATIC_UPLOADS_FOLDER, name),
+        ]
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+        return candidates[0]
     return os.path.join(UPLOAD_FOLDER, name)
+
+
+def _log_db_context(where: str):
+    try:
+        app.logger.info(
+            "DB context=%s db_name=%s abs_db=%s exists=%s",
+            where,
+            DB_NAME,
+            os.path.abspath(DB_NAME),
+            os.path.isfile(DB_NAME),
+        )
+    except Exception:
+        app.logger.exception("DB context logging failed for %s", where)
 
 
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
@@ -3217,6 +3250,7 @@ def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
 
 @app.route("/learn", methods=["GET"])
 def learn():
+    _log_db_context("/learn")
     trending = get_trending(limit=15)
     learn_rows = _load_learn_rows(limit=250)
     if LEARN_TTS_LAZY_WARMUP and LEARN_TTS_LAZY_MAX_ENTRIES > 0:
@@ -3291,6 +3325,7 @@ def home():
 
 @app.route("/dictionary", methods=["GET", "POST"])
 def dictionary():
+    _log_db_context("/dictionary")
     result = None
     result_id = None
     suggestions = None
@@ -3444,6 +3479,7 @@ def dictionary():
 
 @app.route("/word/<path:term>", methods=["GET"])
 def word_detail(term):
+    _log_db_context("/word")
     raw = normalize_text(unquote(term or ""))
     key = make_search_key(_strip_edge_punct(raw))
     if not key:
@@ -3651,6 +3687,7 @@ def find_exact_base_match(text: str, source_lang: str):
 
 @app.route("/translate", methods=["GET", "POST"])
 def translate():
+    _log_db_context("/translate")
     result = None
     text = ""
     direction = "om_en"
@@ -6249,6 +6286,9 @@ def cli_backfill_word_audio(limit, chunk_size, force_regenerate):
       1) Ensure generated translations for am/ar/fr/zh-CN (DB cache)
       2) Ensure Azure TTS cache for en/am/ar/fr/zh-CN (+ optional om)
     """
+    _log_db_context("cli:backfill-word-audio")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
     summary = run_word_audio_backfill(
         limit=int(limit or 0),
         chunk_size=int(chunk_size or 150),
