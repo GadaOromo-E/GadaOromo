@@ -638,7 +638,7 @@ LANGUAGE_OPTIONS = {
     "zh-CN": {"label": "Chinese", "google_code": "zh-CN", "speech_code": "zh-CN", "rtl": False},
 }
 EXTRA_GENERATED_LANGS = ("am", "ar", "zh-CN", "fr")
-LEARN_TTS_LANGS = ("en", "am", "ar", "fr", "zh-CN")
+LEARN_TTS_LANGS = ("en", "am", "ar", "fr", "zh-CN", "om")
 AZURE_TTS_PROVIDER = "azure_speech"
 
 # Env vars (production):
@@ -653,7 +653,16 @@ DEFAULT_AZURE_VOICES = {
     "ar": os.environ.get("AZURE_VOICE_AR", "ar-SA-ZariyahNeural").strip(),
     "fr": os.environ.get("AZURE_VOICE_FR", "fr-FR-DeniseNeural").strip(),
     "zh-CN": os.environ.get("AZURE_VOICE_ZH_CN", "zh-CN-XiaoxiaoNeural").strip(),
+    # Optional Oromo voice (if Azure account provides one).
+    "om": (os.environ.get("AZURE_VOICE_OM", "").strip() or os.environ.get("AZURE_VOICE_OROMO", "").strip()),
 }
+
+LEARN_TTS_LAZY_WARMUP = (os.environ.get("LEARN_TTS_LAZY_WARMUP", "0").strip() == "1")
+try:
+    _learn_tts_lazy_max_raw = int((os.environ.get("LEARN_TTS_LAZY_MAX_ENTRIES", "6") or "6").strip())
+except Exception:
+    _learn_tts_lazy_max_raw = 6
+LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -2008,14 +2017,17 @@ def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
     c = conn.cursor()
     table = "words" if entry_type == "word" else "phrases"
     c.execute(
-        f"SELECT english FROM {table} WHERE id=? AND status='approved' LIMIT 1",
+        f"SELECT english, oromo FROM {table} WHERE id=? AND status='approved' LIMIT 1",
         (int(entry_id),),
     )
     row = c.fetchone()
     texts = {}
-    en = normalize_text((row or [""])[0] or "")
+    en = normalize_text((row or ["", ""])[0] or "")
+    om = normalize_text((row or ["", ""])[1] or "")
     if en:
         texts["en"] = en
+    if om:
+        texts["om"] = om
 
     if entry_type == "word":
         c.execute(
@@ -2050,7 +2062,7 @@ def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
 
 
 def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: bool = False):
-    result = {"generated": 0, "cached": 0, "failed": 0, "skipped_missing_text": 0}
+    result = {"generated": 0, "cached": 0, "failed": 0, "skipped_missing_text": 0, "skipped_missing_voice": 0}
     texts = _get_entry_texts_for_tts(entry_type, entry_id)
     speech_key = _get_azure_speech_key()
     speech_region = _get_azure_speech_region()
@@ -2065,6 +2077,9 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             continue
 
         voice_name = _azure_voice_for_lang(lang)
+        if not voice_name:
+            result["skipped_missing_voice"] += 1
+            continue
         cached = None if force_regenerate else _resolve_generated_tts_row(entry_type, entry_id, lang, text, voice_name)
         if cached:
             result["cached"] += 1
@@ -2110,6 +2125,7 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
         "cached": 0,
         "failed": 0,
         "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
     }
     plans = []
     if entry_type in ("all", "word"):
@@ -2126,7 +2142,7 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
     for etype, eid in plans:
         row = generate_tts_for_entry(etype, eid, force_regenerate=force_regenerate)
         summary["processed_items"] += 1
-        for key in ("generated", "cached", "failed", "skipped_missing_text"):
+        for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
             summary[key] += int(row.get(key, 0) or 0)
     return summary
 
@@ -2810,6 +2826,8 @@ def _load_learn_rows(limit: int = 200):
     for wid, en, _om in word_rows:
         wid_int = int(wid)
         text_hash_lookup_words[(wid_int, "en")] = _text_hash(en or "")
+        if normalize_text(_om or ""):
+            text_hash_lookup_words[(wid_int, "om")] = _text_hash(_om or "")
         tr = word_translations.get(wid_int, {})
         for lang in ("am", "ar", "fr", "zh-CN"):
             txt = normalize_text(tr.get(lang, "") or "")
@@ -2820,14 +2838,16 @@ def _load_learn_rows(limit: int = 200):
     for pid, en, _om in phrase_rows:
         pid_int = int(pid)
         text_hash_lookup_phrases[(pid_int, "en")] = _text_hash(en or "")
+        if normalize_text(_om or ""):
+            text_hash_lookup_phrases[(pid_int, "om")] = _text_hash(_om or "")
         tr = phrase_translations.get(pid_int, {})
         for lang in ("am", "ar", "fr", "zh-CN"):
             txt = normalize_text(tr.get(lang, "") or "")
             if txt:
                 text_hash_lookup_phrases[(pid_int, lang)] = _text_hash(txt)
 
-    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words, langs=("en", "am", "ar", "fr", "zh-CN"))
-    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases, langs=("en", "am", "ar", "fr", "zh-CN"))
+    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
+    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
     word_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("word", word_ids)
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
@@ -2850,7 +2870,7 @@ def _load_learn_rows(limit: int = 200):
                 "ar": word_tts.get((wid_int, "ar"), ""),
                 "fr": word_tts.get((wid_int, "fr"), ""),
                 "zh-CN": word_tts.get((wid_int, "zh-CN"), ""),
-                "oromo": word_oromo_audio.get(wid_int, ""),
+                "oromo": word_oromo_audio.get(wid_int, "") or word_tts.get((wid_int, "om"), ""),
             },
         })
 
@@ -2872,7 +2892,7 @@ def _load_learn_rows(limit: int = 200):
                 "ar": phrase_tts.get((pid_int, "ar"), ""),
                 "fr": phrase_tts.get((pid_int, "fr"), ""),
                 "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
-                "oromo": phrase_oromo_audio.get(pid_int, ""),
+                "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
             },
         })
 
@@ -2880,10 +2900,63 @@ def _load_learn_rows(limit: int = 200):
     return rows
 
 
+def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
+    summary = {
+        "processed_entries": 0,
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
+    }
+    cap = int(max_entries or 0)
+    if cap <= 0 or not learn_rows:
+        return summary
+    if not _get_azure_speech_key() or not _get_azure_speech_region():
+        app.logger.info("Learn TTS warmup skipped: missing Azure Speech credentials.")
+        return summary
+
+    needs_om = bool(_azure_voice_for_lang("om"))
+    for row in learn_rows:
+        if summary["processed_entries"] >= cap:
+            break
+        entry_type = (row or {}).get("entry_type")
+        entry_id = int((row or {}).get("entry_id") or 0)
+        if entry_type not in ("word", "phrase") or entry_id <= 0:
+            continue
+
+        audio = (row or {}).get("audio") or {}
+        missing_core = any(not normalize_text(audio.get(lang, "") or "") for lang in ("en", "am", "ar", "fr", "zh-CN"))
+        missing_oromo = needs_om and (not normalize_text(audio.get("oromo", "") or ""))
+        if not (missing_core or missing_oromo):
+            continue
+
+        row_summary = generate_tts_for_entry(entry_type, entry_id, force_regenerate=False)
+        summary["processed_entries"] += 1
+        for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+            summary[key] += int(row_summary.get(key, 0) or 0)
+
+    if summary["processed_entries"] > 0:
+        app.logger.info(
+            "Learn TTS warmup processed=%s generated=%s cached=%s failed=%s skipped_missing_text=%s skipped_missing_voice=%s",
+            summary["processed_entries"],
+            summary["generated"],
+            summary["cached"],
+            summary["failed"],
+            summary["skipped_missing_text"],
+            summary["skipped_missing_voice"],
+        )
+    return summary
+
+
 @app.route("/learn", methods=["GET"])
 def learn():
     trending = get_trending(limit=15)
     learn_rows = _load_learn_rows(limit=250)
+    if LEARN_TTS_LAZY_WARMUP and LEARN_TTS_LAZY_MAX_ENTRIES > 0:
+        warmup = _warmup_learn_tts_for_rows(learn_rows, max_entries=LEARN_TTS_LAZY_MAX_ENTRIES)
+        if int(warmup.get("generated", 0) or 0) > 0:
+            learn_rows = _load_learn_rows(limit=250)
     return render_template("learn.html", trending=trending, learn_rows=learn_rows)
 
 
@@ -5825,7 +5898,8 @@ def cli_backfill_translations(entry_type, entry_id, overwrite_existing, limit):
 def cli_backfill_tts(entry_type, entry_id, force_regenerate, limit):
     """
     Backfill Azure-generated TTS audio for approved words/phrases.
-    Generates non-Oromo languages only: en, am, ar, fr, zh-CN.
+    Generates Learn-table languages from saved text:
+    en, am, ar, fr, zh-CN, and optional om when AZURE_VOICE_OM is configured.
     """
     summary = run_tts_backfill(
         entry_type=entry_type,
@@ -5839,7 +5913,8 @@ def cli_backfill_tts(entry_type, entry_id, force_regenerate, limit):
         f"generated={summary.get('generated', 0)} "
         f"cached={summary.get('cached', 0)} "
         f"failed={summary.get('failed', 0)} "
-        f"skipped_missing_text={summary.get('skipped_missing_text', 0)}"
+        f"skipped_missing_text={summary.get('skipped_missing_text', 0)} "
+        f"skipped_missing_voice={summary.get('skipped_missing_voice', 0)}"
     )
 
 @app.after_request
