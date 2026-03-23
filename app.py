@@ -2677,17 +2677,25 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     conn.close()
 
     out = {}
+    fallback = {}
     for eid, lang_code, text_hash, file_path in rows:
         key = (int(eid or 0), lang_code)
         expected_hash = text_by_key.get(key)
-        if not expected_hash or expected_hash != (text_hash or ""):
-            continue
-        if key in out:
-            continue
         abs_path = _audio_abs_path(file_path or "")
         if not abs_path or not os.path.isfile(abs_path):
             continue
-        out[key] = _public_audio_url(file_path)
+        url = _public_audio_url(file_path)
+        # Prefer exact text-hash matches when available.
+        if expected_hash and expected_hash == (text_hash or ""):
+            if key not in out:
+                out[key] = url
+            continue
+        # Fallback to latest available saved audio for that entry/lang.
+        if key not in fallback:
+            fallback[key] = url
+    for key, url in fallback.items():
+        if key not in out:
+            out[key] = url
     return out
 
 
