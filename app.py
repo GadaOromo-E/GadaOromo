@@ -663,6 +663,8 @@ try:
 except Exception:
     _learn_tts_lazy_max_raw = 6
 LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
+TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "1").strip() == "1")
+TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -2010,6 +2012,99 @@ def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code
     conn.close()
 
 
+def _resolve_or_generate_tts_for_text(
+    entry_type: str,
+    entry_id: int,
+    lang_code: str,
+    text: str,
+    allow_generate: bool = False,
+):
+    txt = normalize_text(text or "")
+    if entry_type not in ("word", "phrase"):
+        return ""
+    if not txt:
+        return ""
+
+    voice_name = _azure_voice_for_lang(lang_code)
+    if not voice_name:
+        return ""
+
+    cached = _resolve_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name)
+    if cached and cached.get("url"):
+        return cached["url"]
+    if not allow_generate:
+        return ""
+
+    speech_key = _get_azure_speech_key()
+    speech_region = _get_azure_speech_region()
+    if not speech_key or not speech_region:
+        return ""
+
+    audio_bytes, error = azure_synthesize_mp3(
+        text=txt,
+        speech_key=speech_key,
+        speech_region=speech_region,
+        voice_name=voice_name,
+        speech_lang=_speech_lang_code(lang_code),
+    )
+    if error or not audio_bytes:
+        app.logger.warning(
+            "TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s",
+            entry_type,
+            entry_id,
+            lang_code,
+            error,
+        )
+        return ""
+
+    text_hash = _text_hash(txt)
+    file_name = _generated_tts_file_name(entry_type, int(entry_id), lang_code, text_hash, voice_name)
+    abs_path = os.path.join(UPLOAD_FOLDER, file_name)
+    rel_path = f"uploads/{file_name}"
+    try:
+        with open(abs_path, "wb") as f:
+            f.write(audio_bytes)
+        _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, rel_path)
+        public_url = _public_audio_url(rel_path)
+        if lang_code in EXTRA_GENERATED_LANGS:
+            _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
+        return public_url
+    except Exception as e:
+        app.logger.exception(f"Failed to persist TTS audio for {entry_type}:{entry_id}:{lang_code}: {repr(e)}")
+        return ""
+
+
+def _get_saved_audio_for_entry(
+    entry_type: str,
+    entry_id: int,
+    english_text: str = "",
+    oromo_text: str = "",
+    allow_generate: bool = False,
+):
+    out = get_approved_audio(entry_type, int(entry_id)) or {}
+    if english_text and not out.get("english"):
+        en_url = _resolve_or_generate_tts_for_text(
+            entry_type,
+            int(entry_id),
+            "en",
+            english_text,
+            allow_generate=allow_generate,
+        )
+        if en_url:
+            out["english"] = en_url
+    if oromo_text and not out.get("oromo"):
+        om_url = _resolve_or_generate_tts_for_text(
+            entry_type,
+            int(entry_id),
+            "om",
+            oromo_text,
+            allow_generate=allow_generate,
+        )
+        if om_url:
+            out["oromo"] = om_url
+    return out
+
+
 def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
     if entry_type not in ("word", "phrase"):
         return {}
@@ -2147,6 +2242,121 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
     return summary
 
 
+def ensure_missing_tts_for_words(
+    word_items,
+    force_regenerate: bool = False,
+    chunk_size: int = None,
+    log_context: str = "word_tts_backfill",
+):
+    summary = {
+        "words_seen": 0,
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
+    }
+    if not word_items:
+        return summary
+
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    unique_items = []
+    seen = set()
+    for wid, en in word_items:
+        wid_int = int(wid or 0)
+        en_norm = normalize_text(en or "")
+        if not wid_int or not en_norm or wid_int in seen:
+            continue
+        seen.add(wid_int)
+        unique_items.append((wid_int, en_norm))
+
+    if not unique_items:
+        return summary
+
+    for i in range(0, len(unique_items), safe_chunk):
+        chunk = unique_items[i:i + safe_chunk]
+        for wid, _en in chunk:
+            row = generate_tts_for_entry("word", wid, force_regenerate=force_regenerate)
+            summary["words_seen"] += 1
+            for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+                summary[key] += int(row.get(key, 0) or 0)
+        app.logger.info(
+            "%s chunk_done start=%s size=%s generated=%s cached=%s failed=%s",
+            log_context,
+            i,
+            len(chunk),
+            summary["generated"],
+            summary["cached"],
+            summary["failed"],
+        )
+    return summary
+
+
+def run_word_audio_backfill(limit: int = 0, chunk_size: int = None, force_regenerate: bool = False):
+    out = {
+        "words_total": 0,
+        "translation_saved": 0,
+        "translation_stats": {},
+        "tts": {
+            "words_seen": 0,
+            "generated": 0,
+            "cached": 0,
+            "failed": 0,
+            "skipped_missing_text": 0,
+            "skipped_missing_voice": 0,
+        },
+    }
+    words = _fetch_approved_word_items(limit=limit)
+    out["words_total"] = len(words)
+    if not words:
+        return out
+
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 100)
+    if safe_chunk < 1:
+        safe_chunk = 100
+
+    merged_translation_stats = {lang: {} for lang in EXTRA_GENERATED_LANGS}
+    total_translation_saved = 0
+    tts_totals = out["tts"]
+
+    for i in range(0, len(words), safe_chunk):
+        chunk = words[i:i + safe_chunk]
+        saved_count, tr_stats = ensure_missing_generated_translations_for_words(
+            chunk,
+            langs=EXTRA_GENERATED_LANGS,
+            chunk_size=safe_chunk,
+            log_context="word_audio_backfill",
+        )
+        total_translation_saved += int(saved_count or 0)
+        _merge_generated_stats(merged_translation_stats, tr_stats)
+
+        tts_stats = ensure_missing_tts_for_words(
+            chunk,
+            force_regenerate=force_regenerate,
+            chunk_size=safe_chunk,
+            log_context="word_audio_backfill_tts",
+        )
+        for key in ("words_seen", "generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+            tts_totals[key] += int(tts_stats.get(key, 0) or 0)
+
+        app.logger.info(
+            "word_audio_backfill progress processed=%s/%s translation_saved=%s tts_generated=%s tts_cached=%s tts_failed=%s",
+            min(i + len(chunk), len(words)),
+            len(words),
+            total_translation_saved,
+            tts_totals["generated"],
+            tts_totals["cached"],
+            tts_totals["failed"],
+        )
+
+    out["translation_saved"] = total_translation_saved
+    out["translation_stats"] = merged_translation_stats
+    return out
+
+
 def _get_word_by_key(source_lang: str, key_text: str):
     if source_lang not in ("om", "en"):
         return None
@@ -2199,11 +2409,28 @@ def _auto_translate_from_english(english_text: str, target_lang: str) -> str:
     )
 
 
-def _get_or_generate_word_translation(word_id: int, english_text: str, target_lang: str):
+def _get_or_generate_word_translation(
+    word_id: int,
+    english_text: str,
+    target_lang: str,
+    allow_tts_generation: bool = False,
+):
     cached = _get_cached_generated_translation(word_id, target_lang)
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
         app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
-        return normalize_text(cached[0]), cached[1], True
+        translated_cached = normalize_text(cached[0] or "")
+        tts_cached = normalize_text((cached or [None, ""])[1] or "")
+        if not tts_cached:
+            tts_cached = _resolve_or_generate_tts_for_text(
+                "word",
+                int(word_id),
+                target_lang,
+                translated_cached,
+                allow_generate=allow_tts_generation,
+            )
+            if tts_cached:
+                _save_tts_url_to_translation_cache("word", int(word_id), target_lang, tts_cached)
+        return translated_cached, tts_cached, True
 
     translated = _auto_translate_from_english(english_text, target_lang)
     if not translated:
@@ -2214,9 +2441,17 @@ def _get_or_generate_word_translation(word_id: int, english_text: str, target_la
         )
         return "", None, False
 
-    # TODO: server-side TTS generation can populate tts_audio_url later.
     _save_generated_translation(word_id, target_lang, translated, provider="google_translate_v2", tts_audio_url=None)
-    return translated, None, False
+    tts_url = _resolve_or_generate_tts_for_text(
+        "word",
+        int(word_id),
+        target_lang,
+        translated,
+        allow_generate=allow_tts_generation,
+    )
+    if tts_url:
+        _save_tts_url_to_translation_cache("word", int(word_id), target_lang, tts_url)
+    return translated, tts_url, False
 
 
 def safe_translate_multilingual(text: str, source_lang: str, target_lang: str):
@@ -2272,7 +2507,12 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
             target_text = om
         else:
             try:
-                target_text, tts_audio_url, _ = _get_or_generate_word_translation(wid, en, target_lang)
+                target_text, tts_audio_url, _ = _get_or_generate_word_translation(
+                    wid,
+                    en,
+                    target_lang,
+                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                )
             except Exception as e:
                 app.logger.exception(f"dictionary auto translation failed: {repr(e)}")
                 target_text = ""
@@ -2288,6 +2528,15 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
                             wid, target_lang, target_text,
                             provider="google_translate_v2", tts_audio_url=None
                         )
+                        tts_audio_url = _resolve_or_generate_tts_for_text(
+                            "word",
+                            int(wid),
+                            target_lang,
+                            target_text,
+                            allow_generate=TTS_GENERATE_ON_LOOKUP,
+                        )
+                        if tts_audio_url:
+                            _save_tts_url_to_translation_cache("word", int(wid), target_lang, tts_audio_url)
                     except Exception:
                         pass
 
@@ -2423,7 +2672,12 @@ def translate_multilingual(text: str, source_lang: str, target_lang: str):
         if len(tokens) == 1:
             row = _get_word_by_key("om", make_search_key(_strip_edge_punct(tokens[0])))
             if row:
-                translated, tts_url, _ = _get_or_generate_word_translation(row[0], row[1], target_lang)
+                translated, tts_url, _ = _get_or_generate_word_translation(
+                    row[0],
+                    row[1],
+                    target_lang,
+                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                )
                 if translated:
                     return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
 
@@ -2439,7 +2693,12 @@ def translate_multilingual(text: str, source_lang: str, target_lang: str):
         if len(tokens) == 1:
             row = _get_word_by_key("en", make_search_key(_strip_edge_punct(tokens[0])))
             if row:
-                translated, tts_url, _ = _get_or_generate_word_translation(row[0], row[1], target_lang)
+                translated, tts_url, _ = _get_or_generate_word_translation(
+                    row[0],
+                    row[1],
+                    target_lang,
+                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                )
                 if translated:
                     return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
 
@@ -3063,7 +3322,13 @@ def dictionary():
                 lookup_error = "Auto translation unavailable. Showing base Oromo-English result."
 
             if result_id:
-                audio = get_approved_audio("word", result_id)
+                audio = _get_saved_audio_for_entry(
+                    "word",
+                    int(result_id),
+                    english_text=(result or {}).get("english", ""),
+                    oromo_text=(result or {}).get("oromo", ""),
+                    allow_generate=TTS_GENERATE_ON_LOOKUP,
+                )
                 try:
                     other_translations = get_or_generate_extra_translations(result_id, result.get("english", ""))
                 except Exception as e:
@@ -3212,7 +3477,13 @@ def word_detail(term):
 
     audio = {}
     try:
-        audio = get_approved_audio("word", wid) or {}
+        audio = _get_saved_audio_for_entry(
+            "word",
+            int(wid),
+            english_text=normalize_text(en or ""),
+            oromo_text=normalize_text(om or ""),
+            allow_generate=TTS_GENERATE_ON_LOOKUP,
+        )
     except Exception as e:
         app.logger.exception(f"/word audio lookup failed: {repr(e)}")
         audio = {}
@@ -3333,12 +3604,18 @@ def find_exact_base_match(text: str, source_lang: str):
     if key_candidates:
         for k in key_candidates:
             pr = c.execute(
-                f"SELECT id FROM phrases WHERE status='approved' AND {phrase_col}=? LIMIT 1",
+                f"SELECT id, english, oromo FROM phrases WHERE status='approved' AND {phrase_col}=? LIMIT 1",
                 (k,)
             ).fetchone()
             if pr:
-                matched = {"type": "phrase", "id": pr[0]}
-                audio = get_approved_audio("phrase", pr[0])
+                matched = {"type": "phrase", "id": pr[0], "english": pr[1], "oromo": pr[2]}
+                audio = _get_saved_audio_for_entry(
+                    "phrase",
+                    int(pr[0]),
+                    english_text=normalize_text(pr[1] or ""),
+                    oromo_text=normalize_text(pr[2] or ""),
+                    allow_generate=TTS_GENERATE_ON_LOOKUP,
+                )
                 break
 
     if not matched:
@@ -3348,12 +3625,18 @@ def find_exact_base_match(text: str, source_lang: str):
             wkey = make_search_key(word_tokens[0])
             if wkey:
                 wr = c.execute(
-                    f"SELECT id FROM words WHERE status='approved' AND {word_col}=? LIMIT 1",
+                    f"SELECT id, english, oromo FROM words WHERE status='approved' AND {word_col}=? LIMIT 1",
                     (wkey,)
                 ).fetchone()
                 if wr:
-                    matched = {"type": "word", "id": wr[0]}
-                    audio = get_approved_audio("word", wr[0])
+                    matched = {"type": "word", "id": wr[0], "english": wr[1], "oromo": wr[2]}
+                    audio = _get_saved_audio_for_entry(
+                        "word",
+                        int(wr[0]),
+                        english_text=normalize_text(wr[1] or ""),
+                        oromo_text=normalize_text(wr[2] or ""),
+                        allow_generate=TTS_GENERATE_ON_LOOKUP,
+                    )
 
     conn.close()
     return matched, audio
@@ -5271,6 +5554,14 @@ def admin_import():
             generated_stats = {}
             updated_missing_translations = 0
             google_calls = 0
+            tts_summary = {
+                "words_seen": 0,
+                "generated": 0,
+                "cached": 0,
+                "failed": 0,
+                "skipped_missing_text": 0,
+                "skipped_missing_voice": 0,
+            }
 
             conn = sqlite3.connect(DB_NAME)
             app.logger.info(
@@ -5426,6 +5717,25 @@ def admin_import():
                 cached_generated = 0
                 generated_stats = {}
 
+            if TTS_GENERATE_ON_IMPORT:
+                try:
+                    tts_summary = ensure_missing_tts_for_words(
+                        unique_cache_items,
+                        force_regenerate=False,
+                        chunk_size=IMPORT_BATCH_SIZE,
+                        log_context="admin_import_tts",
+                    )
+                except Exception as e:
+                    app.logger.exception(f"admin_import tts warmup failed: {repr(e)}")
+                    tts_summary = {
+                        "words_seen": 0,
+                        "generated": 0,
+                        "cached": 0,
+                        "failed": 0,
+                        "skipped_missing_text": 0,
+                        "skipped_missing_voice": 0,
+                    }
+
             conn = sqlite3.connect(DB_NAME)
             for wid in missing_before.keys():
                 before = missing_before.get(wid, 0)
@@ -5457,7 +5767,11 @@ def admin_import():
                 f"Oromo missing on insert: {oromo_missing_on_insert} | "
                 f"Ignored due to limit: {over_limit_rows} | Empty rows: {empty_rows} | Duplicate rows in file: {duplicate_rows} | "
                 f"Updated missing translations: {updated_missing_translations} | "
-                f"Generated translations saved: {cached_generated} | Google calls used: {google_calls}."
+                f"Generated translations saved: {cached_generated} | Google calls used: {google_calls} | "
+                f"TTS words seen: {int(tts_summary.get('words_seen', 0) or 0)} | "
+                f"TTS generated: {int(tts_summary.get('generated', 0) or 0)} | "
+                f"TTS cached: {int(tts_summary.get('cached', 0) or 0)} | "
+                f"TTS failed: {int(tts_summary.get('failed', 0) or 0)}."
             )
             if generation_summary:
                 msg2 += f" | Generation by lang -> {generation_summary}"
@@ -5487,6 +5801,7 @@ def admin_import():
                     "cached_generated_translations": cached_generated,
                     "generated_translations_saved": cached_generated,
                     "generated_by_lang": generated_stats,
+                    "tts_summary": tts_summary,
                     "google_calls_used": google_calls,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_words": IMPORT_MAX_WORDS,
@@ -5524,11 +5839,37 @@ def approve(word_id):
     if not require_admin():
         return redirect("/admin")
 
+    wid = int(word_id or 0)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("UPDATE words SET status='approved' WHERE id=?", (word_id,))
+    c.execute("UPDATE words SET status='approved' WHERE id=?", (wid,))
+    c.execute("SELECT english FROM words WHERE id=? LIMIT 1", (wid,))
+    row = c.fetchone()
     conn.commit()
     conn.close()
+
+    en = normalize_text((row or [""])[0] or "")
+    if wid and en:
+        try:
+            ensure_missing_generated_translations_for_words(
+                [(wid, en)],
+                langs=EXTRA_GENERATED_LANGS,
+                chunk_size=len(EXTRA_GENERATED_LANGS),
+                log_context="approve_word",
+            )
+        except Exception as e:
+            app.logger.exception(f"approve word translation warmup failed word_id={wid}: {repr(e)}")
+
+        if TTS_GENERATE_ON_IMPORT:
+            try:
+                ensure_missing_tts_for_words(
+                    [(wid, en)],
+                    force_regenerate=False,
+                    chunk_size=1,
+                    log_context="approve_word_tts",
+                )
+            except Exception as e:
+                app.logger.exception(f"approve word tts warmup failed word_id={wid}: {repr(e)}")
     return redirect("/dashboard")
 
 
@@ -5887,6 +6228,36 @@ def cli_backfill_translations(entry_type, entry_id, overwrite_existing, limit):
     click.echo(
         f"words_saved={summary.get('words_saved', 0)} "
         f"phrases_saved={summary.get('phrases_saved', 0)}"
+    )
+
+
+@app.cli.command("backfill-word-audio")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit approved words (0 = all).")
+@click.option("--chunk-size", type=int, default=150, show_default=True, help="Batch size for translation + TTS.")
+@click.option("--force-regenerate", is_flag=True, default=False, help="Regenerate audio even when cache exists.")
+def cli_backfill_word_audio(limit, chunk_size, force_regenerate):
+    """
+    Backfill full persisted audio assets for approved WORDS only.
+    Pipeline:
+      1) Ensure generated translations for am/ar/fr/zh-CN (DB cache)
+      2) Ensure Azure TTS cache for en/am/ar/fr/zh-CN (+ optional om)
+    """
+    summary = run_word_audio_backfill(
+        limit=int(limit or 0),
+        chunk_size=int(chunk_size or 150),
+        force_regenerate=bool(force_regenerate),
+    )
+    tts = summary.get("tts", {}) or {}
+    click.echo("Word audio backfill completed.")
+    click.echo(
+        f"words_total={summary.get('words_total', 0)} "
+        f"translation_saved={summary.get('translation_saved', 0)} "
+        f"tts_words_seen={tts.get('words_seen', 0)} "
+        f"tts_generated={tts.get('generated', 0)} "
+        f"tts_cached={tts.get('cached', 0)} "
+        f"tts_failed={tts.get('failed', 0)} "
+        f"tts_skipped_missing_text={tts.get('skipped_missing_text', 0)} "
+        f"tts_skipped_missing_voice={tts.get('skipped_missing_voice', 0)}"
     )
 
 

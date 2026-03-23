@@ -11,6 +11,63 @@
 */
 
 (function () {
+  // Global audio playback manager (shared across Learn/Dictionary/Translate/Word)
+  let currentAudio = null;
+  let currentButton = null;
+
+  function setPlayingButton(btn) {
+    if (currentButton && currentButton !== btn) {
+      currentButton.classList.remove("is-playing");
+    }
+    currentButton = btn || null;
+    if (currentButton) currentButton.classList.add("is-playing");
+  }
+
+  function clearPlayingButton(btn) {
+    const target = btn || currentButton;
+    if (target) target.classList.remove("is-playing");
+    if (!btn || btn === currentButton) currentButton = null;
+  }
+
+  function stopCurrentAudio() {
+    if (currentAudio) {
+      try {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      } catch (_) {}
+      currentAudio = null;
+    }
+    clearPlayingButton();
+  }
+
+  function playButtonAudio(button) {
+    const audioUrl = (button?.getAttribute("data-audio") || "").trim();
+    if (!audioUrl) return;
+
+    stopCurrentAudio();
+
+    const audio = new Audio(audioUrl);
+    currentAudio = audio;
+    setPlayingButton(button);
+
+    audio.addEventListener("ended", () => {
+      if (currentAudio === audio) currentAudio = null;
+      clearPlayingButton(button);
+    });
+
+    audio.addEventListener("error", () => {
+      if (currentAudio === audio) currentAudio = null;
+      clearPlayingButton(button);
+      console.warn("Audio playback failed for:", audioUrl);
+    });
+
+    audio.play().catch((err) => {
+      if (currentAudio === audio) currentAudio = null;
+      clearPlayingButton(button);
+      console.warn("Audio play() rejected:", err);
+    });
+  }
+
   // One active recording at a time
   const active = {
     recorder: null,
@@ -397,6 +454,12 @@
 
   function wire() {
     document.addEventListener("click", async (e) => {
+      const audioBtn = e.target.closest(".audio-btn[data-audio], .learn-audio-inline[data-audio]");
+      if (audioBtn) {
+        playButtonAudio(audioBtn);
+        return;
+      }
+
       const recordBtn = e.target.closest("[data-record-btn]");
       const stopBtn = e.target.closest("[data-stop-btn]");
       const submitBtn = e.target.closest("[data-submit-btn]");
@@ -475,6 +538,7 @@
     });
 
     window.addEventListener("beforeunload", () => {
+      stopCurrentAudio();
       try { requestStop("⏹ Stopped."); } catch (_) {}
       stopTracks(active.stream);
     });

@@ -30,21 +30,30 @@
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 
   <style>
-    .learn-cell {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      line-height: 1.35;
-      min-height: 22px;
+    .learn-word-text {
+      vertical-align: middle;
     }
-    .learn-audio-btn {
-      border: 1px solid rgba(0,0,0,.2);
-      background: #fff;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 12px;
+    .learn-audio-inline {
+      margin-left: 6px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      font-size: 15px;
+      line-height: 1;
       cursor: pointer;
-      flex: 0 0 auto;
+      vertical-align: middle;
+      opacity: 0.92;
+      transition: opacity .12s ease, transform .12s ease;
+    }
+    .learn-audio-inline:hover {
+      opacity: 0.8;
+    }
+    .learn-audio-inline:focus-visible {
+      outline: 2px solid rgba(0, 0, 0, 0.2);
+      outline-offset: 2px;
+    }
+    .learn-audio-inline.is-playing {
+      transform: scale(1.08);
     }
   </style>
 </head>
@@ -148,61 +157,42 @@
             </thead>
             <tbody>
               {% for row in learn_rows %}
-                {% set audio_key = row.entry_type ~ '-' ~ row.entry_id %}
                 <tr>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text">{{ row.english }}</span>
-                      {% if row.audio.en %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-en')" aria-label="Play English audio for {{ row.english }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-en" preload="none"><source src="{{ row.audio.en }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text">{{ row.english }}</span>
+                    {% if row.audio.en %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.en }}" aria-label="Play English pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text">{{ row.am or "-" }}</span>
-                      {% if row.audio.am %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-am')" aria-label="Play Amharic audio for {{ row.am or row.english }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-am" preload="none"><source src="{{ row.audio.am }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text">{{ row.am or "-" }}</span>
+                    {% if row.audio.am %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.am }}" aria-label="Play Amharic pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text" dir="rtl">{{ row.ar or "-" }}</span>
-                      {% if row.audio.ar %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-ar')" aria-label="Play Arabic audio for {{ row.ar or row.english }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-ar" preload="none"><source src="{{ row.audio.ar }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text" dir="rtl">{{ row.ar or "-" }}</span>
+                    {% if row.audio.ar %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.ar }}" aria-label="Play Arabic pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text">{{ row.fr or "-" }}</span>
-                      {% if row.audio.fr %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-fr')" aria-label="Play French audio for {{ row.fr or row.english }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-fr" preload="none"><source src="{{ row.audio.fr }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text">{{ row.fr or "-" }}</span>
+                    {% if row.audio.fr %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.fr }}" aria-label="Play French pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text">{{ row['zh-CN'] or "-" }}</span>
-                      {% if row.audio['zh-CN'] %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-zh-CN')" aria-label="Play Chinese audio for {{ row['zh-CN'] or row.english }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-zh-CN" preload="none"><source src="{{ row.audio['zh-CN'] }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text">{{ row['zh-CN'] or "-" }}</span>
+                    {% if row.audio['zh-CN'] %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio['zh-CN'] }}" aria-label="Play Chinese pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <div class="learn-cell">
-                      <span class="learn-text">{{ row.oromo }}</span>
-                      {% if row.audio.oromo %}
-                        <button class="learn-audio-btn" type="button" onclick="playLearnAudio('learn-audio-{{ audio_key }}-oromo')" aria-label="Play Oromo audio for {{ row.oromo }}">&#9658;</button>
-                        <audio id="learn-audio-{{ audio_key }}-oromo" preload="none"><source src="{{ row.audio.oromo }}"></audio>
-                      {% endif %}
-                    </div>
+                    <span class="learn-word-text">{{ row.oromo }}</span>
+                    {% if row.audio.oromo %}
+                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.oromo }}" aria-label="Play Oromo pronunciation">🔊</button>
+                    {% endif %}
                   </td>
                 </tr>
               {% endfor %}
@@ -252,20 +242,9 @@ function openTranslatorWithText(text){
   const url = "/translate?direction=" + encodeURIComponent(dir) + "&text=" + encodeURIComponent(text);
   window.location.href = url;
 }
-function playLearnAudio(audioId){
-  const target = document.getElementById(audioId);
-  if (!target) return;
-  const all = document.querySelectorAll("audio[id^='learn-audio-']");
-  all.forEach(function(a){
-    if (a !== target) {
-      a.pause();
-      a.currentTime = 0;
-    }
-  });
-  target.play();
-}
 </script>
 
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
 
 </body>

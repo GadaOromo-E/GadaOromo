@@ -258,26 +258,32 @@
         {% if word.audio_oromo is defined and word.audio_oromo %}
           <div class="audio-block">
             <h3 class="section-title">Oromo pronunciation</h3>
-            <audio controls style="width:100%;">
-              {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
-                <source src="{{ word.audio_oromo }}">
-              {% else %}
-                <source src="{{ url_for('static', filename=word.audio_oromo) }}">
-              {% endif %}
-            </audio>
+            {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
+              {% set oromo_audio_url = word.audio_oromo %}
+            {% else %}
+              {% set oromo_audio_url = url_for('static', filename=word.audio_oromo) %}
+            {% endif %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ oromo_audio_url }}" aria-label="Play Oromo pronunciation">
+                <span class="audio-icon" aria-hidden="true"></span>
+              </button>
+            </div>
           </div>
         {% endif %}
 
         {% if word.audio_english is defined and word.audio_english %}
           <div class="audio-block">
             <h3 class="section-title">English pronunciation</h3>
-            <audio controls style="width:100%;">
-              {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
-                <source src="{{ word.audio_english }}">
-              {% else %}
-                <source src="{{ url_for('static', filename=word.audio_english) }}">
-              {% endif %}
-            </audio>
+            {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
+              {% set english_audio_url = word.audio_english %}
+            {% else %}
+              {% set english_audio_url = url_for('static', filename=word.audio_english) %}
+            {% endif %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ english_audio_url }}" aria-label="Play English pronunciation">
+                <span class="audio-icon" aria-hidden="true"></span>
+              </button>
+            </div>
           </div>
         {% endif %}
 
@@ -294,5 +300,6 @@
     </footer>
     </main>
   </div>
+  <script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1" defer></script>
 </body>
 </html>

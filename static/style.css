@@ -252,6 +252,103 @@ button:disabled,
   border:0;
 }
 
+/* Global premium audio button */
+.audio-btn{
+  width: 42px;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(139, 0, 0, 0.2);
+  background: linear-gradient(180deg, #d11616 0%, #b30000 100%);
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(179, 0, 0, 0.26);
+  cursor: pointer;
+  transition: transform .14s ease, box-shadow .18s ease, filter .18s ease;
+  vertical-align: middle;
+}
+
+.audio-btn:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+  box-shadow: 0 8px 18px rgba(179, 0, 0, 0.32);
+}
+
+.audio-btn:active{
+  transform: translateY(0);
+  filter: brightness(0.97);
+}
+
+.audio-btn:focus-visible{
+  outline: 2px solid rgba(179, 0, 0, 0.24);
+  outline-offset: 2px;
+}
+
+.audio-btn.sm{
+  width: 30px;
+  height: 30px;
+  box-shadow: 0 4px 10px rgba(179, 0, 0, 0.23);
+}
+
+.audio-btn .audio-icon{
+  width: 15px;
+  height: 15px;
+  display: inline-block;
+  position: relative;
+}
+
+.audio-btn .audio-icon::before{
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #fff;
+}
+
+.audio-btn.is-playing{
+  background: linear-gradient(180deg, #db2020 0%, #8e0000 100%);
+  box-shadow: 0 0 0 0 rgba(179, 0, 0, 0.45), 0 8px 20px rgba(179, 0, 0, 0.4);
+  animation: audioPulse 1.2s ease-out infinite;
+}
+
+.audio-btn.is-playing .audio-icon::before{
+  left: 2px;
+  top: 2px;
+  width: 3px;
+  height: 10px;
+  border: 0;
+  background: #fff;
+  box-shadow: 6px 0 0 #fff;
+}
+
+.audio-row{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.audio-row .audio-btn{
+  flex: 0 0 auto;
+}
+
+@keyframes audioPulse{
+  0%{
+    box-shadow: 0 0 0 0 rgba(179, 0, 0, 0.4), 0 8px 20px rgba(179, 0, 0, 0.34);
+  }
+  70%{
+    box-shadow: 0 0 0 10px rgba(179, 0, 0, 0), 0 10px 24px rgba(179, 0, 0, 0.34);
+  }
+  100%{
+    box-shadow: 0 0 0 0 rgba(179, 0, 0, 0), 0 8px 20px rgba(179, 0, 0, 0.34);
+  }
+}
+
 /* Word list rows */
 .word-list{ margin-top: 10px; display:flex; flex-direction:column; gap: 8px; }
 .word-row{

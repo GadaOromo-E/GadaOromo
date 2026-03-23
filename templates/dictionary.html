@@ -162,23 +162,32 @@
           </div>
         {% endif %}
 
-        {% if tts_audio_url %}
-          <div style="margin-top:10px;">
-            <div class="subtle">Generated audio</div>
-            <audio controls style="width:100%;"><source src="{{ tts_audio_url }}"></audio>
-          </div>
-        {% endif %}
-
-        {% if audio and (audio.oromo or audio.english) %}
+        {% if tts_audio_url or (audio and (audio.oromo or audio.english)) %}
           <div style="margin-top:14px;">
             <div class="subtle">Pronunciation</div>
-            {% if audio.oromo %}
-              <div class="subtle" style="margin-top:10px;">Oromo audio</div>
-              <audio controls style="width:100%;"><source src="{{ audio.oromo }}"></audio>
+            {% if tts_audio_url %}
+              <div class="audio-row" style="margin-top:10px;">
+                <button class="audio-btn" type="button" data-audio="{{ tts_audio_url }}" aria-label="Play target pronunciation">
+                  <span class="audio-icon" aria-hidden="true"></span>
+                </button>
+                <span class="subtle" style="align-self:center;">Target pronunciation</span>
+              </div>
             {% endif %}
-            {% if audio.english %}
-              <div class="subtle" style="margin-top:10px;">English audio</div>
-              <audio controls style="width:100%;"><source src="{{ audio.english }}"></audio>
+            {% if audio and audio.oromo %}
+              <div class="audio-row" style="margin-top:10px;">
+                <button class="audio-btn" type="button" data-audio="{{ audio.oromo }}" aria-label="Play Oromo pronunciation">
+                  <span class="audio-icon" aria-hidden="true"></span>
+                </button>
+                <span class="subtle" style="align-self:center;">Oromo pronunciation</span>
+              </div>
+            {% endif %}
+            {% if audio and audio.english %}
+              <div class="audio-row" style="margin-top:10px;">
+                <button class="audio-btn" type="button" data-audio="{{ audio.english }}" aria-label="Play English pronunciation">
+                  <span class="audio-icon" aria-hidden="true"></span>
+                </button>
+                <span class="subtle" style="align-self:center;">English pronunciation</span>
+              </div>
             {% endif %}
           </div>
         {% endif %}
@@ -255,7 +264,7 @@
 
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1" defer></script>
 <script>
 function useSuggestion(text){ const inp=document.getElementById("dictionaryQuery"); const form=document.getElementById("dictionarySearchForm"); if(inp) inp.value=text; if(form) form.submit(); }
 function speakTextCompat(text, langCode){ if(!text || !('speechSynthesis' in window)) return; const u=new SpeechSynthesisUtterance(text); u.lang=langCode||'en-US'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }

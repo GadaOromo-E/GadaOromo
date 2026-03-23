@@ -89,8 +89,12 @@
 
         {% if tts_audio_url %}
           <div style="margin-top:10px;">
-            <div class="subtle">Generated audio</div>
-            <audio controls style="width:100%;"><source src="{{ tts_audio_url }}"></audio>
+            <div class="subtle">Target pronunciation</div>
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ tts_audio_url }}" aria-label="Play target pronunciation">
+                <span class="audio-icon" aria-hidden="true"></span>
+              </button>
+            </div>
           </div>
         {% endif %}
       {% else %}
@@ -101,12 +105,20 @@
         <div style="margin-top:14px;">
           <h2>Community Pronunciation</h2>
           {% if audio.oromo %}
-            <div class="subtle">Oromo audio (saved)</div>
-            <audio controls style="width:100%;"><source src="{{ audio.oromo }}"></audio>
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio.oromo }}" aria-label="Play Oromo pronunciation">
+                <span class="audio-icon" aria-hidden="true"></span>
+              </button>
+              <span class="subtle" style="align-self:center;">Oromo pronunciation</span>
+            </div>
           {% endif %}
           {% if audio.english %}
-            <div class="subtle" style="margin-top:10px;">English audio</div>
-            <audio controls style="width:100%;"><source src="{{ audio.english }}"></audio>
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio.english }}" aria-label="Play English pronunciation">
+                <span class="audio-icon" aria-hidden="true"></span>
+              </button>
+              <span class="subtle" style="align-self:center;">English pronunciation</span>
+            </div>
           {% endif %}
         </div>
       {% elif result %}
@@ -262,6 +274,6 @@ function startVoice(){
 </script>
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
-<script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1"></script>
+<script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1"></script>
 </body>
 </html>
