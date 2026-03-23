@@ -2656,10 +2656,14 @@ EN_OM_TEMPLATES = [
 
 # ------------------ LEARN ------------------
 
-def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict):
+def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict, langs=None):
     if not entry_ids:
         return {}
+    lang_list = tuple(langs or ("en", "am"))
+    if not lang_list:
+        return {}
     placeholders = ",".join("?" for _ in entry_ids)
+    lang_placeholders = ",".join("?" for _ in lang_list)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
@@ -2668,10 +2672,10 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
         FROM generated_tts_audio
         WHERE entry_type=?
           AND entry_id IN ({placeholders})
-          AND lang_code IN (?, ?, ?, ?, ?)
+          AND lang_code IN ({lang_placeholders})
         ORDER BY id DESC
         """,
-        (entry_type, *entry_ids, "en", "am", "ar", "fr", "zh-CN"),
+        (entry_type, *entry_ids, *lang_list),
     )
     rows = c.fetchall()
     conn.close()
@@ -2696,6 +2700,39 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     for key, url in fallback.items():
         if key not in out:
             out[key] = url
+    return out
+
+
+def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
+    if not entry_ids:
+        return {}
+    placeholders = ",".join("?" for _ in entry_ids)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        f"""
+        SELECT entry_id, file_path
+        FROM audio
+        WHERE status='approved'
+          AND entry_type=?
+          AND lang='oromo'
+          AND entry_id IN ({placeholders})
+        ORDER BY id DESC
+        """,
+        (entry_type, *entry_ids),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    for entry_id, file_path in rows:
+        eid = int(entry_id or 0)
+        if eid in out:
+            continue
+        abs_path = _audio_abs_path(file_path or "")
+        if not abs_path or (not os.path.isfile(abs_path)):
+            continue
+        out[eid] = _public_audio_url(file_path)
     return out
 
 
@@ -2789,8 +2826,10 @@ def _load_learn_rows(limit: int = 200):
             if txt:
                 text_hash_lookup_phrases[(pid_int, lang)] = _text_hash(txt)
 
-    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words)
-    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases)
+    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words, langs=("en", "am", "ar", "fr", "zh-CN"))
+    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases, langs=("en", "am", "ar", "fr", "zh-CN"))
+    word_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("word", word_ids)
+    phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
     rows = []
     for wid, en, om in word_rows:
@@ -2811,6 +2850,7 @@ def _load_learn_rows(limit: int = 200):
                 "ar": word_tts.get((wid_int, "ar"), ""),
                 "fr": word_tts.get((wid_int, "fr"), ""),
                 "zh-CN": word_tts.get((wid_int, "zh-CN"), ""),
+                "oromo": word_oromo_audio.get(wid_int, ""),
             },
         })
 
@@ -2832,6 +2872,7 @@ def _load_learn_rows(limit: int = 200):
                 "ar": phrase_tts.get((pid_int, "ar"), ""),
                 "fr": phrase_tts.get((pid_int, "fr"), ""),
                 "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
+                "oromo": phrase_oromo_audio.get(pid_int, ""),
             },
         })
 
