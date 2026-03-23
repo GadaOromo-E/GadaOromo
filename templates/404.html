@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Page Not Found | {{ APP_NAME }}</title>
+  <meta name="description" content="The page you requested could not be found on {{ APP_NAME }}.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <main id="main" class="card" style="margin-top:20px;">
+      <h1>Page Not Found</h1>
+      <p class="muted">The page you requested does not exist.</p>
+      <div class="small-actions" style="margin-top:14px;">
+        <a class="btn primary" href="/">Go Home</a>
+        <a class="btn" href="/dictionary">Open Dictionary</a>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

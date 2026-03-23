@@ -3,3 +3,4 @@ Werkzeug
 gunicorn
 requests
 openpyxl
+azure-cognitiveservices-speech

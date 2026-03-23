@@ -39,6 +39,8 @@ import re
 import sqlite3
 import logging
 import csv
+import hashlib
+import click
 from uuid import uuid4
 from difflib import get_close_matches
 from io import StringIO, BytesIO
@@ -55,6 +57,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 from openpyxl import load_workbook
+from services.translation_service import google_translate_batch as service_google_translate_batch
+from services.translation_service import google_translate_text as service_google_translate_text
+from services.tts_service import azure_synthesize_mp3
 
 # ------------------ APP SETUP ------------------
 
@@ -609,23 +614,15 @@ def google_translate_batch_v2(texts, target: str, source: str = "en"):
     if not texts:
         return []
 
-    url = "https://translation.googleapis.com/language/translate/v2"
-    payload = {"q": texts, "source": source, "target": target, "format": "text"}
-
     try:
-        r = requests.post(url, params={"key": api_key}, json=payload, timeout=30)
-        if r.status_code != 200:
-            app.logger.error(f"Google Translate HTTP {r.status_code}: {(r.text or '')[:250]}")
-            return []
-
-        data = r.json()
-        if isinstance(data, dict) and "error" in data:
-            app.logger.error(f"Google Translate JSON error: {data.get('error')}")
-            return []
-
-        translations = data["data"]["translations"]
-        return [normalize_text(t.get("translatedText", "")) for t in translations]
-
+        translated = service_google_translate_batch(
+            texts,
+            target=target,
+            source=source,
+            api_key=api_key,
+            timeout=30,
+        )
+        return [normalize_text(t or "") for t in translated]
     except Exception as e:
         app.logger.exception(f"Google Translate exception: {repr(e)}")
         return []
@@ -641,6 +638,22 @@ LANGUAGE_OPTIONS = {
     "zh-CN": {"label": "Chinese", "google_code": "zh-CN", "speech_code": "zh-CN", "rtl": False},
 }
 EXTRA_GENERATED_LANGS = ("am", "ar", "zh-CN", "fr")
+LEARN_TTS_LANGS = ("en", "am", "ar", "fr", "zh-CN")
+AZURE_TTS_PROVIDER = "azure_speech"
+
+# Env vars (production):
+# - GOOGLE_TRANSLATE_API_KEY
+# - AZURE_SPEECH_KEY
+# - AZURE_SPEECH_REGION
+# Optional per-language voice overrides:
+# - AZURE_VOICE_EN, AZURE_VOICE_AM, AZURE_VOICE_AR, AZURE_VOICE_FR, AZURE_VOICE_ZH_CN
+DEFAULT_AZURE_VOICES = {
+    "en": os.environ.get("AZURE_VOICE_EN", "en-US-JennyNeural").strip(),
+    "am": os.environ.get("AZURE_VOICE_AM", "am-ET-MekdesNeural").strip(),
+    "ar": os.environ.get("AZURE_VOICE_AR", "ar-SA-ZariyahNeural").strip(),
+    "fr": os.environ.get("AZURE_VOICE_FR", "fr-FR-DeniseNeural").strip(),
+    "zh-CN": os.environ.get("AZURE_VOICE_ZH_CN", "zh-CN-XiaoxiaoNeural").strip(),
+}
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -895,10 +908,20 @@ def google_translate_text_v2(text: str, target: str, source: str = "en") -> str:
     t = normalize_text(text)
     if not t:
         return ""
-    out = google_translate_batch_v2([t], target=target, source=source)
-    if not out:
+    api_key = _get_google_key()
+    if not api_key:
         return ""
-    return normalize_text(out[0] or "")
+    try:
+        out = service_google_translate_text(
+            t,
+            target=target,
+            source=source,
+            api_key=api_key,
+            timeout=30,
+        )
+        return normalize_text(out or "")
+    except Exception:
+        return ""
 
 
 # ------------------ AUDIO HELPERS ------------------
@@ -1230,12 +1253,70 @@ def ensure_generated_translations_table():
         return False
 
 
+def ensure_generated_phrase_translations_table():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS generated_phrase_translations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phrase_id INTEGER NOT NULL,
+            lang_code TEXT NOT NULL,
+            translated_text TEXT NOT NULL,
+            provider TEXT NOT NULL DEFAULT 'google_translate_v2',
+            tts_audio_url TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(phrase_id, lang_code)
+        )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_phrase_translations_phrase_id ON generated_phrase_translations(phrase_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_phrase_translations_lang_code ON generated_phrase_translations(lang_code)")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        app.logger.exception(f"Failed to ensure generated_phrase_translations table: {repr(e)}")
+        return False
+
+
+def ensure_generated_tts_audio_table():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS generated_tts_audio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_type TEXT NOT NULL,
+            entry_id INTEGER NOT NULL,
+            lang_code TEXT NOT NULL,
+            text_value TEXT NOT NULL,
+            text_hash TEXT NOT NULL,
+            voice_provider TEXT NOT NULL DEFAULT 'azure_speech',
+            voice_name TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name)
+        )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_tts_audio_entry ON generated_tts_audio(entry_type, entry_id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_tts_audio_lang ON generated_tts_audio(lang_code)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_generated_tts_audio_hash ON generated_tts_audio(text_hash)")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        app.logger.exception(f"Failed to ensure generated_tts_audio table: {repr(e)}")
+        return False
+
+
 # Run DB init + migrations at startup
 init_db()
 ensure_key_columns()
 backfill_keys()
 ensure_key_indexes()
 _generated_table_ready = ensure_generated_translations_table()
+_generated_phrase_table_ready = ensure_generated_phrase_translations_table()
+_generated_tts_table_ready = ensure_generated_tts_audio_table()
 
 
 def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int):
@@ -1620,6 +1701,434 @@ def clear_generated_translations_for_word(word_id: int):
         conn.close()
     except Exception as e:
         app.logger.exception(f"generated_translations cache clear failed: {repr(e)}")
+
+
+def _get_cached_generated_phrase_translation(phrase_id: int, lang_code: str):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            SELECT translated_text, tts_audio_url
+            FROM generated_phrase_translations
+            WHERE phrase_id=? AND lang_code=?
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            LIMIT 1
+        """, (phrase_id, lang_code))
+        row = c.fetchone()
+        conn.close()
+        return row
+    except Exception as e:
+        if "no such table: generated_phrase_translations" in str(e).lower():
+            ensure_generated_phrase_translations_table()
+        app.logger.exception(f"generated_phrase_translations cache read failed: {repr(e)}")
+        return None
+
+
+def _save_generated_phrase_translation(
+    phrase_id: int,
+    lang_code: str,
+    translated_text: str,
+    provider: str = "google_translate_v2",
+    tts_audio_url: str = None
+):
+    if not _is_meaningful_generated_text(translated_text):
+        return
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO generated_phrase_translations
+            (phrase_id, lang_code, translated_text, provider, tts_audio_url, updated_at)
+            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(phrase_id, lang_code) DO UPDATE SET
+                translated_text=excluded.translated_text,
+                provider=excluded.provider,
+                tts_audio_url=excluded.tts_audio_url,
+                updated_at=CURRENT_TIMESTAMP
+        """, (phrase_id, lang_code, translated_text, provider, tts_audio_url))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        app.logger.exception(f"generated_phrase_translations cache write failed: {repr(e)}")
+
+
+def ensure_missing_generated_translations_for_phrases(
+    phrase_items,
+    langs=None,
+    chunk_size: int = None,
+    overwrite_existing: bool = False,
+):
+    if not phrase_items:
+        return 0, {}
+
+    langs = tuple(langs or EXTRA_GENERATED_LANGS)
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    unique_items = []
+    seen_ids = set()
+    for pid, en in phrase_items:
+        pid_int = int(pid or 0)
+        en_norm = normalize_text(en or "")
+        if not pid_int or not en_norm or pid_int in seen_ids:
+            continue
+        seen_ids.add(pid_int)
+        unique_items.append((pid_int, en_norm))
+
+    if not unique_items:
+        return 0, {}
+
+    total_saved = 0
+    stats = {}
+
+    for lang in langs:
+        st = {"items_seen": len(unique_items), "already_cached": 0, "missing_before": 0, "saved": 0, "provider_errors": 0}
+        stats[lang] = st
+        missing = []
+        for pid, en in unique_items:
+            cached = _get_cached_generated_phrase_translation(pid, lang)
+            cached_text = normalize_text((cached or [""])[0] or "")
+            if _is_meaningful_generated_text(cached_text) and not overwrite_existing:
+                st["already_cached"] += 1
+                continue
+            missing.append((pid, en))
+        st["missing_before"] = len(missing)
+
+        for i in range(0, len(missing), safe_chunk):
+            pairs = missing[i:i + safe_chunk]
+            if not pairs:
+                continue
+            texts = [en for _pid, en in pairs]
+            try:
+                translated = google_translate_batch_v2(
+                    texts,
+                    target=_google_lang_code(lang),
+                    source="en",
+                )
+                if not translated or len(translated) != len(pairs):
+                    translated = []
+                    for _pid, en in pairs:
+                        translated.append(
+                            google_translate_text_v2(
+                                en,
+                                target=_google_lang_code(lang),
+                                source="en",
+                            )
+                        )
+            except Exception:
+                translated = []
+
+            if translated and len(translated) == len(pairs):
+                for (pid, _en), out in zip(pairs, translated):
+                    txt = normalize_text(out or "")
+                    if not _is_meaningful_generated_text(txt):
+                        continue
+                    try:
+                        _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
+                        st["saved"] += 1
+                        total_saved += 1
+                    except Exception:
+                        st["provider_errors"] += 1
+            else:
+                st["provider_errors"] += len(pairs)
+
+    return total_saved, stats
+
+
+def _fetch_approved_word_items(limit: int = 0):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = """
+        SELECT id, english
+        FROM words
+        WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+        ORDER BY id ASC
+    """
+    if limit and int(limit) > 0:
+        sql += " LIMIT ?"
+        c.execute(sql, (int(limit),))
+    else:
+        c.execute(sql)
+    rows = [(int(r[0]), normalize_text(r[1] or "")) for r in c.fetchall()]
+    conn.close()
+    return [(wid, en) for wid, en in rows if wid and en]
+
+
+def _fetch_approved_phrase_items(limit: int = 0):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = """
+        SELECT id, english
+        FROM phrases
+        WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+        ORDER BY id ASC
+    """
+    if limit and int(limit) > 0:
+        sql += " LIMIT ?"
+        c.execute(sql, (int(limit),))
+    else:
+        c.execute(sql)
+    rows = [(int(r[0]), normalize_text(r[1] or "")) for r in c.fetchall()]
+    conn.close()
+    return [(pid, en) for pid, en in rows if pid and en]
+
+
+def run_translation_backfill(entry_type: str = "all", entry_id: int = 0, overwrite_existing: bool = False, limit: int = 0):
+    summary = {"words_saved": 0, "phrases_saved": 0, "word_stats": {}, "phrase_stats": {}}
+
+    if entry_type in ("all", "word"):
+        word_items = _fetch_approved_word_items(limit=limit)
+        if entry_id:
+            word_items = [(wid, en) for wid, en in word_items if int(wid) == int(entry_id)]
+        if word_items:
+            saved, stats = ensure_missing_generated_translations_for_words(
+                word_items,
+                langs=EXTRA_GENERATED_LANGS,
+                chunk_size=IMPORT_BATCH_SIZE,
+                log_context="cli_backfill_words",
+            )
+            if overwrite_existing:
+                # Explicit overwrite path: re-run one by one.
+                for wid, en in word_items:
+                    for lang in EXTRA_GENERATED_LANGS:
+                        tr = google_translate_text_v2(en, target=_google_lang_code(lang), source="en")
+                        trn = normalize_text(tr or "")
+                        if _is_meaningful_generated_text(trn):
+                            _save_generated_translation(wid, lang, trn, provider="google_translate_v2", tts_audio_url=None)
+                saved = len(word_items) * len(EXTRA_GENERATED_LANGS)
+            summary["words_saved"] = int(saved or 0)
+            summary["word_stats"] = stats or {}
+
+    if entry_type in ("all", "phrase"):
+        phrase_items = _fetch_approved_phrase_items(limit=limit)
+        if entry_id:
+            phrase_items = [(pid, en) for pid, en in phrase_items if int(pid) == int(entry_id)]
+        if phrase_items:
+            saved, stats = ensure_missing_generated_translations_for_phrases(
+                phrase_items,
+                langs=EXTRA_GENERATED_LANGS,
+                chunk_size=IMPORT_BATCH_SIZE,
+                overwrite_existing=overwrite_existing,
+            )
+            summary["phrases_saved"] = int(saved or 0)
+            summary["phrase_stats"] = stats or {}
+
+    return summary
+
+
+def _get_azure_speech_key() -> str:
+    return (os.environ.get("AZURE_SPEECH_KEY") or "").strip()
+
+
+def _get_azure_speech_region() -> str:
+    return (os.environ.get("AZURE_SPEECH_REGION") or "").strip()
+
+
+def _azure_voice_for_lang(lang_code: str) -> str:
+    return (DEFAULT_AZURE_VOICES.get(lang_code) or "").strip()
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256((normalize_text(text or "")).encode("utf-8")).hexdigest()
+
+
+def _generated_tts_file_name(entry_type: str, entry_id: int, lang_code: str, text_hash: str, voice_name: str) -> str:
+    safe_voice = re.sub(r"[^a-zA-Z0-9_-]+", "-", (voice_name or "default")).strip("-")[:40] or "default"
+    return f"tts_{entry_type}_{entry_id}_{lang_code}_{text_hash[:12]}_{safe_voice}.mp3"
+
+
+def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text: str, voice_name: str):
+    th = _text_hash(text)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        SELECT id, file_path
+        FROM generated_tts_audio
+        WHERE entry_type=? AND entry_id=? AND lang_code=? AND text_hash=?
+          AND voice_provider=? AND voice_name=?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (entry_type, int(entry_id), lang_code, th, AZURE_TTS_PROVIDER, voice_name))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    file_path = (row[1] or "").strip()
+    if not file_path:
+        return None
+    abs_path = _audio_abs_path(file_path)
+    if not abs_path or (not os.path.isfile(abs_path)):
+        return None
+    return {"id": int(row[0]), "file_path": file_path, "url": _public_audio_url(file_path), "text_hash": th}
+
+
+def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text: str, voice_name: str, file_path: str):
+    txt = normalize_text(text or "")
+    if not txt:
+        return
+    th = _text_hash(txt)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO generated_tts_audio
+        (entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name) DO UPDATE SET
+            file_path=excluded.file_path
+    """, (entry_type, int(entry_id), lang_code, txt, th, AZURE_TTS_PROVIDER, voice_name, file_path))
+    conn.commit()
+    conn.close()
+
+
+def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code: str, tts_url: str):
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if entry_type == "word":
+        c.execute("""
+            UPDATE generated_translations
+            SET tts_audio_url=?, updated_at=CURRENT_TIMESTAMP
+            WHERE word_id=? AND lang_code=?
+        """, (tts_url, int(entry_id), lang_code))
+    else:
+        c.execute("""
+            UPDATE generated_phrase_translations
+            SET tts_audio_url=?, updated_at=CURRENT_TIMESTAMP
+            WHERE phrase_id=? AND lang_code=?
+        """, (tts_url, int(entry_id), lang_code))
+    conn.commit()
+    conn.close()
+
+
+def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
+    if entry_type not in ("word", "phrase"):
+        return {}
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    table = "words" if entry_type == "word" else "phrases"
+    c.execute(
+        f"SELECT english FROM {table} WHERE id=? AND status='approved' LIMIT 1",
+        (int(entry_id),),
+    )
+    row = c.fetchone()
+    texts = {}
+    en = normalize_text((row or [""])[0] or "")
+    if en:
+        texts["en"] = en
+
+    if entry_type == "word":
+        c.execute(
+            """
+            SELECT lang_code, translated_text
+            FROM generated_translations
+            WHERE word_id=?
+              AND lang_code IN (?, ?, ?, ?)
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (int(entry_id), "am", "ar", "fr", "zh-CN"),
+        )
+    else:
+        c.execute(
+            """
+            SELECT lang_code, translated_text
+            FROM generated_phrase_translations
+            WHERE phrase_id=?
+              AND lang_code IN (?, ?, ?, ?)
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (int(entry_id), "am", "ar", "fr", "zh-CN"),
+        )
+    for lang, txt in c.fetchall():
+        norm = normalize_text(txt or "")
+        if _is_meaningful_generated_text(norm):
+            texts[lang] = norm
+    conn.close()
+    return texts
+
+
+def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: bool = False):
+    result = {"generated": 0, "cached": 0, "failed": 0, "skipped_missing_text": 0}
+    texts = _get_entry_texts_for_tts(entry_type, entry_id)
+    speech_key = _get_azure_speech_key()
+    speech_region = _get_azure_speech_region()
+    if not speech_key or not speech_region:
+        app.logger.warning("Azure Speech credentials missing; skipping TTS generation.")
+        return result
+
+    for lang in LEARN_TTS_LANGS:
+        text = normalize_text(texts.get(lang, "") or "")
+        if not text:
+            result["skipped_missing_text"] += 1
+            continue
+
+        voice_name = _azure_voice_for_lang(lang)
+        cached = None if force_regenerate else _resolve_generated_tts_row(entry_type, entry_id, lang, text, voice_name)
+        if cached:
+            result["cached"] += 1
+            if lang in EXTRA_GENERATED_LANGS:
+                _save_tts_url_to_translation_cache(entry_type, entry_id, lang, cached["url"])
+            continue
+
+        audio_bytes, error = azure_synthesize_mp3(
+            text=text,
+            speech_key=speech_key,
+            speech_region=speech_region,
+            voice_name=voice_name,
+            speech_lang=_speech_lang_code(lang),
+        )
+        if error or not audio_bytes:
+            result["failed"] += 1
+            app.logger.warning("TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s", entry_type, entry_id, lang, error)
+            continue
+
+        text_hash = _text_hash(text)
+        file_name = _generated_tts_file_name(entry_type, entry_id, lang, text_hash, voice_name)
+        abs_path = os.path.join(UPLOAD_FOLDER, file_name)
+        rel_path = f"uploads/{file_name}"
+        try:
+            with open(abs_path, "wb") as f:
+                f.write(audio_bytes)
+            _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, rel_path)
+            public_url = _public_audio_url(rel_path)
+            if lang in EXTRA_GENERATED_LANGS:
+                _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
+            result["generated"] += 1
+        except Exception as e:
+            result["failed"] += 1
+            app.logger.exception(f"Failed to persist TTS audio for {entry_type}:{entry_id}:{lang}: {repr(e)}")
+
+    return result
+
+
+def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerate: bool = False, limit: int = 0):
+    summary = {
+        "processed_items": 0,
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+    }
+    plans = []
+    if entry_type in ("all", "word"):
+        items = _fetch_approved_word_items(limit=limit)
+        if entry_id:
+            items = [(wid, en) for wid, en in items if int(wid) == int(entry_id)]
+        plans.extend([("word", wid) for wid, _en in items])
+    if entry_type in ("all", "phrase"):
+        items = _fetch_approved_phrase_items(limit=limit)
+        if entry_id:
+            items = [(pid, en) for pid, en in items if int(pid) == int(entry_id)]
+        plans.extend([("phrase", pid) for pid, _en in items])
+
+    for etype, eid in plans:
+        row = generate_tts_for_entry(etype, eid, force_regenerate=force_regenerate)
+        summary["processed_items"] += 1
+        for key in ("generated", "cached", "failed", "skipped_missing_text"):
+            summary[key] += int(row.get(key, 0) or 0)
+    return summary
 
 
 def _get_word_by_key(source_lang: str, key_text: str):
@@ -2147,10 +2656,186 @@ EN_OM_TEMPLATES = [
 
 # ------------------ LEARN ------------------
 
+def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict):
+    if not entry_ids:
+        return {}
+    placeholders = ",".join("?" for _ in entry_ids)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        f"""
+        SELECT entry_id, lang_code, text_hash, file_path
+        FROM generated_tts_audio
+        WHERE entry_type=?
+          AND entry_id IN ({placeholders})
+          AND lang_code IN (?, ?, ?, ?, ?)
+        ORDER BY id DESC
+        """,
+        (entry_type, *entry_ids, "en", "am", "ar", "fr", "zh-CN"),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    for eid, lang_code, text_hash, file_path in rows:
+        key = (int(eid or 0), lang_code)
+        expected_hash = text_by_key.get(key)
+        if not expected_hash or expected_hash != (text_hash or ""):
+            continue
+        if key in out:
+            continue
+        abs_path = _audio_abs_path(file_path or "")
+        if not abs_path or not os.path.isfile(abs_path):
+            continue
+        out[key] = _public_audio_url(file_path)
+    return out
+
+
+def _load_learn_rows(limit: int = 200):
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute(
+        """
+        SELECT id, english, oromo
+        FROM words
+        WHERE status='approved'
+          AND english IS NOT NULL AND TRIM(english) != ''
+          AND oromo IS NOT NULL AND TRIM(oromo) != ''
+        ORDER BY english ASC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    word_rows = c.fetchall()
+
+    word_ids = [int(w[0]) for w in word_rows if w and w[0]]
+    word_translations = {}
+    if word_ids:
+        id_marks = ",".join("?" for _ in word_ids)
+        c.execute(
+            f"""
+            SELECT word_id, lang_code, translated_text
+            FROM generated_translations
+            WHERE word_id IN ({id_marks})
+              AND lang_code IN (?, ?, ?, ?)
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (*word_ids, "am", "ar", "fr", "zh-CN"),
+        )
+        for wid, lang, txt in c.fetchall():
+            word_translations.setdefault(int(wid), {})[lang] = normalize_text(txt or "")
+
+    c.execute(
+        """
+        SELECT id, english, oromo
+        FROM phrases
+        WHERE status='approved'
+          AND english IS NOT NULL AND TRIM(english) != ''
+          AND oromo IS NOT NULL AND TRIM(oromo) != ''
+        ORDER BY english ASC
+        LIMIT ?
+        """,
+        (safe_limit,),
+    )
+    phrase_rows = c.fetchall()
+
+    phrase_ids = [int(p[0]) for p in phrase_rows if p and p[0]]
+    phrase_translations = {}
+    if phrase_ids:
+        id_marks = ",".join("?" for _ in phrase_ids)
+        c.execute(
+            f"""
+            SELECT phrase_id, lang_code, translated_text
+            FROM generated_phrase_translations
+            WHERE phrase_id IN ({id_marks})
+              AND lang_code IN (?, ?, ?, ?)
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (*phrase_ids, "am", "ar", "fr", "zh-CN"),
+        )
+        for pid, lang, txt in c.fetchall():
+            phrase_translations.setdefault(int(pid), {})[lang] = normalize_text(txt or "")
+    conn.close()
+
+    text_hash_lookup_words = {}
+    for wid, en, _om in word_rows:
+        wid_int = int(wid)
+        text_hash_lookup_words[(wid_int, "en")] = _text_hash(en or "")
+        tr = word_translations.get(wid_int, {})
+        for lang in ("am", "ar", "fr", "zh-CN"):
+            txt = normalize_text(tr.get(lang, "") or "")
+            if txt:
+                text_hash_lookup_words[(wid_int, lang)] = _text_hash(txt)
+
+    text_hash_lookup_phrases = {}
+    for pid, en, _om in phrase_rows:
+        pid_int = int(pid)
+        text_hash_lookup_phrases[(pid_int, "en")] = _text_hash(en or "")
+        tr = phrase_translations.get(pid_int, {})
+        for lang in ("am", "ar", "fr", "zh-CN"):
+            txt = normalize_text(tr.get(lang, "") or "")
+            if txt:
+                text_hash_lookup_phrases[(pid_int, lang)] = _text_hash(txt)
+
+    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words)
+    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases)
+
+    rows = []
+    for wid, en, om in word_rows:
+        wid_int = int(wid)
+        tr = word_translations.get(wid_int, {})
+        rows.append({
+            "entry_type": "word",
+            "entry_id": wid_int,
+            "english": normalize_text(en or ""),
+            "oromo": normalize_text(om or ""),
+            "am": normalize_text(tr.get("am", "") or ""),
+            "ar": normalize_text(tr.get("ar", "") or ""),
+            "fr": normalize_text(tr.get("fr", "") or ""),
+            "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
+            "audio": {
+                "en": word_tts.get((wid_int, "en"), ""),
+                "am": word_tts.get((wid_int, "am"), ""),
+                "ar": word_tts.get((wid_int, "ar"), ""),
+                "fr": word_tts.get((wid_int, "fr"), ""),
+                "zh-CN": word_tts.get((wid_int, "zh-CN"), ""),
+            },
+        })
+
+    for pid, en, om in phrase_rows:
+        pid_int = int(pid)
+        tr = phrase_translations.get(pid_int, {})
+        rows.append({
+            "entry_type": "phrase",
+            "entry_id": pid_int,
+            "english": normalize_text(en or ""),
+            "oromo": normalize_text(om or ""),
+            "am": normalize_text(tr.get("am", "") or ""),
+            "ar": normalize_text(tr.get("ar", "") or ""),
+            "fr": normalize_text(tr.get("fr", "") or ""),
+            "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
+            "audio": {
+                "en": phrase_tts.get((pid_int, "en"), ""),
+                "am": phrase_tts.get((pid_int, "am"), ""),
+                "ar": phrase_tts.get((pid_int, "ar"), ""),
+                "fr": phrase_tts.get((pid_int, "fr"), ""),
+                "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
+            },
+        })
+
+    rows.sort(key=lambda r: (r.get("english", "").casefold(), r.get("entry_type", ""), int(r.get("entry_id", 0))))
+    return rows
+
+
 @app.route("/learn", methods=["GET"])
 def learn():
     trending = get_trending(limit=15)
-    return render_template("learn.html", trending=trending)
+    learn_rows = _load_learn_rows(limit=250)
+    return render_template("learn.html", trending=trending, learn_rows=learn_rows)
 
 
 # ------------------ SUPPORT ------------------
@@ -5058,6 +5743,55 @@ def gadaa_ai_api():
             )
         }
     })
+
+
+@app.cli.command("backfill-translations")
+@click.option("--entry-type", type=click.Choice(["all", "word", "phrase"]), default="all", show_default=True)
+@click.option("--entry-id", type=int, default=0, show_default=True)
+@click.option("--overwrite-existing", is_flag=True, default=False, help="Overwrite existing generated translations.")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit approved records per entry type.")
+def cli_backfill_translations(entry_type, entry_id, overwrite_existing, limit):
+    """
+    Backfill generated translations for approved words/phrases.
+    Uses English as pivot and writes to DB cache tables.
+    """
+    summary = run_translation_backfill(
+        entry_type=entry_type,
+        entry_id=int(entry_id or 0),
+        overwrite_existing=bool(overwrite_existing),
+        limit=int(limit or 0),
+    )
+    click.echo("Translation backfill completed.")
+    click.echo(
+        f"words_saved={summary.get('words_saved', 0)} "
+        f"phrases_saved={summary.get('phrases_saved', 0)}"
+    )
+
+
+@app.cli.command("backfill-tts")
+@click.option("--entry-type", type=click.Choice(["all", "word", "phrase"]), default="all", show_default=True)
+@click.option("--entry-id", type=int, default=0, show_default=True)
+@click.option("--force-regenerate", is_flag=True, default=False, help="Regenerate audio even when cache exists.")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit approved records per entry type.")
+def cli_backfill_tts(entry_type, entry_id, force_regenerate, limit):
+    """
+    Backfill Azure-generated TTS audio for approved words/phrases.
+    Generates non-Oromo languages only: en, am, ar, fr, zh-CN.
+    """
+    summary = run_tts_backfill(
+        entry_type=entry_type,
+        entry_id=int(entry_id or 0),
+        force_regenerate=bool(force_regenerate),
+        limit=int(limit or 0),
+    )
+    click.echo("TTS backfill completed.")
+    click.echo(
+        f"processed_items={summary.get('processed_items', 0)} "
+        f"generated={summary.get('generated', 0)} "
+        f"cached={summary.get('cached', 0)} "
+        f"failed={summary.get('failed', 0)} "
+        f"skipped_missing_text={summary.get('skipped_missing_text', 0)}"
+    )
 
 @app.after_request
 def no_cache_html(resp):

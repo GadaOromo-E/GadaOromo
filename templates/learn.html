@@ -5,41 +5,37 @@
   <link rel="canonical" href="https://gadaadictionary.com{{ request.path }}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Learn | {{ APP_NAME }}</title>
-<script>
-  (function () {
-    var ua = navigator.userAgent || "";
-    if (/Android/i.test(ua)) {
-      document.documentElement.classList.add("is-android");
-    }
-  })();
-</script>
- <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+  <script>
+    (function () {
+      var ua = navigator.userAgent || "";
+      if (/Android/i.test(ua)) {
+        document.documentElement.classList.add("is-android");
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 
-
-  <!-- ✅ PWA -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
 
-  <!-- ✅ iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
 
   <link rel="icon" href="{{ url_for('static', filename='icons/icon-192.png') }}">
-<link rel="icon" href="/static/icons/favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
-<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 </head>
 <body>
 
-<!-- OPTIONAL: tiny splash overlay (native feel) -->
 <div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
   <div style="text-align:center;">
-    <div style="font-size:42px;">📘</div>
+    <div style="font-size:42px;">&#128214;</div>
     <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
-    <div class="muted" style="margin-top:6px;">Loading…</div>
+    <div class="muted" style="margin-top:6px;">Loading...</div>
   </div>
 </div>
 <script>
@@ -49,7 +45,6 @@
   });
 </script>
 
-<!-- PWA Update Bar -->
 <div id="pwaUpdateBar" class="card" style="display:none; position:sticky; top:0; z-index:999; margin:0; border-radius:0;">
   <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
     <div>
@@ -63,15 +58,13 @@
   </div>
 </div>
 
-<!-- iOS Install Help -->
 <div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
   <b>Install on iPhone</b>
   <div class="muted" style="margin-top:6px; line-height:1.5;">
-    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
+    Tap <b>Share</b> then <b>Add to Home Screen</b>.
   </div>
 </div>
 
-<!-- Toast -->
 <div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
   <span data-msg></span>
 </div>
@@ -81,111 +74,187 @@
 <header class="topbar">
   <div class="brand">
     <h1>{{ APP_NAME }}</h1>
-    <p class="tagline">Learn Afaan Oromo ↔ English</p>
+    <p class="tagline">Learn Afaan Oromo to English</p>
   </div>
 
   <div class="topbar-right">
     <div class="mini-copy">
-      <span class="copy-year">© 2026</span>
+      <span class="copy-year">&copy; 2026</span>
       <span class="copy-name">Gadaa</span>
     </div>
 
     <button id="installBtn" class="btn install-mini" type="button" style="display:none;">
-  ⬇️ Install App
-</button>
+      Install App
+    </button>
   </div>
 </header>
-<div class="app-shell">
 
+<div class="app-shell">
   <aside class="side-menu">
-    <a class="side-link" href="/">🏠 Home</a>
-    <a class="side-link" href="/dictionary">📖 Dictionary</a>
-    <a class="side-link" href="/translate">🌍 Translate</a>
-    <a class="side-link" href="/submit">➕ Submit Word</a>
-    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
-    <a class="side-link" href="/recorder">🎙 Add Voice</a>
-    <a class="side-link" href="/learn">📚 Learn</a>
-    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
-    <a class="side-link" href="/support">❤️ Donate</a>
-    <a class="side-link" href="/admin">🔒 Admin login</a>
+    <a class="side-link" href="/">Home</a>
+    <a class="side-link" href="/dictionary">Dictionary</a>
+    <a class="side-link" href="/translate">Translate</a>
+    <a class="side-link" href="/submit">Submit Word</a>
+    <a class="side-link" href="/submit_phrase">Submit Phrase</a>
+    <a class="side-link" href="/recorder">Add Voice</a>
+    <a class="side-link" href="/learn">Learn</a>
+    <a class="side-link" href="/gadaa-ai">Gadaa AI</a>
+    <a class="side-link" href="/support">Donate</a>
+    <a class="side-link" href="/admin">Admin login</a>
   </aside>
 
-<main class="content" id="main">
-  <section class="card">
-    <h2>Practice</h2>
-    <div class="subtle">
-      Choose your learning direction, then practice with quick prompts.
-    </div>
-
-    <div class="row" style="margin-top:12px;">
-      <select id="learnDirection">
-        <option value="om_en">Oromo → English</option>
-        <option value="en_om">English → Oromo</option>
-      </select>
-      <button type="button" onclick="openTranslator()">Start Practice</button>
-    </div>
-
-    <div class="divider"></div>
-
-    <h2>Quick Practice Cards</h2>
-    <div class="subtle">
-      Tap a card to open it in the Translator.
-    </div>
-
-    {% if words and words|length > 0 %}
-      <div class="chips" style="margin-top:12px;">
-        {% for w in words[:40] %}
-          <span class="chip" onclick="practiceWord('{{ w[1]|e }}', '{{ w[2]|e }}')">
-            {{ w[1] }} <span class="muted">→</span> {{ w[2] }}
-          </span>
-        {% endfor %}
-      </div>
-
-      <div class="small-actions" style="margin-top:12px;">
-        <button type="button" class="btn" onclick="shuffleTip()">🔀 More Random</button>
-        <a class="btn" href="/translate">Open Translator</a>
-      </div>
-
-      <div id="tip" class="muted" style="margin-top:10px;"></div>
-    {% else %}
-      <p class="muted" style="margin-top:10px;">
-        No approved words loaded here yet. (Optional) Update /learn route to pass words to this page.
-      </p>
-      <div class="small-actions" style="margin-top:10px;">
-        <a class="btn" href="/translate">Open Translator</a>
-        <a class="btn" href="/submit">Submit Word</a>
-      </div>
-    {% endif %}
-  </section>
-
-  <section class="card">
-    <h2>Learning plan (simple)</h2>
-    <div class="subtle">No accounts needed. Just practice every day.</div>
-
-    <div style="margin-top:10px; line-height:1.5;">
-      <p><b>Day 1–3:</b> Learn 10 common words/day</p>
-      <p><b>Day 4–7:</b> Learn 5 phrases/day + listen to pronunciation</p>
-      <p><b>Week 2:</b> Practice short sentences (use Translator)</p>
-      <p><b>Oromo audio:</b> If you can, record pronunciation to help the community.</p>
-    </div>
-  </section>
-
-  {% if trending %}
+  <main class="content" id="main">
     <section class="card">
-      <h2>🔥 Trending searches</h2>
-      <div class="chips" style="margin-top:10px;">
-        {% for row in trending %}
-          <span class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</span>
-        {% endfor %}
+      <h2>Practice</h2>
+      <div class="subtle">
+        Choose your learning direction, then practice with quick prompts.
       </div>
-      <div class="subtle" style="margin-top:8px;">Tap a word to practice it in Translator.</div>
+
+      <div class="row" style="margin-top:12px;">
+        <select id="learnDirection">
+          <option value="om_en">Oromo to English</option>
+          <option value="en_om">English to Oromo</option>
+        </select>
+        <button type="button" onclick="openTranslator()">Start Practice</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <h2>Quick Practice Cards</h2>
+      <div class="subtle">
+        Tap a card to open it in the Translator.
+      </div>
+
+      {% if learn_rows and learn_rows|length > 0 %}
+        <div class="chips" style="margin-top:12px;">
+          {% for row in learn_rows[:40] %}
+            <span class="chip" onclick="practiceWord('{{ row.english|e }}', '{{ row.oromo|e }}')">
+              {{ row.english }} <span class="muted">-></span> {{ row.oromo }}
+            </span>
+          {% endfor %}
+        </div>
+
+        <div class="small-actions" style="margin-top:12px;">
+          <button type="button" class="btn" onclick="shuffleTip()">More Random</button>
+          <a class="btn" href="/translate">Open Translator</a>
+        </div>
+
+        <div id="tip" class="muted" style="margin-top:10px;"></div>
+      {% else %}
+        <p class="muted" style="margin-top:10px;">
+          No approved entries loaded yet.
+        </p>
+        <div class="small-actions" style="margin-top:10px;">
+          <a class="btn" href="/translate">Open Translator</a>
+          <a class="btn" href="/submit">Submit Word</a>
+        </div>
+      {% endif %}
     </section>
-  {% endif %}
 
-  <footer class="footer">
-    <p>© 2026 Gadaa — Open community dictionary</p>
-  </footer>
+    <section class="card">
+      <h2>Multilingual Study Table</h2>
+      <div class="subtle">Browse available words/phrases and listen to generated audio.</div>
 
+      {% if learn_rows and learn_rows|length > 0 %}
+        <div style="overflow-x:auto; margin-top:12px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Type</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Oromo</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">English</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Amharic</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Arabic</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">French</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Chinese</th>
+                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Audio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in learn_rows %}
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row.entry_type }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row.oromo }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row.english }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row.am or "-" }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);" dir="rtl">{{ row.ar or "-" }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row.fr or "-" }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">{{ row['zh-CN'] or "-" }}</td>
+                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08); min-width:250px;">
+                    <div style="display:flex; flex-direction:column; gap:6px;">
+                      {% if row.audio.en %}
+                        <label class="subtle" for="audio-en-{{ row.entry_type }}-{{ row.entry_id }}">English audio</label>
+                        <audio id="audio-en-{{ row.entry_type }}-{{ row.entry_id }}" controls style="width:100%;" aria-label="English audio for {{ row.english }}">
+                          <source src="{{ row.audio.en }}">
+                        </audio>
+                      {% endif %}
+                      {% if row.audio.am %}
+                        <label class="subtle" for="audio-am-{{ row.entry_type }}-{{ row.entry_id }}">Amharic audio</label>
+                        <audio id="audio-am-{{ row.entry_type }}-{{ row.entry_id }}" controls style="width:100%;" aria-label="Amharic audio for {{ row.english }}">
+                          <source src="{{ row.audio.am }}">
+                        </audio>
+                      {% endif %}
+                      {% if row.audio.ar %}
+                        <label class="subtle" for="audio-ar-{{ row.entry_type }}-{{ row.entry_id }}">Arabic audio</label>
+                        <audio id="audio-ar-{{ row.entry_type }}-{{ row.entry_id }}" controls style="width:100%;" aria-label="Arabic audio for {{ row.english }}">
+                          <source src="{{ row.audio.ar }}">
+                        </audio>
+                      {% endif %}
+                      {% if row.audio.fr %}
+                        <label class="subtle" for="audio-fr-{{ row.entry_type }}-{{ row.entry_id }}">French audio</label>
+                        <audio id="audio-fr-{{ row.entry_type }}-{{ row.entry_id }}" controls style="width:100%;" aria-label="French audio for {{ row.english }}">
+                          <source src="{{ row.audio.fr }}">
+                        </audio>
+                      {% endif %}
+                      {% if row.audio['zh-CN'] %}
+                        <label class="subtle" for="audio-zh-{{ row.entry_type }}-{{ row.entry_id }}">Chinese audio</label>
+                        <audio id="audio-zh-{{ row.entry_type }}-{{ row.entry_id }}" controls style="width:100%;" aria-label="Chinese audio for {{ row.english }}">
+                          <source src="{{ row.audio['zh-CN'] }}">
+                        </audio>
+                      {% endif %}
+                      {% if not row.audio.en and not row.audio.am and not row.audio.ar and not row.audio.fr and not row.audio['zh-CN'] %}
+                        <span class="muted">No generated audio yet.</span>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="muted" style="margin-top:10px;">No approved words/phrases found yet.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Learning plan (simple)</h2>
+      <div class="subtle">No accounts needed. Just practice every day.</div>
+
+      <div style="margin-top:10px; line-height:1.5;">
+        <p><b>Day 1-3:</b> Learn 10 common words/day</p>
+        <p><b>Day 4-7:</b> Learn 5 phrases/day plus pronunciation listening</p>
+        <p><b>Week 2:</b> Practice short sentences (use Translator)</p>
+        <p><b>Oromo audio:</b> If you can, record pronunciation to help the community.</p>
+      </div>
+    </section>
+
+    {% if trending %}
+      <section class="card">
+        <h2>Trending searches</h2>
+        <div class="chips" style="margin-top:10px;">
+          {% for row in trending %}
+            <span class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</span>
+          {% endfor %}
+        </div>
+        <div class="subtle" style="margin-top:8px;">Tap a word to practice it in Translator.</div>
+      </section>
+    {% endif %}
+
+    <footer class="footer">
+      <p>&copy; 2026 Gadaa - Open community dictionary</p>
+    </footer>
+  </main>
 </div>
 
 <script>
@@ -210,11 +279,7 @@ function shuffleTip(){
 }
 </script>
 
-<!-- ✅ PWA UI: install button + iOS help + update prompt + SW registration -->
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
 
 </body>
 </html>
-
-
-
