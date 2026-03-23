@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- LIGHTHOUSE_DICTIONARY_HEAD_OK -->
+  <!-- DICTIONARY_TEMPLATE_ACTIVE -->
+  <meta charset="UTF-8" />
+  <meta name="description" content="Gadaa Dictionary - Oromo and multilingual lookup using English pivot.">
+  <link rel="canonical" href="https://gadaadictionary.com/dictionary">
+  <meta name="robots" content="index,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gadaa Dictionary | Gada Dictionary</title>
+  <link rel="stylesheet" href="/static/style.css?v=20260218-2">
+  <style>
+    .translation-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    .translation-table th,
+    .translation-table td {
+      border: 1px solid #ddd;
+      padding: 10px;
+      text-align: center;
+    }
+    .translation-table th {
+      background: #f5f5f5;
+    }
+    .translation-table td:first-child {
+      font-weight: 700;
+      text-align: left;
+      white-space: nowrap;
+    }
+    .multi-values {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.45;
+      color: #4a4a4a;
+      display: flex;
+      gap: 8px 12px;
+      flex-wrap: wrap;
+    }
+    .multi-values b {
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+<!-- LIGHTHOUSE_DICTIONARY_BODY_OK -->
+<div class="container">
+<header class="topbar">
+  <div class="brand">
+    <h1>Gadaa Dictionary</h1>
+    <p class="tagline">search words</p>
+  </div>
+</header>
+
+<div class="app-shell">
+      <aside class="side-menu">
+    <a class="side-link" href="/">🏠 Home</a>
+    <a class="side-link" href="/dictionary">📖 Dictionary</a>
+    <a class="side-link" href="/translate">🌍 Translate</a>
+    <a class="side-link" href="/submit">➕ Submit Word</a>
+    <a class="side-link" href="/submit_phrase">➕ Submit Phrase</a>
+    <a class="side-link" href="/recorder">🎙 Add Voice</a>
+    <a class="side-link" href="/learn">📚 Learn</a>
+    <a class="side-link" href="/gadaa-ai">🤖 Gadaa AI</a>
+    <a class="side-link" href="/support">❤️ Donate</a>
+    <a class="side-link" href="/admin">🔒 Admin login</a>
+  </aside>
+
+
+  <main class="content" id="main">
+    <div class="card">
+      <h2>Dictionary</h2>
+      <div class="subtle">Search words using Oromo, English, Amharic, Arabic, French, or Chinese.</div>
+
+      <form method="GET" action="/dictionary" id="dictionarySearchForm" style="margin-top:12px;">
+        <label for="dictionaryQuery" class="sr-only">Search word</label>
+        <label for="sourceLangSelect" class="sr-only">Source language</label>
+        <label for="targetLangSelect" class="sr-only">Target language</label>
+        <div class="row" style="align-items:stretch;">
+          <input type="text" name="q" id="dictionaryQuery" value="even" placeholder="Search word..." autocomplete="off" autofocus />
+          <select name="source_lang" id="sourceLangSelect">
+            
+              <option value="om" data-speech-lang="om-ET" >From: Oromo</option>
+            
+              <option value="en" data-speech-lang="en-US" selected>From: English</option>
+            
+              <option value="am" data-speech-lang="am-ET" >From: Amharic</option>
+            
+              <option value="ar" data-speech-lang="ar-SA" >From: Arabic</option>
+            
+              <option value="fr" data-speech-lang="fr-FR" >From: French</option>
+            
+              <option value="zh-CN" data-speech-lang="zh-CN" >From: Chinese</option>
+            
+          </select>
+          <select name="target_lang" id="targetLangSelect">
+            
+              <option value="om" >To: Oromo</option>
+            
+              <option value="en" >To: English</option>
+            
+              <option value="am" selected>To: Amharic</option>
+            
+              <option value="ar" >To: Arabic</option>
+            
+              <option value="fr" >To: French</option>
+            
+              <option value="zh-CN" >To: Chinese</option>
+            
+          </select>
+          <button type="button" onclick="startVoiceSearch()" aria-label="Speak search query">Speak</button>
+          <button type="submit">Search</button>
+        </div>
+      </form>
+
+      
+    </div>
+
+    
+      <div class="result-box" style="margin-top:14px;">
+        <div><b>English:</b> <span id="srcText">even</span></div>
+
+        <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <div><b>Amharic:</b> <span id="dstText" >እንኳን</span><span class="chip" style="margin-left:8px;">Auto translation</span></div>
+
+          
+            
+              <button type="button" class="btn" style="padding:8px 10px;" data-record-btn data-entry-type="word" data-entry-id="3582" data-lang="oromo" title="Record Oromo pronunciation">Record Oromo</button>
+              <button type="button" class="btn" style="padding:8px 10px; display:none;" data-stop-btn data-entry-type="word" data-entry-id="3582" data-lang="oromo">Stop</button>
+              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
+              <div style="margin-top:8px;">
+                <button type="button" class="btn primary" data-submit-btn data-entry-type="word" data-entry-id="3582" data-lang="oromo" style="display:none;">Submit</button>
+                <button type="button" class="btn" data-rerecord-btn data-entry-type="word" data-entry-id="3582" data-lang="oromo" style="display:none;">Re-record</button>
+              </div>
+              <span class="muted" data-status-for="3582" style="font-size:14px;"></span>
+            
+          
+        </div>
+
+        
+          <div style="margin-top:8px;"><b>English base:</b> even</div>
+        
+        
+          <div style="margin-top:4px;"><b>Oromo base:</b> -iyyuu</div>
+        
+
+        
+          <div class="small-actions" style="margin-top:8px;">
+            <a class="btn" href="/word/even">Open Word Page</a>
+          </div>
+        
+
+        
+          <div style="margin-top:12px;">
+            <div class="subtle"><b>Available meanings</b></div>
+            <table class="translation-table">
+              <thead>
+                <tr>
+                  <th>Language</th>
+                  <th>Meaning</th>
+                </tr>
+              </thead>
+              <tbody>
+                
+                  
+                  
+                  
+                    <tr>
+                      <td>Amharic</td>
+                      <td >እንኳን</td>
+                    </tr>
+                  
+                
+                  
+                  
+                  
+                    <tr>
+                      <td>Arabic</td>
+                      <td dir="rtl" style="text-align:right;">حتى</td>
+                    </tr>
+                  
+                
+                  
+                  
+                  
+                    <tr>
+                      <td>Chinese</td>
+                      <td >甚至</td>
+                    </tr>
+                  
+                
+                  
+                  
+                  
+                    <tr>
+                      <td>French</td>
+                      <td >même</td>
+                    </tr>
+                  
+                
+              </tbody>
+            </table>
+          </div>
+        
+
+        
+
+        <div class="small-actions" style="margin-top:12px;">
+          <button type="button" class="btn" onclick="speakSource()">Speak Source</button>
+          <button type="button" class="btn" onclick="speakTarget()">Speak Target</button>
+        </div>
+      </div>
+    
+
+    
+
+    
+
+    <footer class="footer"><p>Copyright 2026 Gadaa</p></footer>
+  </main>
+</div>
+</div>
+
+<script src="/static/speak.js" defer></script>
+<script src="/static/pwa-ui.js" defer></script>
+<script src="/static/audio.js?v=20260323-1" defer></script>
+<script>
+function useSuggestion(text){ const inp=document.getElementById("dictionaryQuery"); const form=document.getElementById("dictionarySearchForm"); if(inp) inp.value=text; if(form) form.submit(); }
+function speakTextCompat(text, langCode){ if(!text || !('speechSynthesis' in window)) return; const u=new SpeechSynthesisUtterance(text); u.lang=langCode||'en-US'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
+function speakSource(){ const el=document.getElementById('srcText'); speakTextCompat(el?el.innerText:'', 'en-US'); }
+function speakTarget(){ const el=document.getElementById('dstText'); speakTextCompat(el?el.innerText:'', 'am-ET'); }
+</script>
+</body>
+</html>
