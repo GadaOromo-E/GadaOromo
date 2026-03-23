@@ -952,11 +952,18 @@ def _public_audio_url(file_path: str) -> str:
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
         return ""
+    name = os.path.basename(fp)
+
+    # Generated Azure TTS assets are served from static/uploads.
+    # Keep manual/community audio on /uploads to preserve existing behavior.
+    if name.startswith("tts_"):
+        return "/static/uploads/" + name
+
     if fp.startswith("uploads/"):
         return "/" + fp
     if fp.startswith("/uploads/"):
         return fp
-    return "/uploads/" + os.path.basename(fp)
+    return "/uploads/" + name
 
 
 def _audio_abs_path(file_path: str) -> str:
