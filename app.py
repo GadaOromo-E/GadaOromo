@@ -305,6 +305,11 @@ def service_worker():
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
+@app.route("/sw.js")
+def service_worker_legacy():
+    # Legacy compatibility for older clients that still request /sw.js.
+    return service_worker()
+
 
 @app.route("/offline")
 def offline():
@@ -317,6 +322,13 @@ def favicon():
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
     )
+
+@app.errorhandler(404)
+def not_found_page(_err):
+    # Keep JSON/API callers from unexpectedly receiving HTML.
+    if request.path.startswith("/api/") or request.path.startswith("/recorder/api/"):
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return render_template("404.html"), 404
 
 # ------------------ GOOGLE VERIFICATION ------------------
 
