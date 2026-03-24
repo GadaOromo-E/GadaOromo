@@ -3883,6 +3883,47 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     return out
 
 
+def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
+    """
+    DB-first bulk audio lookup for Learn page.
+    Returns latest usable generated_tts_audio URL per (entry_id, lang_code),
+    without requiring text-hash matches or search side-effects.
+    """
+    if not entry_ids:
+        return {}
+    lang_list = tuple(langs or ("en", "am", "ar", "fr", "zh-CN", "om"))
+    if not lang_list:
+        return {}
+
+    placeholders = ",".join("?" for _ in entry_ids)
+    lang_placeholders = ",".join("?" for _ in lang_list)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        f"""
+        SELECT entry_id, lang_code, file_path
+        FROM generated_tts_audio
+        WHERE entry_type=?
+          AND entry_id IN ({placeholders})
+          AND lang_code IN ({lang_placeholders})
+        ORDER BY id DESC
+        """,
+        (entry_type, *entry_ids, *lang_list),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    for entry_id, lang_code, file_path in rows:
+        key = (int(entry_id or 0), normalize_text(lang_code or ""))
+        if key in out:
+            continue
+        if not _has_usable_audio_ref(file_path or ""):
+            continue
+        out[key] = _public_audio_url(file_path or "")
+    return out
+
+
 def get_saved_extra_translations(word_id: int):
     """
     DB-only extra-language lookup for render routes.
@@ -4045,43 +4086,10 @@ def _load_learn_rows(limit: int = 200):
             phrase_translations.setdefault(int(pid), {})[lang] = normalize_text(txt or "")
     conn.close()
 
-    text_hash_lookup_words = {}
-    for wid, en, _om in word_rows:
-        wid_int = int(wid)
-        text_hash_lookup_words[(wid_int, "en")] = _text_hash(en or "")
-        if normalize_text(_om or ""):
-            text_hash_lookup_words[(wid_int, "om")] = _text_hash(_om or "")
-        tr = word_translations.get(wid_int, {})
-        for lang in ("am", "ar", "fr", "zh-CN"):
-            txt = normalize_text(tr.get(lang, "") or "")
-            if txt:
-                text_hash_lookup_words[(wid_int, lang)] = _text_hash(txt)
-
-    text_hash_lookup_phrases = {}
-    for pid, en, _om in phrase_rows:
-        pid_int = int(pid)
-        text_hash_lookup_phrases[(pid_int, "en")] = _text_hash(en or "")
-        if normalize_text(_om or ""):
-            text_hash_lookup_phrases[(pid_int, "om")] = _text_hash(_om or "")
-        tr = phrase_translations.get(pid_int, {})
-        for lang in ("am", "ar", "fr", "zh-CN"):
-            txt = normalize_text(tr.get(lang, "") or "")
-            if txt:
-                text_hash_lookup_phrases[(pid_int, lang)] = _text_hash(txt)
-
-    word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
-    phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
-    word_tts_cached = _bulk_fetch_translation_cache_tts_urls("word", word_ids, langs=("am", "ar", "fr", "zh-CN"))
-    phrase_tts_cached = _bulk_fetch_translation_cache_tts_urls("phrase", phrase_ids, langs=("am", "ar", "fr", "zh-CN"))
+    word_tts = _bulk_fetch_saved_tts_by_entry_lang("word", word_ids, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
+    phrase_tts = _bulk_fetch_saved_tts_by_entry_lang("phrase", phrase_ids, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
     word_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("word", word_ids)
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
-
-    for key, url in word_tts_cached.items():
-        if key not in word_tts:
-            word_tts[key] = url
-    for key, url in phrase_tts_cached.items():
-        if key not in phrase_tts:
-            phrase_tts[key] = url
 
     rows = []
     for wid, en, om in word_rows:
@@ -4127,6 +4135,28 @@ def _load_learn_rows(limit: int = 200):
                 "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
             },
         })
+
+    total_rows_loaded = int(len(rows))
+    total_audio_mappings = int(len(word_tts) + len(phrase_tts) + len(word_oromo_audio) + len(phrase_oromo_audio))
+    rows_with_any_audio = 0
+    attached_audio_urls = 0
+    for r in rows:
+        audio = (r or {}).get("audio") or {}
+        row_has_audio = False
+        for u in audio.values():
+            if normalize_text(u or ""):
+                attached_audio_urls += 1
+                row_has_audio = True
+        if row_has_audio:
+            rows_with_any_audio += 1
+
+    app.logger.info(
+        "/learn loader rows_loaded=%s audio_mappings_found=%s rows_with_audio=%s audio_urls_attached=%s",
+        total_rows_loaded,
+        total_audio_mappings,
+        rows_with_any_audio,
+        attached_audio_urls,
+    )
 
     rows.sort(key=lambda r: (r.get("english", "").casefold(), r.get("entry_type", ""), int(r.get("entry_id", 0))))
     return rows
