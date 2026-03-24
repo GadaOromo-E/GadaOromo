@@ -711,6 +711,9 @@ AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") o
 AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
 AZURE_BLOB_PREFIX = (os.environ.get("AZURE_BLOB_PREFIX") or "tts").strip().strip("/")
 REQUIRE_BLOB_FOR_GENERATED_TTS = (os.environ.get("REQUIRE_BLOB_FOR_GENERATED_TTS", "1" if IS_PROD else "0").strip() == "1")
+GENERATED_TTS_FILENAME_RE = re.compile(
+    r"^tts_(word|phrase)_(\d+)_([A-Za-z0-9-]+)_([0-9a-f]{12})_(.+)\.mp3$"
+)
 
 _blob_client_cache = None
 _blob_client_error_logged = False
@@ -2790,6 +2793,191 @@ def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100, dry_
     return summary
 
 
+def run_backfill_existing_audio_linkage(limit: int = 0, dry_run: bool = False):
+    """
+    DB/file linkage backfill only.
+    - Registers existing tts_*.mp3 files into generated_tts_audio.
+    - Syncs generated translation caches with usable persisted audio URLs.
+    - Never calls Azure Speech, never regenerates audio bytes.
+    """
+    summary = {
+        "files_scanned": 0,
+        "rows_linked": 0,
+        "rows_already_present": 0,
+        "rows_skipped_missing_text": 0,
+        "rows_skipped_hash_mismatch": 0,
+        "rows_skipped_missing_file": 0,
+        "cache_rows_scanned": 0,
+        "cache_rows_linked": 0,
+        "dry_run": bool(dry_run),
+    }
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("SELECT id, english, oromo FROM words WHERE status='approved'")
+    words = {int(wid): {"en": normalize_text(en or ""), "om": normalize_text(om or "")} for wid, en, om in c.fetchall()}
+    c.execute("SELECT id, english, oromo FROM phrases WHERE status='approved'")
+    phrases = {int(pid): {"en": normalize_text(en or ""), "om": normalize_text(om or "")} for pid, en, om in c.fetchall()}
+
+    word_tr = {}
+    c.execute(
+        """
+        SELECT word_id, lang_code, translated_text
+        FROM generated_translations
+        WHERE lang_code IN ('am', 'ar', 'fr', 'zh-CN')
+          AND translated_text IS NOT NULL
+          AND TRIM(translated_text) != ''
+        """
+    )
+    for wid, lang, txt in c.fetchall():
+        wid_int = int(wid or 0)
+        norm = normalize_text(txt or "")
+        if wid_int and norm:
+            word_tr.setdefault(wid_int, {})[lang] = norm
+
+    phrase_tr = {}
+    c.execute(
+        """
+        SELECT phrase_id, lang_code, translated_text
+        FROM generated_phrase_translations
+        WHERE lang_code IN ('am', 'ar', 'fr', 'zh-CN')
+          AND translated_text IS NOT NULL
+          AND TRIM(translated_text) != ''
+        """
+    )
+    for pid, lang, txt in c.fetchall():
+        pid_int = int(pid or 0)
+        norm = normalize_text(txt or "")
+        if pid_int and norm:
+            phrase_tr.setdefault(pid_int, {})[lang] = norm
+
+    c.execute(
+        """
+        SELECT entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name
+        FROM generated_tts_audio
+        """
+    )
+    existing_keys = {
+        (
+            entry_type,
+            int(entry_id or 0),
+            lang_code,
+            text_hash,
+            voice_provider,
+            voice_name,
+        )
+        for entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name in c.fetchall()
+    }
+    conn.close()
+
+    candidate_names = set()
+    for folder in (UPLOAD_FOLDER, STATIC_UPLOADS_FOLDER):
+        if not os.path.isdir(folder):
+            continue
+        try:
+            for name in os.listdir(folder):
+                if name.startswith("tts_") and name.endswith(".mp3"):
+                    candidate_names.add(name)
+        except Exception:
+            app.logger.exception("audio linkage backfill failed listing folder: %s", folder)
+
+    names = sorted(candidate_names)
+    if limit and int(limit) > 0:
+        names = names[: int(limit)]
+
+    for name in names:
+        summary["files_scanned"] += 1
+        m = GENERATED_TTS_FILENAME_RE.match(name)
+        if not m:
+            continue
+        entry_type, entry_id_raw, lang_code, hash12, voice_name = m.groups()
+        entry_id = int(entry_id_raw or 0)
+        base_map = words if entry_type == "word" else phrases
+        tr_map = word_tr if entry_type == "word" else phrase_tr
+        text_value = ""
+        if lang_code in ("en", "om"):
+            text_value = normalize_text((base_map.get(entry_id, {}) or {}).get(lang_code, "") or "")
+        elif lang_code in EXTRA_GENERATED_LANGS:
+            text_value = normalize_text((tr_map.get(entry_id, {}) or {}).get(lang_code, "") or "")
+        if not text_value:
+            summary["rows_skipped_missing_text"] += 1
+            continue
+
+        full_hash = _text_hash(text_value)
+        if not full_hash.startswith(hash12):
+            summary["rows_skipped_hash_mismatch"] += 1
+            continue
+
+        uploads_abs = os.path.join(UPLOAD_FOLDER, name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        if os.path.isfile(uploads_abs):
+            file_ref = f"uploads/{name}"
+        elif os.path.isfile(static_abs):
+            file_ref = f"uploads/{name}"
+        else:
+            summary["rows_skipped_missing_file"] += 1
+            continue
+
+        key = (entry_type, int(entry_id), lang_code, full_hash, AZURE_TTS_PROVIDER, voice_name)
+        if key in existing_keys:
+            summary["rows_already_present"] += 1
+            continue
+
+        if not dry_run:
+            _save_generated_tts_row(entry_type, int(entry_id), lang_code, text_value, voice_name, file_ref)
+            if lang_code in EXTRA_GENERATED_LANGS:
+                _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, _public_audio_url(file_ref))
+        existing_keys.add(key)
+        summary["rows_linked"] += 1
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT word_id, lang_code, translated_text, tts_audio_url
+        FROM generated_translations
+        WHERE lang_code IN ('am', 'ar', 'fr', 'zh-CN')
+          AND translated_text IS NOT NULL
+          AND TRIM(translated_text) != ''
+          AND tts_audio_url IS NOT NULL
+          AND TRIM(tts_audio_url) != ''
+        """
+    )
+    cache_rows_word = [("word", int(wid or 0), lang, normalize_text(txt or ""), normalize_text(url or "")) for wid, lang, txt, url in c.fetchall()]
+    c.execute(
+        """
+        SELECT phrase_id, lang_code, translated_text, tts_audio_url
+        FROM generated_phrase_translations
+        WHERE lang_code IN ('am', 'ar', 'fr', 'zh-CN')
+          AND translated_text IS NOT NULL
+          AND TRIM(translated_text) != ''
+          AND tts_audio_url IS NOT NULL
+          AND TRIM(tts_audio_url) != ''
+        """
+    )
+    cache_rows_phrase = [("phrase", int(pid or 0), lang, normalize_text(txt or ""), normalize_text(url or "")) for pid, lang, txt, url in c.fetchall()]
+    conn.close()
+
+    for entry_type, entry_id, lang_code, translated_text, tts_url in (cache_rows_word + cache_rows_phrase):
+        summary["cache_rows_scanned"] += 1
+        if (not entry_id) or (not translated_text):
+            continue
+        normalized_url = _normalize_cached_tts_url(tts_url)
+        if not normalized_url:
+            continue
+        if not _has_usable_audio_ref(normalized_url):
+            continue
+        storage_ref = normalized_url if _is_remote_audio_ref(normalized_url) else f"uploads/{os.path.basename(normalized_url)}"
+        voice_name = _azure_voice_for_lang(lang_code) or "unknown"
+        if not dry_run:
+            _save_generated_tts_row(entry_type, int(entry_id), lang_code, translated_text, voice_name, storage_ref)
+            _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, _public_audio_url(storage_ref))
+        summary["cache_rows_linked"] += 1
+
+    return summary
+
+
 def ensure_missing_tts_for_words(
     word_items,
     force_regenerate: bool = False,
@@ -3525,6 +3713,58 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     return out
 
 
+def _bulk_fetch_translation_cache_tts_urls(entry_type: str, entry_ids, langs=None):
+    if entry_type not in ("word", "phrase") or not entry_ids:
+        return {}
+    lang_list = tuple(langs or EXTRA_GENERATED_LANGS)
+    if not lang_list:
+        return {}
+
+    placeholders = ",".join("?" for _ in entry_ids)
+    lang_placeholders = ",".join("?" for _ in lang_list)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    if entry_type == "word":
+        c.execute(
+            f"""
+            SELECT word_id, lang_code, tts_audio_url
+            FROM generated_translations
+            WHERE word_id IN ({placeholders})
+              AND lang_code IN ({lang_placeholders})
+              AND tts_audio_url IS NOT NULL
+              AND TRIM(tts_audio_url) != ''
+            """,
+            (*entry_ids, *lang_list),
+        )
+    else:
+        c.execute(
+            f"""
+            SELECT phrase_id, lang_code, tts_audio_url
+            FROM generated_phrase_translations
+            WHERE phrase_id IN ({placeholders})
+              AND lang_code IN ({lang_placeholders})
+              AND tts_audio_url IS NOT NULL
+              AND TRIM(tts_audio_url) != ''
+            """,
+            (*entry_ids, *lang_list),
+        )
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    for entry_id, lang_code, tts_audio_url in rows:
+        key = (int(entry_id or 0), lang_code)
+        if key in out:
+            continue
+        normalized = _normalize_cached_tts_url(tts_audio_url or "")
+        if not normalized:
+            continue
+        if not _has_usable_audio_ref(normalized):
+            continue
+        out[key] = _public_audio_url(normalized)
+    return out
+
+
 def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
     if not entry_ids:
         return {}
@@ -3653,8 +3893,17 @@ def _load_learn_rows(limit: int = 200):
 
     word_tts = _bulk_fetch_generated_tts_urls("word", word_ids, text_hash_lookup_words, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
     phrase_tts = _bulk_fetch_generated_tts_urls("phrase", phrase_ids, text_hash_lookup_phrases, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
+    word_tts_cached = _bulk_fetch_translation_cache_tts_urls("word", word_ids, langs=("am", "ar", "fr", "zh-CN"))
+    phrase_tts_cached = _bulk_fetch_translation_cache_tts_urls("phrase", phrase_ids, langs=("am", "ar", "fr", "zh-CN"))
     word_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("word", word_ids)
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
+
+    for key, url in word_tts_cached.items():
+        if key not in word_tts:
+            word_tts[key] = url
+    for key, url in phrase_tts_cached.items():
+        if key not in phrase_tts:
+            phrase_tts[key] = url
 
     rows = []
     for wid, en, om in word_rows:
@@ -5864,6 +6113,34 @@ def _count_missing_generated_langs(conn, word_id: int) -> int:
         return len(EXTRA_GENERATED_LANGS)
 
 
+def _count_missing_generated_phrase_langs(conn, phrase_id: int) -> int:
+    if not phrase_id:
+        return len(EXTRA_GENERATED_LANGS)
+    try:
+        c = conn.cursor()
+        placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+        c.execute(
+            f"""
+            SELECT lang_code, translated_text
+            FROM generated_phrase_translations
+            WHERE phrase_id=?
+              AND lang_code IN ({placeholders})
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (phrase_id, *EXTRA_GENERATED_LANGS),
+        )
+        have_langs = set()
+        for lang_code, translated_text in c.fetchall():
+            if _is_meaningful_generated_text(translated_text):
+                have_langs.add(lang_code)
+        have_count = len(have_langs)
+        missing = len(EXTRA_GENERATED_LANGS) - have_count
+        return missing if missing > 0 else 0
+    except Exception:
+        return len(EXTRA_GENERATED_LANGS)
+
+
 def _merge_generated_stats(acc: dict, stats: dict):
     for lang in EXTRA_GENERATED_LANGS:
         src = stats.get(lang, {}) if isinstance(stats, dict) else {}
@@ -6017,6 +6294,137 @@ def admin_repair_generated():
         app.logger.exception(f"admin_repair_generated render failed: {repr(e)}")
         return (
             "<h3>Repair Missing Languages is temporarily unavailable.</h3>"
+            "<p>Please return to dashboard and try again.</p>"
+        ), 200
+
+
+@app.route("/admin/repair-generated-phrases", methods=["GET", "POST"])
+def admin_repair_generated_phrases():
+    if not require_admin():
+        return redirect("/admin")
+
+    default_max_phrases = 5000
+    max_phrases = default_max_phrases
+    summary = {}
+    msg = ""
+    has_run = False
+    conn = None
+
+    try:
+        if request.method == "POST":
+            has_run = True
+            max_phrases_raw = normalize_text(request.form.get("max_phrases") or "")
+            if max_phrases_raw.isdigit():
+                max_phrases = max(1, min(int(max_phrases_raw), 50000))
+            else:
+                max_phrases = default_max_phrases
+
+            conn = sqlite3.connect(DB_NAME)
+            c = conn.cursor()
+            c.execute(
+                """
+                SELECT id, english
+                FROM phrases
+                WHERE status='approved'
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (max_phrases,),
+            )
+            rows = c.fetchall() or []
+
+            phrases_scanned = len(rows)
+            phrases_needing_repair = []
+            for row in rows:
+                if not row or len(row) < 2:
+                    continue
+                pid, en = row
+                pid_int = int(pid or 0)
+                en_norm = normalize_text(en or "")
+                if not pid_int or not en_norm:
+                    continue
+                missing = _count_missing_generated_phrase_langs(conn, pid_int)
+                if missing > 0:
+                    phrases_needing_repair.append((pid_int, en_norm))
+
+            conn.close()
+            conn = None
+
+            phrases_repair_count = len(phrases_needing_repair)
+            generated_saved = 0
+            merged_stats = {lang: {} for lang in EXTRA_GENERATED_LANGS}
+
+            for i in range(0, phrases_repair_count, IMPORT_BATCH_SIZE):
+                chunk = phrases_needing_repair[i:i + IMPORT_BATCH_SIZE]
+                if not chunk:
+                    continue
+                try:
+                    saved_count, stats = ensure_missing_generated_translations_for_phrases(
+                        chunk,
+                        langs=EXTRA_GENERATED_LANGS,
+                        chunk_size=IMPORT_BATCH_SIZE,
+                        overwrite_existing=False,
+                        log_context="admin_bulk_repair_phrases",
+                    )
+                    generated_saved += int(saved_count or 0)
+                    _merge_generated_stats(merged_stats, stats)
+                except Exception as e:
+                    app.logger.exception(f"admin phrase bulk repair chunk failed: {repr(e)}")
+
+            failures_per_lang = {}
+            for lang in EXTRA_GENERATED_LANGS:
+                st = merged_stats.get(lang, {}) or {}
+                missing_before = int(st.get("missing_before", 0) or 0)
+                saved = int(st.get("saved", 0) or 0)
+                failed = missing_before - saved
+                failures_per_lang[lang] = failed if failed > 0 else 0
+
+            summary = {
+                "phrases_scanned": phrases_scanned,
+                "phrases_needing_repair": phrases_repair_count,
+                "translations_generated": generated_saved,
+                "cached_reused": sum(int((merged_stats.get(lang, {}) or {}).get("already_cached", 0) or 0) for lang in EXTRA_GENERATED_LANGS),
+                "failures_per_lang": failures_per_lang,
+                "stats_by_lang": merged_stats,
+                "max_phrases": max_phrases,
+            }
+
+            msg = (
+                f"Phrase repair done. Phrases scanned: {phrases_scanned} | "
+                f"Phrases needing repair: {phrases_repair_count} | "
+                f"Generated translations saved: {generated_saved}."
+            )
+            app.logger.info("admin phrase bulk repair summary: %s", summary)
+    except Exception as e:
+        app.logger.exception(f"admin_repair_generated_phrases failed: {repr(e)}")
+        msg = "Phrase repair failed safely due to an internal error. Please try again."
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    try:
+        safe_summary = summary or {}
+        safe_stats = (safe_summary.get("stats_by_lang", {}) if isinstance(safe_summary, dict) else {}) or {}
+        safe_language_options = LANGUAGE_OPTIONS if isinstance(LANGUAGE_OPTIONS, dict) else {}
+        safe_extra_langs = EXTRA_GENERATED_LANGS if EXTRA_GENERATED_LANGS else tuple()
+        return render_template(
+            "admin_repair_generated_phrases.html",
+            msg=msg,
+            message=(msg or ""),
+            summary=safe_summary,
+            stats=safe_stats,
+            has_run=has_run,
+            max_phrases=max_phrases,
+            extra_generated_langs=safe_extra_langs,
+            language_options=safe_language_options,
+        )
+    except Exception as e:
+        app.logger.exception(f"admin_repair_generated_phrases render failed: {repr(e)}")
+        return (
+            "<h3>Repair Missing Phrase Languages is temporarily unavailable.</h3>"
             "<p>Please return to dashboard and try again.</p>"
         ), 200
 
@@ -7009,6 +7417,31 @@ def cli_audit_phrase_translations():
         f"approved_phrases_total={approved_total} "
         f"phrases_missing_one_or_more={missing_any} "
         f"generated_phrase_translations_total={total_generated_rows}"
+    )
+
+
+@app.cli.command("backfill-audio-linkage")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit scanned tts files (0 = all).")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not write DB updates.")
+def cli_backfill_audio_linkage(limit, dry_run):
+    """
+    Link existing persisted TTS files/URLs into DB caches without regeneration.
+    """
+    _log_db_context("cli:backfill-audio-linkage")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    summary = run_backfill_existing_audio_linkage(limit=int(limit or 0), dry_run=bool(dry_run))
+    click.echo("Audio linkage backfill completed.")
+    click.echo(
+        f"files_scanned={summary.get('files_scanned', 0)} "
+        f"rows_linked={summary.get('rows_linked', 0)} "
+        f"rows_already_present={summary.get('rows_already_present', 0)} "
+        f"rows_skipped_missing_text={summary.get('rows_skipped_missing_text', 0)} "
+        f"rows_skipped_hash_mismatch={summary.get('rows_skipped_hash_mismatch', 0)} "
+        f"rows_skipped_missing_file={summary.get('rows_skipped_missing_file', 0)} "
+        f"cache_rows_scanned={summary.get('cache_rows_scanned', 0)} "
+        f"cache_rows_linked={summary.get('cache_rows_linked', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
     )
 
 
