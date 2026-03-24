@@ -35,15 +35,16 @@
       DB-backed storage: <b>{{ upload_folder or "" }}</b> |
       Render persistent disk active: <b>{{ "yes" if is_render_disk else "no" }}</b>
     </div>
-    <form method="POST" action="/admin/repair-missing-audio" class="row" style="align-items:flex-end;">
+    <form method="POST" action="/admin/repair-missing-audio" class="row" style="align-items:flex-end; gap:10px; flex-wrap:wrap;">
       <div style="display:flex; flex-direction:column; gap:6px; min-width:220px;">
         <label class="subtle">Max approved items to scan this run</label>
         <input type="number" min="1" max="50000" step="1" name="max_items" value="{{ max_items or 5000 }}" />
       </div>
-      <button type="submit" class="btn primary">Import + Link Existing Audio</button>
+      <button type="submit" class="btn" name="repair_action" value="import_only">Import + Link Existing Audio</button>
+      <button type="submit" class="btn primary" name="repair_action" value="full_repair">Full Repair Missing Audio</button>
     </form>
     <div class="muted" style="margin-top:10px; font-size:14px;">
-      Existing local audio files are promoted to persistent uploads and linked first. This web action does not call Azure.
+      Import action: promote/link existing files only. Full repair action: import/link first, then generate only missing audio with current Azure key.
     </div>
     <div class="muted" style="margin-top:6px; font-size:14px;">
       For missing audio generation run: <code>{{ recommend_generate_cmd or "flask repair-missing-audio --limit 5000" }}</code>
@@ -64,6 +65,7 @@
         <div class="summary-card"><b>Phrases scanned:</b> {{ s.get("phrases_scanned", 0) }}</div>
         <div class="summary-card"><b>Items scanned:</b> {{ s.get("items_scanned", 0) }}</div>
         <div class="summary-card"><b>Processed items:</b> {{ s.get("processed_items", 0) }}</div>
+        <div class="summary-card"><b>Mode:</b> {{ s.get("mode", selected_action or "-") }}</div>
         <div class="summary-card"><b>Generation performed:</b> {{ "yes" if s.get("generation_performed", False) else "no" }}</div>
         <div class="summary-card"><b>Audio reused:</b> {{ s.get("audio_reused", 0) }}</div>
         <div class="summary-card"><b>Audio generated:</b> {{ s.get("audio_generated", 0) }}</div>

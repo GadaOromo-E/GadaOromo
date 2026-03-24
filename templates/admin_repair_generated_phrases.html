@@ -54,6 +54,10 @@
         <div class="summary-card"><b>Phrases needing repair:</b> {{ s.get("phrases_needing_repair", 0) }}</div>
         <div class="summary-card"><b>Translations generated:</b> {{ s.get("translations_generated", 0) }}</div>
         <div class="summary-card"><b>Cached reused:</b> {{ s.get("cached_reused", 0) }}</div>
+        <div class="summary-card"><b>Provider errors total:</b> {{ s.get("provider_errors_total", 0) }}</div>
+        <div class="summary-card"><b>Missing API key total:</b> {{ s.get("provider_missing_api_key_total", 0) }}</div>
+        <div class="summary-card"><b>Request failures total:</b> {{ s.get("provider_request_failures_total", 0) }}</div>
+        <div class="summary-card"><b>Fallback errors total:</b> {{ s.get("provider_fallback_errors_total", 0) }}</div>
       </div>
     </div>
 

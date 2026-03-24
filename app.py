@@ -644,7 +644,36 @@ def _words_table_counts():
 # ------------------ GOOGLE TRANSLATE (CLOUD v2) ------------------
 
 def _get_google_key() -> str:
-    return os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+    # Prefer explicit translation key; keep GOOGLE_API_KEY as compatibility fallback.
+    return (
+        os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip()
+        or os.environ.get("GOOGLE_API_KEY", "").strip()
+    )
+
+
+def _google_key_source_name() -> str:
+    if os.environ.get("GOOGLE_TRANSLATE_API_KEY", "").strip():
+        return "GOOGLE_TRANSLATE_API_KEY"
+    if os.environ.get("GOOGLE_API_KEY", "").strip():
+        return "GOOGLE_API_KEY"
+    return ""
+
+
+def _log_runtime_repair_context(context: str):
+    try:
+        key_src = _google_key_source_name()
+        app.logger.info(
+            "%s runtime_context google_key_present=%s google_key_source=%s db_path=%s db_abs=%s upload_folder=%s render_disk_active=%s",
+            context,
+            bool(_get_google_key()),
+            (key_src or "missing"),
+            DB_NAME,
+            os.path.abspath(DB_NAME),
+            UPLOAD_FOLDER,
+            IS_RENDER_DISK,
+        )
+    except Exception:
+        app.logger.exception("%s runtime context logging failed", context)
 
 
 def google_translate_batch_v2(texts, target: str, source: str = "en"):
@@ -2094,6 +2123,9 @@ def ensure_missing_generated_translations_for_phrases(
             "empty_results": 0,
             "batch_mismatch_fallback": 0,
             "provider_errors": 0,
+            "missing_api_key": 0,
+            "request_failures": 0,
+            "fallback_errors": 0,
         }
         stats[lang] = st
         missing = []
@@ -2114,6 +2146,17 @@ def ensure_missing_generated_translations_for_phrases(
             if not pairs:
                 continue
             texts = [en for _pid, en in pairs]
+            api_key = _get_google_key()
+            if not api_key:
+                st["provider_errors"] += len(pairs)
+                st["missing_api_key"] += len(pairs)
+                app.logger.error(
+                    "phrase translation skipped: missing Google API key context=%s lang=%s missing_pairs=%s",
+                    log_context,
+                    lang,
+                    len(pairs),
+                )
+                continue
             try:
                 translated = google_translate_batch_v2(
                     texts,
@@ -2122,6 +2165,14 @@ def ensure_missing_generated_translations_for_phrases(
                 )
                 if not translated:
                     st["provider_errors"] += len(pairs)
+                    st["request_failures"] += len(pairs)
+                    app.logger.error(
+                        "phrase batch translate empty response context=%s lang=%s pairs=%s key_source=%s",
+                        log_context,
+                        lang,
+                        len(pairs),
+                        (_google_key_source_name() or "missing"),
+                    )
                     continue
                 if len(translated) != len(pairs):
                     st["batch_mismatch_fallback"] += len(pairs)
@@ -2129,6 +2180,13 @@ def ensure_missing_generated_translations_for_phrases(
             except Exception:
                 translated = []
                 st["provider_errors"] += len(pairs)
+                st["request_failures"] += len(pairs)
+                app.logger.exception(
+                    "phrase batch translate exception context=%s lang=%s pairs=%s",
+                    log_context,
+                    lang,
+                    len(pairs),
+                )
                 continue
 
             if translated and len(translated) == len(pairs):
@@ -2165,6 +2223,7 @@ def ensure_missing_generated_translations_for_phrases(
                                     pass
                         txt = normalize_text(translated or "")
                         if not _is_meaningful_generated_text(txt):
+                            st["request_failures"] += 1
                             st["empty_results"] += 1
                             continue
                         _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
@@ -2172,6 +2231,13 @@ def ensure_missing_generated_translations_for_phrases(
                         total_saved += 1
                     except Exception:
                         st["provider_errors"] += 1
+                        st["fallback_errors"] += 1
+                        app.logger.exception(
+                            "phrase fallback translate failed context=%s phrase_id=%s lang=%s",
+                            log_context,
+                            pid,
+                            lang,
+                        )
 
     try:
         compact = {
@@ -2183,6 +2249,9 @@ def ensure_missing_generated_translations_for_phrases(
                 "empty": st["empty_results"],
                 "fallback": st["batch_mismatch_fallback"],
                 "errors": st["provider_errors"],
+                "missing_api_key": st.get("missing_api_key", 0),
+                "request_failures": st.get("request_failures", 0),
+                "fallback_errors": st.get("fallback_errors", 0),
             }
             for lang, st in stats.items()
         }
@@ -2691,6 +2760,14 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                     _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
                 result["generated"] += 1
                 continue
+            app.logger.error(
+                "service generate_and_store_tts returned empty entry_type=%s entry_id=%s lang=%s upload_folder=%s render_disk_active=%s",
+                entry_type,
+                entry_id,
+                lang,
+                UPLOAD_FOLDER,
+                IS_RENDER_DISK,
+            )
         except Exception as e:
             app.logger.exception(
                 "service generate_and_store_tts failed entry_type=%s entry_id=%s lang=%s error=%s",
@@ -2715,7 +2792,16 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         )
         if error or not audio_bytes:
             result["failed"] += 1
-            app.logger.warning("TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s", entry_type, entry_id, lang, error)
+            app.logger.error(
+                "TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s speech_key_present=%s speech_region_present=%s upload_folder=%s",
+                entry_type,
+                entry_id,
+                lang,
+                error,
+                bool(speech_key),
+                bool(speech_region),
+                UPLOAD_FOLDER,
+            )
             continue
 
         text_hash = _text_hash(text)
@@ -6488,6 +6574,7 @@ def admin_repair_generated_phrases():
     conn = None
 
     try:
+        _log_runtime_repair_context("admin_repair_generated_phrases")
         if request.method == "POST":
             has_run = True
             max_phrases_raw = normalize_text(request.form.get("max_phrases") or "")
@@ -6549,12 +6636,20 @@ def admin_repair_generated_phrases():
                     app.logger.exception(f"admin phrase bulk repair chunk failed: {repr(e)}")
 
             failures_per_lang = {}
+            provider_errors_total = 0
+            missing_api_key_total = 0
+            request_failures_total = 0
+            fallback_errors_total = 0
             for lang in EXTRA_GENERATED_LANGS:
                 st = merged_stats.get(lang, {}) or {}
                 missing_before = int(st.get("missing_before", 0) or 0)
                 saved = int(st.get("saved", 0) or 0)
                 failed = missing_before - saved
                 failures_per_lang[lang] = failed if failed > 0 else 0
+                provider_errors_total += int(st.get("provider_errors", 0) or 0)
+                missing_api_key_total += int(st.get("missing_api_key", 0) or 0)
+                request_failures_total += int(st.get("request_failures", 0) or 0)
+                fallback_errors_total += int(st.get("fallback_errors", 0) or 0)
 
             summary = {
                 "phrases_scanned": phrases_scanned,
@@ -6562,6 +6657,10 @@ def admin_repair_generated_phrases():
                 "translations_generated": generated_saved,
                 "cached_reused": sum(int((merged_stats.get(lang, {}) or {}).get("already_cached", 0) or 0) for lang in EXTRA_GENERATED_LANGS),
                 "failures_per_lang": failures_per_lang,
+                "provider_errors_total": provider_errors_total,
+                "provider_missing_api_key_total": missing_api_key_total,
+                "provider_request_failures_total": request_failures_total,
+                "provider_fallback_errors_total": fallback_errors_total,
                 "stats_by_lang": merged_stats,
                 "max_phrases": max_phrases,
             }
@@ -6572,6 +6671,16 @@ def admin_repair_generated_phrases():
                 f"Generated translations saved: {generated_saved}."
             )
             app.logger.info("admin phrase bulk repair summary: %s", summary)
+            if phrases_repair_count > 0 and generated_saved == 0:
+                app.logger.error(
+                    "admin phrase repair generated zero results while phrases need repair. "
+                    "provider_errors_total=%s missing_api_key_total=%s request_failures_total=%s fallback_errors_total=%s key_source=%s",
+                    provider_errors_total,
+                    missing_api_key_total,
+                    request_failures_total,
+                    fallback_errors_total,
+                    (_google_key_source_name() or "missing"),
+                )
     except Exception as e:
         app.logger.exception(f"admin_repair_generated_phrases failed: {repr(e)}")
         msg = "Phrase repair failed safely due to an internal error. Please try again."
@@ -6611,6 +6720,7 @@ def run_repair_missing_audio(
     generate_missing: bool = True,
     source_dirs=None,
 ):
+    _log_runtime_repair_context("run_repair_missing_audio")
     words = _fetch_approved_word_items(limit=limit)
     phrases = _fetch_approved_phrase_items(limit=limit)
     linkage = run_backfill_existing_audio_linkage(
@@ -6628,7 +6738,11 @@ def run_repair_missing_audio(
         "skipped_missing_voice": 0,
     }
     if generate_missing:
-        tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
+        try:
+            tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
+        except Exception:
+            app.logger.exception("run_repair_missing_audio full generation failed")
+            tts["failed"] = int(tts.get("failed", 0) or 0) + 1
 
     per_language = {}
     conn = None
@@ -6655,7 +6769,7 @@ def run_repair_missing_audio(
             except Exception:
                 pass
 
-    return {
+    out = {
         "words_scanned": len(words),
         "phrases_scanned": len(phrases),
         "items_scanned": int(len(words) + len(phrases)),
@@ -6669,6 +6783,17 @@ def run_repair_missing_audio(
         "per_language_counts": per_language,
         "generation_performed": bool(generate_missing),
     }
+    if int(out.get("failures", 0) or 0) > 0:
+        app.logger.error(
+            "run_repair_missing_audio failures detected items_scanned=%s processed_items=%s generated=%s cached=%s failures=%s",
+            out.get("items_scanned", 0),
+            out.get("processed_items", 0),
+            out.get("audio_generated", 0),
+            out.get("audio_reused", 0),
+            out.get("failures", 0),
+        )
+    app.logger.info("run_repair_missing_audio summary: %s", out)
+    return out
 
 
 @app.route("/admin/repair-missing-audio", methods=["GET", "POST"])
@@ -6682,8 +6807,10 @@ def admin_repair_missing_audio():
     msg = ""
     has_run = False
     safe_source_dirs = [STATIC_UPLOADS_FOLDER]
+    selected_action = "import_only"
 
     try:
+        _log_runtime_repair_context("admin_repair_missing_audio")
         if request.method == "POST":
             has_run = True
             limit_raw = normalize_text(request.form.get("max_items") or "")
@@ -6692,17 +6819,31 @@ def admin_repair_missing_audio():
             else:
                 limit = default_limit
 
-            # Safety: no Azure generation from admin button click.
+            selected_action = normalize_text(request.form.get("repair_action") or "import_only")
+            do_generate = (selected_action == "full_repair")
             summary = run_repair_missing_audio(
                 limit=limit,
-                generate_missing=False,
+                generate_missing=do_generate,
                 source_dirs=safe_source_dirs,
             )
-            msg = (
-                "Audio import/link completed. Existing files were promoted to persistent uploads and linked in DB. "
-                "Run CLI repair to generate only truly missing audio."
-            )
-            app.logger.info("admin repair missing audio (link-only) summary: %s", summary)
+            summary["mode"] = "full_repair" if do_generate else "import_only"
+            if do_generate:
+                msg = (
+                    f"Full audio repair done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
+                    f"Processed: {int(summary.get('processed_items', 0) or 0)} | "
+                    f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
+                    f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
+                    f"Failures: {int(summary.get('failures', 0) or 0)}."
+                )
+            else:
+                msg = (
+                    f"Import/link done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
+                    f"Processed: {int(summary.get('processed_items', 0) or 0)} | "
+                    f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
+                    f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
+                    f"Failures: {int(summary.get('failures', 0) or 0)}."
+                )
+            app.logger.info("admin repair missing audio summary mode=%s data=%s", selected_action, summary)
     except Exception as e:
         app.logger.exception(f"admin_repair_missing_audio failed: {repr(e)}")
         msg = "Audio repair failed safely due to an internal error. Please try again."
@@ -6721,6 +6862,7 @@ def admin_repair_missing_audio():
             is_render_disk=IS_RENDER_DISK,
             recommend_generate_cmd=f"flask repair-missing-audio --limit {int(limit or default_limit)}",
             recommend_import_cmd="flask import-existing-audio",
+            selected_action=selected_action,
         )
     except Exception as e:
         app.logger.exception(f"admin_repair_missing_audio render failed: {repr(e)}")
