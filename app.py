@@ -1940,6 +1940,7 @@ def ensure_missing_generated_translations_for_phrases(
     langs=None,
     chunk_size: int = None,
     overwrite_existing: bool = False,
+    log_context: str = "generated_phrase_backfill",
 ):
     if not phrase_items:
         return 0, {}
@@ -1966,15 +1967,27 @@ def ensure_missing_generated_translations_for_phrases(
     stats = {}
 
     for lang in langs:
-        st = {"items_seen": len(unique_items), "already_cached": 0, "missing_before": 0, "saved": 0, "provider_errors": 0}
+        st = {
+            "items_seen": len(unique_items),
+            "already_cached": 0,
+            "invalid_cached_treated_missing": 0,
+            "missing_before": 0,
+            "saved": 0,
+            "empty_results": 0,
+            "batch_mismatch_fallback": 0,
+            "provider_errors": 0,
+        }
         stats[lang] = st
         missing = []
         for pid, en in unique_items:
             cached = _get_cached_generated_phrase_translation(pid, lang)
             cached_text = normalize_text((cached or [""])[0] or "")
-            if _is_meaningful_generated_text(cached_text) and not overwrite_existing:
-                st["already_cached"] += 1
-                continue
+            if not overwrite_existing:
+                if _is_meaningful_generated_text(cached_text):
+                    st["already_cached"] += 1
+                    continue
+                if cached:
+                    st["invalid_cached_treated_missing"] += 1
             missing.append((pid, en))
         st["missing_before"] = len(missing)
 
@@ -1990,22 +2003,17 @@ def ensure_missing_generated_translations_for_phrases(
                     source="en",
                 )
                 if not translated or len(translated) != len(pairs):
+                    st["batch_mismatch_fallback"] += len(pairs)
                     translated = []
-                    for _pid, en in pairs:
-                        translated.append(
-                            google_translate_text_v2(
-                                en,
-                                target=_google_lang_code(lang),
-                                source="en",
-                            )
-                        )
             except Exception:
                 translated = []
+                st["provider_errors"] += 1
 
             if translated and len(translated) == len(pairs):
                 for (pid, _en), out in zip(pairs, translated):
                     txt = normalize_text(out or "")
                     if not _is_meaningful_generated_text(txt):
+                        st["empty_results"] += 1
                         continue
                     try:
                         _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
@@ -2014,7 +2022,44 @@ def ensure_missing_generated_translations_for_phrases(
                     except Exception:
                         st["provider_errors"] += 1
             else:
-                st["provider_errors"] += len(pairs)
+                for pid, en in pairs:
+                    try:
+                        translated = google_translate_text_v2(
+                            en,
+                            target=_google_lang_code(lang),
+                            source="en",
+                        )
+                        txt = normalize_text(translated or "")
+                        if not _is_meaningful_generated_text(txt):
+                            st["empty_results"] += 1
+                            continue
+                        _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
+                        st["saved"] += 1
+                        total_saved += 1
+                    except Exception:
+                        st["provider_errors"] += 1
+
+    try:
+        compact = {
+            lang: {
+                "missing": st["missing_before"],
+                "saved": st["saved"],
+                "cached": st["already_cached"],
+                "invalid_cached": st["invalid_cached_treated_missing"],
+                "empty": st["empty_results"],
+                "fallback": st["batch_mismatch_fallback"],
+                "errors": st["provider_errors"],
+            }
+            for lang, st in stats.items()
+        }
+        app.logger.info(
+            "generated phrase backfill summary context=%s total_saved=%s details=%s",
+            log_context,
+            total_saved,
+            compact,
+        )
+    except Exception:
+        pass
 
     return total_saved, stats
 
@@ -2057,6 +2102,86 @@ def _fetch_approved_phrase_items(limit: int = 0):
     return [(pid, en) for pid, en in rows if pid and en]
 
 
+def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
+    """
+    Return phrase rows with non-empty English source text and at least one missing
+    generated translation among am/ar/fr/zh-CN.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = """
+        SELECT p.id, p.english
+        FROM phrases p
+        LEFT JOIN generated_phrase_translations g_am
+          ON g_am.phrase_id = p.id
+         AND g_am.lang_code = 'am'
+         AND g_am.translated_text IS NOT NULL
+         AND TRIM(g_am.translated_text) != ''
+        LEFT JOIN generated_phrase_translations g_ar
+          ON g_ar.phrase_id = p.id
+         AND g_ar.lang_code = 'ar'
+         AND g_ar.translated_text IS NOT NULL
+         AND TRIM(g_ar.translated_text) != ''
+        LEFT JOIN generated_phrase_translations g_fr
+          ON g_fr.phrase_id = p.id
+         AND g_fr.lang_code = 'fr'
+         AND g_fr.translated_text IS NOT NULL
+         AND TRIM(g_fr.translated_text) != ''
+        LEFT JOIN generated_phrase_translations g_zh
+          ON g_zh.phrase_id = p.id
+         AND g_zh.lang_code = 'zh-CN'
+         AND g_zh.translated_text IS NOT NULL
+         AND TRIM(g_zh.translated_text) != ''
+        WHERE p.english IS NOT NULL
+          AND TRIM(p.english) != ''
+          AND (
+            g_am.id IS NULL OR
+            g_ar.id IS NULL OR
+            g_fr.id IS NULL OR
+            g_zh.id IS NULL
+          )
+        ORDER BY p.id ASC
+    """
+    if limit and int(limit) > 0:
+        sql += " LIMIT ?"
+        c.execute(sql, (int(limit),))
+    else:
+        c.execute(sql)
+    rows = [(int(r[0]), normalize_text(r[1] or "")) for r in c.fetchall()]
+    conn.close()
+    return [(pid, en) for pid, en in rows if pid and en]
+
+
+def run_phrase_translation_backfill(limit: int = 0, chunk_size: int = None):
+    phrase_items = _fetch_phrase_items_missing_generated_translations(limit=limit)
+    skipped_missing_text = 0
+    valid_items = []
+    for pid, en in phrase_items:
+        if not pid:
+            continue
+        en_norm = normalize_text(en or "")
+        if not en_norm:
+            skipped_missing_text += 1
+            continue
+        valid_items.append((int(pid), en_norm))
+
+    saved, stats = ensure_missing_generated_translations_for_phrases(
+        valid_items,
+        langs=EXTRA_GENERATED_LANGS,
+        chunk_size=chunk_size or IMPORT_BATCH_SIZE,
+        overwrite_existing=False,
+        log_context="cli_backfill_phrase_translations",
+    )
+    return {
+        "phrases_processed": len(valid_items),
+        "translations_generated": int(saved or 0),
+        "translations_cached": sum(int((st or {}).get("already_cached", 0) or 0) for st in (stats or {}).values()),
+        "failures": sum(int((st or {}).get("provider_errors", 0) or 0) for st in (stats or {}).values()),
+        "skipped_missing_text": int(skipped_missing_text),
+        "stats": stats or {},
+    }
+
+
 def run_translation_backfill(entry_type: str = "all", entry_id: int = 0, overwrite_existing: bool = False, limit: int = 0):
     summary = {"words_saved": 0, "phrases_saved": 0, "word_stats": {}, "phrase_stats": {}}
 
@@ -2093,6 +2218,7 @@ def run_translation_backfill(entry_type: str = "all", entry_id: int = 0, overwri
                 langs=EXTRA_GENERATED_LANGS,
                 chunk_size=IMPORT_BATCH_SIZE,
                 overwrite_existing=overwrite_existing,
+                log_context="cli_backfill_phrases",
             )
             summary["phrases_saved"] = int(saved or 0)
             summary["phrase_stats"] = stats or {}
@@ -6534,6 +6660,28 @@ def cli_backfill_translations(entry_type, entry_id, overwrite_existing, limit):
     click.echo(
         f"words_saved={summary.get('words_saved', 0)} "
         f"phrases_saved={summary.get('phrases_saved', 0)}"
+    )
+
+
+@app.cli.command("backfill-phrase-translations")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit phrases scanned (0 = all missing).")
+@click.option("--chunk-size", type=int, default=IMPORT_BATCH_SIZE, show_default=True, help="Batch size for translation requests.")
+def cli_backfill_phrase_translations(limit, chunk_size):
+    """
+    Backfill only missing generated translations for phrases.
+    Generates am/ar/fr/zh-CN from phrase English text and persists to DB cache.
+    """
+    summary = run_phrase_translation_backfill(
+        limit=int(limit or 0),
+        chunk_size=int(chunk_size or IMPORT_BATCH_SIZE),
+    )
+    click.echo("Phrase translation backfill completed.")
+    click.echo(
+        f"phrases_processed={summary.get('phrases_processed', 0)} "
+        f"translations_generated={summary.get('translations_generated', 0)} "
+        f"translations_cached={summary.get('translations_cached', 0)} "
+        f"failures={summary.get('failures', 0)} "
+        f"skipped_missing_text={summary.get('skipped_missing_text', 0)}"
     )
 
 
