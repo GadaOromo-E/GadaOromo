@@ -1,3 +1,4 @@
+import os
 import requests
 
 
@@ -25,7 +26,10 @@ def google_translate_batch(
     }
 
     try:
-        resp = requests.post(url, params={"key": key}, json=payload, timeout=timeout)
+        # Avoid accidental broken proxy env drift unless explicitly requested.
+        session = requests.Session()
+        session.trust_env = (os.environ.get("OUTBOUND_TRUST_ENV", "0").strip() == "1")
+        resp = session.post(url, params={"key": key}, json=payload, timeout=timeout)
         if resp.status_code != 200:
             return []
         data = resp.json() or {}

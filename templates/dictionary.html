@@ -204,6 +204,7 @@
     {% if not q %}
       <div class="card">
         {% if words %}
+          <div class="subtle" style="margin-bottom:10px;"><b>Words ({{ words|length }})</b></div>
           <div class="word-list">
             {% for w in words %}
               <div class="word-row">
@@ -231,6 +232,39 @@
           </div>
         {% else %}
           <div class="muted">No words found.</div>
+        {% endif %}
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        {% if phrases %}
+          <div class="subtle" style="margin-bottom:10px;"><b>Phrases ({{ phrases|length }})</b></div>
+          <div class="word-list">
+            {% for p in phrases %}
+              <div class="word-row">
+                <div>
+                  <div style="font-weight:800;">{{ p[1] }}</div>
+                  <div class="subtle">{{ p[2] }}</div>
+                  {% set pt = list_phrase_translations.get(p[0], {}) %}
+                  {% if pt %}
+                    <div class="multi-values">
+                      {% for lang in extra_generated_langs %}
+                        {% set cfg = language_options.get(lang, {}) %}
+                        {% set txt = pt.get(lang) %}
+                        {% if txt %}
+                          <span>
+                            <b>{{ cfg.get("label", lang) }}:</b>
+                            <span {% if cfg.get("rtl") %}dir="rtl" style="unicode-bidi:isolate; display:inline-block;"{% endif %}>{{ txt }}</span>
+                          </span>
+                        {% endif %}
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="muted">No phrases found.</div>
         {% endif %}
       </div>
     {% endif %}

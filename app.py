@@ -109,6 +109,13 @@ DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = (os.environ.get("DB_PATH", "").strip() or DEFAULT_DB)
 app.logger.info(f"âœ… Using DB_NAME={DB_NAME}")
 
+REQUIRE_EXPLICIT_DB_PATH = (os.environ.get("REQUIRE_EXPLICIT_DB_PATH", "1" if IS_PROD else "0").strip() == "1")
+if IS_PROD and REQUIRE_EXPLICIT_DB_PATH and (not os.environ.get("DB_PATH", "").strip()):
+    raise RuntimeError(
+        "Production requires explicit DB_PATH to avoid source-of-truth drift. "
+        "Set DB_PATH to your production database file path."
+    )
+
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 
 ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
@@ -372,19 +379,19 @@ def uploads(filename):
     if os.path.isfile(full_path):
         return send_from_directory(UPLOAD_FOLDER, safe_name)
 
-    # Backward compatibility: some historical TTS jobs wrote files to static/uploads.
-    if safe_name.startswith("tts_"):
-        static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
-        if os.path.isfile(static_path):
-            try:
-                if IS_RENDER_DISK:
-                    # Promote legacy files into persistent disk when possible.
-                    shutil.copy2(static_path, full_path)
-                    if os.path.isfile(full_path):
-                        return send_from_directory(UPLOAD_FOLDER, safe_name)
-            except Exception:
-                app.logger.exception("Failed to promote legacy TTS file to upload folder: %s", safe_name)
-            return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
+    # Backward compatibility: legacy jobs/uploads may have written files to static/uploads.
+    # This applies to both generated TTS (tts_*) and community Oromo recordings (word_*/phrase_*).
+    static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
+    if os.path.isfile(static_path):
+        try:
+            if IS_RENDER_DISK:
+                # Promote legacy files into persistent disk when possible.
+                shutil.copy2(static_path, full_path)
+                if os.path.isfile(full_path):
+                    return send_from_directory(UPLOAD_FOLDER, safe_name)
+        except Exception:
+            app.logger.exception("Failed to promote legacy audio file to upload folder: %s", safe_name)
+        return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
 
     abort(404)
 
@@ -703,6 +710,7 @@ TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() 
 AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
 AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
 AZURE_BLOB_PREFIX = (os.environ.get("AZURE_BLOB_PREFIX") or "tts").strip().strip("/")
+REQUIRE_BLOB_FOR_GENERATED_TTS = (os.environ.get("REQUIRE_BLOB_FOR_GENERATED_TTS", "1" if IS_PROD else "0").strip() == "1")
 
 _blob_client_cache = None
 _blob_client_error_logged = False
@@ -1058,14 +1066,20 @@ def _upload_tts_bytes_to_blob(file_name: str, audio_bytes: bytes) -> str:
 def _maybe_promote_tts_to_persistent(name: str, src_abs: str):
     if (not IS_RENDER_DISK) or (not (name or "").startswith("tts_")):
         return
-    dst_abs = os.path.join(UPLOAD_FOLDER, name)
-    if os.path.isfile(dst_abs) or (not os.path.isfile(src_abs)):
+    _maybe_promote_audio_to_persistent(name, src_abs)
+
+
+def _maybe_promote_audio_to_persistent(name: str, src_abs: str):
+    if not IS_RENDER_DISK:
+        return
+    dst_abs = os.path.join(UPLOAD_FOLDER, os.path.basename(name or ""))
+    if (not dst_abs) or os.path.isfile(dst_abs) or (not os.path.isfile(src_abs)):
         return
     try:
         shutil.copy2(src_abs, dst_abs)
-        app.logger.info("Promoted TTS file to persistent storage: %s", name)
+        app.logger.info("Promoted audio file to persistent storage: %s", name)
     except Exception:
-        app.logger.exception("Failed promoting TTS file to persistent storage: %s", name)
+        app.logger.exception("Failed promoting audio file to persistent storage: %s", name)
 
 
 def _public_audio_url(file_path: str) -> str:
@@ -1144,7 +1158,15 @@ def _audio_abs_path(file_path: str) -> str:
                         return uploads_abs
                 return c
         return uploads_abs
-    return os.path.join(UPLOAD_FOLDER, name)
+    uploads_abs = os.path.join(UPLOAD_FOLDER, name)
+    static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+    if os.path.isfile(static_abs):
+        _maybe_promote_audio_to_persistent(name, static_abs)
+    if os.path.isfile(uploads_abs):
+        return uploads_abs
+    if os.path.isfile(static_abs):
+        return static_abs
+    return uploads_abs
 
 
 def _log_db_context(where: str):
@@ -1158,6 +1180,57 @@ def _log_db_context(where: str):
         )
     except Exception:
         app.logger.exception("DB context logging failed for %s", where)
+
+
+def _sql_count(c, query: str, params=()):
+    c.execute(query, params)
+    return int((c.fetchone() or [0])[0] or 0)
+
+
+def _collect_db_diagnostics():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    out = {
+        "db_path": DB_NAME,
+        "db_abs": os.path.abspath(DB_NAME),
+        "db_exists": os.path.isfile(DB_NAME),
+        "require_explicit_db_path": bool(REQUIRE_EXPLICIT_DB_PATH),
+        "require_blob_for_generated_tts": bool(REQUIRE_BLOB_FOR_GENERATED_TTS),
+        "azure_blob_enabled": bool(_azure_blob_enabled()),
+        "tables": {},
+        "generated_tts_storage": {},
+    }
+
+    table_counts = {
+        "words": "SELECT COUNT(*) FROM words",
+        "phrases": "SELECT COUNT(*) FROM phrases",
+        "generated_translations": "SELECT COUNT(*) FROM generated_translations",
+        "generated_phrase_translations": "SELECT COUNT(*) FROM generated_phrase_translations",
+        "generated_tts_audio": "SELECT COUNT(*) FROM generated_tts_audio",
+        "audio": "SELECT COUNT(*) FROM audio",
+    }
+    for table_name, sql in table_counts.items():
+        try:
+            out["tables"][table_name] = _sql_count(c, sql)
+        except Exception:
+            out["tables"][table_name] = -1
+
+    out["generated_tts_storage"] = {
+        "blob_url_rows": _sql_count(
+            c,
+            "SELECT COUNT(*) FROM generated_tts_audio WHERE file_path LIKE 'https://%' OR file_path LIKE 'http://%'",
+        ),
+        "local_path_rows": _sql_count(
+            c,
+            "SELECT COUNT(*) FROM generated_tts_audio WHERE file_path LIKE 'uploads/%' OR file_path LIKE '/uploads/%'",
+        ),
+        "empty_rows": _sql_count(
+            c,
+            "SELECT COUNT(*) FROM generated_tts_audio WHERE file_path IS NULL OR TRIM(file_path)=''",
+        ),
+    }
+    conn.close()
+    return out
 
 
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
@@ -2024,12 +2097,16 @@ def ensure_missing_generated_translations_for_phrases(
                     target=_google_lang_code(lang),
                     source="en",
                 )
-                if not translated or len(translated) != len(pairs):
+                if not translated:
+                    st["provider_errors"] += len(pairs)
+                    continue
+                if len(translated) != len(pairs):
                     st["batch_mismatch_fallback"] += len(pairs)
                     translated = []
             except Exception:
                 translated = []
-                st["provider_errors"] += 1
+                st["provider_errors"] += len(pairs)
+                continue
 
             if translated and len(translated) == len(pairs):
                 for (pid, _en), out in zip(pairs, translated):
@@ -2154,7 +2231,8 @@ def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
          AND g_zh.lang_code = 'zh-CN'
          AND g_zh.translated_text IS NOT NULL
          AND TRIM(g_zh.translated_text) != ''
-        WHERE p.english IS NOT NULL
+        WHERE p.status='approved'
+          AND p.english IS NOT NULL
           AND TRIM(p.english) != ''
           AND (
             g_am.id IS NULL OR
@@ -2339,6 +2417,13 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     if blob_url:
         return blob_url, blob_url
 
+    if REQUIRE_BLOB_FOR_GENERATED_TTS:
+        app.logger.error(
+            "Generated TTS persistence requires Azure Blob, but upload failed. file_name=%s",
+            file_name,
+        )
+        return "", ""
+
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
     rel_path = f"uploads/{file_name}"
     with open(abs_path, "wb") as f:
@@ -2395,6 +2480,8 @@ def _resolve_or_generate_tts_for_text(
     file_name = _generated_tts_file_name(entry_type, int(entry_id), lang_code, text_hash, voice_name)
     try:
         stored_ref, public_url = _persist_generated_tts_audio(file_name, audio_bytes)
+        if not stored_ref:
+            return ""
         _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored_ref)
         if lang_code in EXTRA_GENERATED_LANGS:
             _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
@@ -2528,6 +2615,9 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         file_name = _generated_tts_file_name(entry_type, entry_id, lang, text_hash, voice_name)
         try:
             stored_ref, public_url = _persist_generated_tts_audio(file_name, audio_bytes)
+            if not stored_ref:
+                result["failed"] += 1
+                continue
             _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, stored_ref)
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
@@ -2568,7 +2658,7 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
     return summary
 
 
-def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100):
+def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100, dry_run: bool = False):
     """
     One-time storage migration:
     - read generated_tts_audio rows
@@ -2579,9 +2669,11 @@ def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100):
     summary = {
         "rows_scanned": 0,
         "rows_migrated": 0,
+        "rows_migration_candidates": 0,
         "rows_missing_file": 0,
         "rows_already_blob_backed": 0,
         "failures": 0,
+        "dry_run": bool(dry_run),
     }
 
     if not _azure_blob_enabled():
@@ -2632,6 +2724,10 @@ def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100):
                     lang_code,
                     fp,
                 )
+                continue
+
+            summary["rows_migration_candidates"] += 1
+            if dry_run:
                 continue
 
             try:
@@ -3831,7 +3927,15 @@ def dictionary():
             ORDER BY english ASC
         """)
     all_words = c.fetchall()
+    c.execute("""
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved'
+            ORDER BY english ASC
+        """)
+    all_phrases = c.fetchall()
     list_other_translations = {}
+    list_phrase_translations = {}
 
     try:
         placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
@@ -3858,6 +3962,31 @@ def dictionary():
         app.logger.exception(f"/dictionary list extra translations failed: {repr(e)}")
         list_other_translations = {}
 
+    try:
+        placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+        c.execute(
+            f"""
+            SELECT gt.phrase_id, gt.lang_code, gt.translated_text
+            FROM generated_phrase_translations gt
+            JOIN phrases p ON p.id = gt.phrase_id
+            WHERE p.status='approved'
+              AND gt.lang_code IN ({placeholders})
+              AND gt.translated_text IS NOT NULL
+              AND TRIM(gt.translated_text) != ''
+            """,
+            EXTRA_GENERATED_LANGS,
+        )
+        for pid, lang_code, translated_text in c.fetchall():
+            pid_int = int(pid or 0)
+            txt = normalize_text(translated_text or "")
+            if not pid_int or not _is_meaningful_generated_text(txt):
+                continue
+            row = list_phrase_translations.setdefault(pid_int, {})
+            row[lang_code] = txt
+    except Exception as e:
+        app.logger.exception(f"/dictionary list phrase translations failed: {repr(e)}")
+        list_phrase_translations = {}
+
     conn.close()
 
     trending = get_trending(limit=15)
@@ -3882,9 +4011,11 @@ def dictionary():
         extra_generated_langs=EXTRA_GENERATED_LANGS,
         audio=audio,
         words=all_words,
+        phrases=all_phrases,
         suggestions=suggestions,
         trending=trending,
-        approved_oromo_audio_word_ids=approved_oromo_audio_word_ids
+        approved_oromo_audio_word_ids=approved_oromo_audio_word_ids,
+        list_phrase_translations=list_phrase_translations,
     )
 
 @app.route("/word/<path:term>", methods=["GET"])
@@ -6685,6 +6816,202 @@ def cli_backfill_translations(entry_type, entry_id, overwrite_existing, limit):
     )
 
 
+@app.cli.command("audit-live-word-audio")
+@click.option("--word", "word_text", required=True, help="English base word to audit, e.g. about")
+@click.option("--base-url", default="https://gadaadictionary.com", show_default=True, help="Live site base URL.")
+@click.option("--source-lang", default="en", show_default=True)
+@click.option("--target-lang", default="om", show_default=True)
+def cli_audit_live_word_audio(word_text, base_url, source_lang, target_lang):
+    """
+    Proof-based audit for one word:
+    1) local DB audio rows
+    2) rendered live HTML data-audio URLs
+    3) HTTP status for each rendered audio URL
+    """
+    base = (base_url or "").strip().rstrip("/")
+    w = normalize_text(word_text or "")
+    if not base or (not w):
+        raise click.UsageError("--word and --base-url are required.")
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT w.id, w.english, w.oromo, a.file_path, a.status
+        FROM words w
+        LEFT JOIN audio a
+          ON a.entry_type='word' AND a.entry_id=w.id AND a.lang='oromo' AND a.status='approved'
+        WHERE w.status='approved' AND lower(trim(w.english))=lower(?)
+        ORDER BY a.id DESC
+        LIMIT 1
+        """,
+        (w,),
+    )
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        click.echo(f"NO_LOCAL_DB_MATCH word={w}")
+        return
+
+    wid, en, om, db_audio_path, db_audio_status = row
+    click.echo(
+        f"LOCAL_DB word_id={int(wid)} english={normalize_text(en or '')} "
+        f"oromo={normalize_text(om or '')} file_path={db_audio_path or ''} status={db_audio_status or ''}"
+    )
+
+    req = requests.Session()
+    req.trust_env = False
+    page_url = (
+        f"{base}/dictionary?q={quote(normalize_text(en or ''), safe='')}"
+        f"&source_lang={quote(source_lang or 'en', safe='')}"
+        f"&target_lang={quote(target_lang or 'om', safe='')}"
+    )
+    try:
+        page = req.get(page_url, timeout=25)
+    except Exception as e:
+        click.echo(f"LIVE_PAGE_ERROR url={page_url} error={repr(e)}")
+        return
+
+    click.echo(f"LIVE_PAGE status={page.status_code} url={page.url}")
+    html = page.text or ""
+    audio_urls = re.findall(r'data-audio=\"([^\"]+)\"', html)
+    click.echo(
+        f"LIVE_RENDER data_audio_count={len(audio_urls)} "
+        f"contains_uploads={'/uploads/' in html} "
+        f"contains_static_uploads={'/static/uploads/' in html} "
+        f"contains_blob={'blob.core.windows.net' in html}"
+    )
+
+    if not audio_urls:
+        return
+
+    for idx, audio_ref in enumerate(audio_urls, start=1):
+        full = audio_ref if audio_ref.startswith("http") else f"{base}{audio_ref}"
+        try:
+            rr = req.get(full, timeout=25, allow_redirects=True)
+            click.echo(
+                f"LIVE_AUDIO_{idx} ref={audio_ref} final={rr.url} status={rr.status_code} "
+                f"content_type={(rr.headers.get('content-type') or '').strip()}"
+            )
+        except Exception as e:
+            click.echo(f"LIVE_AUDIO_{idx} ref={audio_ref} error={repr(e)}")
+
+
+@app.cli.command("diagnose-data-model")
+def cli_diagnose_data_model():
+    """
+    Print DB/storage diagnostics for production data-model verification.
+    """
+    _log_db_context("cli:diagnose-data-model")
+    d = _collect_db_diagnostics()
+    click.echo("Data-model diagnostics:")
+    click.echo(f"DB_PATH={d.get('db_path', '')}")
+    click.echo(f"DB_ABS={d.get('db_abs', '')}")
+    click.echo(f"DB_EXISTS={d.get('db_exists', False)}")
+    click.echo(f"REQUIRE_EXPLICIT_DB_PATH={d.get('require_explicit_db_path', False)}")
+    click.echo(f"REQUIRE_BLOB_FOR_GENERATED_TTS={d.get('require_blob_for_generated_tts', False)}")
+    click.echo(f"AZURE_BLOB_ENABLED={d.get('azure_blob_enabled', False)}")
+    click.echo(
+        "ROW_COUNTS "
+        f"words={d.get('tables', {}).get('words', -1)} "
+        f"phrases={d.get('tables', {}).get('phrases', -1)} "
+        f"generated_translations={d.get('tables', {}).get('generated_translations', -1)} "
+        f"generated_phrase_translations={d.get('tables', {}).get('generated_phrase_translations', -1)} "
+        f"generated_tts_audio={d.get('tables', {}).get('generated_tts_audio', -1)} "
+        f"audio={d.get('tables', {}).get('audio', -1)}"
+    )
+    click.echo(
+        "TTS_STORAGE "
+        f"blob_url_rows={d.get('generated_tts_storage', {}).get('blob_url_rows', 0)} "
+        f"local_path_rows={d.get('generated_tts_storage', {}).get('local_path_rows', 0)} "
+        f"empty_rows={d.get('generated_tts_storage', {}).get('empty_rows', 0)}"
+    )
+
+
+@app.cli.command("db-diagnostics")
+def cli_db_diagnostics():
+    """
+    Print core DB drift diagnostics for local vs production verification.
+    """
+    _log_db_context("cli:db-diagnostics")
+    d = _collect_db_diagnostics()
+    words_counts = _words_table_counts()
+    click.echo(f"DB_ABS={d.get('db_abs', '')}")
+    click.echo(
+        f"words_total={d.get('tables', {}).get('words', -1)} "
+        f"approved_words={words_counts.get('approved_rows', 0)} "
+        f"phrases_total={d.get('tables', {}).get('phrases', -1)} "
+        f"generated_translations_total={d.get('tables', {}).get('generated_translations', -1)} "
+        f"generated_tts_audio_total={d.get('tables', {}).get('generated_tts_audio', -1)} "
+        f"audio_total={d.get('tables', {}).get('audio', -1)}"
+    )
+
+
+@app.cli.command("audit-phrase-translations")
+def cli_audit_phrase_translations():
+    """
+    Print phrase translation coverage for am/ar/fr/zh-CN.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT COUNT(*)
+        FROM phrases
+        WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''
+        """
+    )
+    approved_total = int((c.fetchone() or [0])[0] or 0)
+    c.execute(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT p.id
+            FROM phrases p
+            LEFT JOIN generated_phrase_translations g_am
+              ON g_am.phrase_id = p.id
+             AND g_am.lang_code='am'
+             AND g_am.translated_text IS NOT NULL
+             AND TRIM(g_am.translated_text) != ''
+            LEFT JOIN generated_phrase_translations g_ar
+              ON g_ar.phrase_id = p.id
+             AND g_ar.lang_code='ar'
+             AND g_ar.translated_text IS NOT NULL
+             AND TRIM(g_ar.translated_text) != ''
+            LEFT JOIN generated_phrase_translations g_fr
+              ON g_fr.phrase_id = p.id
+             AND g_fr.lang_code='fr'
+             AND g_fr.translated_text IS NOT NULL
+             AND TRIM(g_fr.translated_text) != ''
+            LEFT JOIN generated_phrase_translations g_zh
+              ON g_zh.phrase_id = p.id
+             AND g_zh.lang_code='zh-CN'
+             AND g_zh.translated_text IS NOT NULL
+             AND TRIM(g_zh.translated_text) != ''
+            WHERE p.status='approved'
+              AND p.english IS NOT NULL
+              AND TRIM(p.english) != ''
+              AND (
+                g_am.id IS NULL OR
+                g_ar.id IS NULL OR
+                g_fr.id IS NULL OR
+                g_zh.id IS NULL
+              )
+        )
+        """
+    )
+    missing_any = int((c.fetchone() or [0])[0] or 0)
+    c.execute("SELECT COUNT(*) FROM generated_phrase_translations")
+    total_generated_rows = int((c.fetchone() or [0])[0] or 0)
+    conn.close()
+
+    click.echo(
+        f"approved_phrases_total={approved_total} "
+        f"phrases_missing_one_or_more={missing_any} "
+        f"generated_phrase_translations_total={total_generated_rows}"
+    )
+
+
 @app.cli.command("backfill-phrase-translations")
 @click.option("--limit", type=int, default=0, show_default=True, help="Limit phrases scanned (0 = all missing).")
 @click.option("--chunk-size", type=int, default=IMPORT_BATCH_SIZE, show_default=True, help="Batch size for translation requests.")
@@ -6771,7 +7098,8 @@ def cli_backfill_tts(entry_type, entry_id, force_regenerate, limit):
 @app.cli.command("migrate-tts-to-blob")
 @click.option("--limit", type=int, default=0, show_default=True, help="Limit rows scanned (0 = all).")
 @click.option("--chunk-size", type=int, default=100, show_default=True, help="Rows processed per chunk.")
-def cli_migrate_tts_to_blob(limit, chunk_size):
+@click.option("--dry-run", is_flag=True, default=False, help="Scan and report migration candidates without writing.")
+def cli_migrate_tts_to_blob(limit, chunk_size, dry_run):
     """
     Migrate existing generated_tts_audio local file_path rows to Azure Blob URLs.
     Storage migration only; does not regenerate audio.
@@ -6783,14 +7111,17 @@ def cli_migrate_tts_to_blob(limit, chunk_size):
     summary = run_generated_tts_blob_migration(
         limit=int(limit or 0),
         chunk_size=int(chunk_size or 100),
+        dry_run=bool(dry_run),
     )
     click.echo("TTS blob migration completed.")
     click.echo(
         f"rows_scanned={summary.get('rows_scanned', 0)} "
+        f"rows_migration_candidates={summary.get('rows_migration_candidates', 0)} "
         f"rows_migrated={summary.get('rows_migrated', 0)} "
         f"rows_missing_file={summary.get('rows_missing_file', 0)} "
         f"rows_already_blob_backed={summary.get('rows_already_blob_backed', 0)} "
-        f"failures={summary.get('failures', 0)}"
+        f"failures={summary.get('failures', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
     )
 
 @app.after_request

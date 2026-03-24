@@ -260,6 +260,8 @@
             <h3 class="section-title">Oromo pronunciation</h3>
             {% if word.audio_oromo.startswith("http") or word.audio_oromo.startswith("/") %}
               {% set oromo_audio_url = word.audio_oromo %}
+            {% elif word.audio_oromo.startswith("uploads/") %}
+              {% set oromo_audio_url = "/" ~ word.audio_oromo %}
             {% else %}
               {% set oromo_audio_url = url_for('static', filename=word.audio_oromo) %}
             {% endif %}
@@ -276,6 +278,8 @@
             <h3 class="section-title">English pronunciation</h3>
             {% if word.audio_english.startswith("http") or word.audio_english.startswith("/") %}
               {% set english_audio_url = word.audio_english %}
+            {% elif word.audio_english.startswith("uploads/") %}
+              {% set english_audio_url = "/" ~ word.audio_english %}
             {% else %}
               {% set english_audio_url = url_for('static', filename=word.audio_english) %}
             {% endif %}
