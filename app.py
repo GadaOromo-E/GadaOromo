@@ -706,7 +706,7 @@ try:
 except Exception:
     _learn_tts_lazy_max_raw = 6
 LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
-TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "1").strip() == "1")
+TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "0").strip() == "1")
 TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
 
 AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
@@ -2446,17 +2446,6 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     Persist generated TTS bytes and return (stored_ref, public_url).
     stored_ref is what we write to generated_tts_audio.file_path.
     """
-    blob_url = _upload_tts_bytes_to_blob(file_name, audio_bytes)
-    if blob_url:
-        return blob_url, blob_url
-
-    if REQUIRE_BLOB_FOR_GENERATED_TTS:
-        app.logger.error(
-            "Generated TTS persistence requires Azure Blob, but upload failed. file_name=%s",
-            file_name,
-        )
-        return "", ""
-
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
     rel_path = f"uploads/{file_name}"
     with open(abs_path, "wb") as f:
@@ -2507,6 +2496,9 @@ def _resolve_or_generate_tts_for_text(
                 speech_region=speech_region,
                 voice_name=voice_name,
                 speech_lang=_speech_lang_code(lang_code),
+                upload_dir=UPLOAD_FOLDER,
+                output_filename=_generated_tts_file_name(entry_type, int(entry_id), lang_code, _text_hash(txt), voice_name),
+                voice_provider=AZURE_TTS_PROVIDER,
             )
             or ""
         )
@@ -2685,6 +2677,9 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                     speech_region=speech_region,
                     voice_name=voice_name,
                     speech_lang=_speech_lang_code(lang),
+                    upload_dir=UPLOAD_FOLDER,
+                    output_filename=_generated_tts_file_name(entry_type, int(entry_id), lang, _text_hash(text), voice_name),
+                    voice_provider=AZURE_TTS_PROVIDER,
                 )
                 or ""
             )
@@ -3378,7 +3373,7 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
                     wid,
                     en,
                     target_lang,
-                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                    allow_tts_generation=False,
                 )
             except Exception as e:
                 app.logger.exception(f"dictionary auto translation failed: {repr(e)}")
@@ -3400,7 +3395,7 @@ def _dictionary_lookup_result(query_text: str, source_lang: str, target_lang: st
                             int(wid),
                             target_lang,
                             target_text,
-                            allow_generate=TTS_GENERATE_ON_LOOKUP,
+                            allow_generate=False,
                         )
                         if tts_audio_url:
                             _save_tts_url_to_translation_cache("word", int(wid), target_lang, tts_audio_url)
@@ -3543,7 +3538,7 @@ def translate_multilingual(text: str, source_lang: str, target_lang: str):
                     row[0],
                     row[1],
                     target_lang,
-                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                    allow_tts_generation=False,
                 )
                 if translated:
                     return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
@@ -3564,7 +3559,7 @@ def translate_multilingual(text: str, source_lang: str, target_lang: str):
                     row[0],
                     row[1],
                     target_lang,
-                    allow_tts_generation=TTS_GENERATE_ON_LOOKUP,
+                    allow_tts_generation=False,
                 )
                 if translated:
                     return {"text": translated, "is_exact": 1, "is_phrase": 0, "is_auto_translation": True, "tts_audio_url": tts_url}
@@ -3842,6 +3837,14 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
         if key not in out:
             out[key] = url
     return out
+
+
+def get_saved_extra_translations(word_id: int):
+    """
+    DB-only extra-language lookup for render routes.
+    Never triggers provider/backfill generation.
+    """
+    return _get_cached_extra_translations_for_word(word_id, EXTRA_GENERATED_LANGS, log_hits=False)
 
 
 def _bulk_fetch_translation_cache_tts_urls(entry_type: str, entry_ids, langs=None):
@@ -4139,10 +4142,6 @@ def learn():
     _log_db_context("/learn")
     trending = get_trending(limit=15)
     learn_rows = _load_learn_rows(limit=250)
-    if LEARN_TTS_LAZY_WARMUP and LEARN_TTS_LAZY_MAX_ENTRIES > 0:
-        warmup = _warmup_learn_tts_for_rows(learn_rows, max_entries=LEARN_TTS_LAZY_MAX_ENTRIES)
-        if int(warmup.get("generated", 0) or 0) > 0:
-            learn_rows = _load_learn_rows(limit=250)
     return render_template("learn.html", trending=trending, learn_rows=learn_rows)
 
 
@@ -4255,25 +4254,13 @@ def dictionary():
                     int(result_id),
                     english_text=(result or {}).get("english", ""),
                     oromo_text=(result or {}).get("oromo", ""),
-                    allow_generate=TTS_GENERATE_ON_LOOKUP,
+                    allow_generate=False,
                 )
                 try:
-                    other_translations = get_or_generate_extra_translations(result_id, result.get("english", ""))
+                    other_translations = get_saved_extra_translations(result_id)
                 except Exception as e:
                     app.logger.exception(f"/dictionary extra translations failed: {repr(e)}")
                     other_translations = {}
-            elif source_lang in ("om", "en"):
-                # If the primary lookup path did not surface result_id, still try an
-                # exact base-word probe so search can backfill missing generated langs.
-                wkey = make_search_key(_strip_edge_punct(q))
-                if wkey:
-                    fallback_base = _get_word_by_any_key(wkey)
-                    if fallback_base:
-                        try:
-                            fb_wid, fb_en, _fb_om = fallback_base
-                            get_or_generate_extra_translations(int(fb_wid or 0), normalize_text(fb_en or ""))
-                        except Exception as e:
-                            app.logger.exception(f"/dictionary fallback backfill failed: {repr(e)}")
 
             if (not from_base) and source_lang in ("om", "en"):
                 word = make_search_key(q)
@@ -4446,7 +4433,7 @@ def word_detail(term):
             int(wid),
             english_text=normalize_text(en or ""),
             oromo_text=normalize_text(om or ""),
-            allow_generate=TTS_GENERATE_ON_LOOKUP,
+            allow_generate=False,
         )
     except Exception as e:
         app.logger.exception(f"/word audio lookup failed: {repr(e)}")
@@ -4465,7 +4452,7 @@ def word_detail(term):
 
     other_translations = {}
     try:
-        other_translations = get_or_generate_extra_translations(wid, en or "") or {}
+        other_translations = get_saved_extra_translations(wid) or {}
     except Exception as e:
         app.logger.exception(f"/word extra translations failed: {repr(e)}")
         other_translations = {}
@@ -4578,7 +4565,7 @@ def find_exact_base_match(text: str, source_lang: str):
                     int(pr[0]),
                     english_text=normalize_text(pr[1] or ""),
                     oromo_text=normalize_text(pr[2] or ""),
-                    allow_generate=TTS_GENERATE_ON_LOOKUP,
+                    allow_generate=False,
                 )
                 break
 
@@ -4599,7 +4586,7 @@ def find_exact_base_match(text: str, source_lang: str):
                         int(wr[0]),
                         english_text=normalize_text(wr[1] or ""),
                         oromo_text=normalize_text(wr[2] or ""),
-                        allow_generate=TTS_GENERATE_ON_LOOKUP,
+                        allow_generate=False,
                     )
 
     conn.close()
@@ -4654,21 +4641,6 @@ def translate():
 
         if source_lang in ("om", "en"):
             matched, audio = find_exact_base_match(text, source_lang)
-            if matched and matched.get("type") == "word":
-                matched_word_id = int(matched.get("id") or 0)
-                matched_en = _get_word_english_by_id(matched_word_id)
-                if matched_word_id and matched_en:
-                    try:
-                        ensure_missing_generated_translations_for_words(
-                            [(matched_word_id, matched_en)],
-                            langs=EXTRA_GENERATED_LANGS,
-                            chunk_size=len(EXTRA_GENERATED_LANGS),
-                            log_context="translate_base_hit",
-                        )
-                    except Exception as e:
-                        app.logger.exception(
-                            f"/translate generated backfill failed for word_id={matched_word_id}: {repr(e)}"
-                        )
 
         # âœ… IMPORTANT: use multipart translator (handles commas + sentences correctly)
         tr = safe_translate_multilingual(text, source_lang, target_lang)
@@ -6560,6 +6532,94 @@ def admin_repair_generated_phrases():
         ), 200
 
 
+def run_repair_missing_audio(limit: int = 0):
+    words = _fetch_approved_word_items(limit=limit)
+    phrases = _fetch_approved_phrase_items(limit=limit)
+    linkage = run_backfill_existing_audio_linkage(limit=0, dry_run=False)
+    tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
+
+    per_language = {}
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT entry_type, lang_code, COUNT(*) AS n
+        FROM generated_tts_audio
+        GROUP BY entry_type, lang_code
+        ORDER BY entry_type, lang_code
+        """
+    )
+    for entry_type, lang_code, n in c.fetchall():
+        key = f"{entry_type}:{lang_code}"
+        per_language[key] = int(n or 0)
+    conn.close()
+
+    return {
+        "words_scanned": len(words),
+        "phrases_scanned": len(phrases),
+        "items_scanned": int(len(words) + len(phrases)),
+        "audio_reused": int(tts.get("cached", 0) or 0),
+        "audio_generated": int(tts.get("generated", 0) or 0),
+        "missing_text": int(tts.get("skipped_missing_text", 0) or 0),
+        "missing_voice_config": int(tts.get("skipped_missing_voice", 0) or 0),
+        "failures": int(tts.get("failed", 0) or 0),
+        "processed_items": int(tts.get("processed_items", 0) or 0),
+        "linkage": linkage,
+        "per_language_counts": per_language,
+    }
+
+
+@app.route("/admin/repair-missing-audio", methods=["GET", "POST"])
+def admin_repair_missing_audio():
+    if not require_admin():
+        return redirect("/admin")
+
+    default_limit = 5000
+    limit = default_limit
+    summary = {}
+    msg = ""
+    has_run = False
+
+    try:
+        if request.method == "POST":
+            has_run = True
+            limit_raw = normalize_text(request.form.get("max_items") or "")
+            if limit_raw.isdigit():
+                limit = max(1, min(int(limit_raw), 50000))
+            else:
+                limit = default_limit
+
+            summary = run_repair_missing_audio(limit=limit)
+            msg = (
+                f"Audio repair done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
+                f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
+                f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
+                f"Failures: {int(summary.get('failures', 0) or 0)}."
+            )
+            app.logger.info("admin repair missing audio summary: %s", summary)
+    except Exception as e:
+        app.logger.exception(f"admin_repair_missing_audio failed: {repr(e)}")
+        msg = "Audio repair failed safely due to an internal error. Please try again."
+
+    try:
+        return render_template(
+            "admin_repair_audio.html",
+            msg=msg,
+            message=(msg or ""),
+            summary=(summary or {}),
+            has_run=has_run,
+            max_items=limit,
+            extra_generated_langs=EXTRA_GENERATED_LANGS,
+            language_options=LANGUAGE_OPTIONS,
+        )
+    except Exception as e:
+        app.logger.exception(f"admin_repair_missing_audio render failed: {repr(e)}")
+        return (
+            "<h3>Repair Missing Audio is temporarily unavailable.</h3>"
+            "<p>Please return to dashboard and try again.</p>"
+        ), 200
+
+
 @app.route("/admin/import", methods=["GET", "POST"])
 def admin_import():
     if not require_admin():
@@ -7573,6 +7633,33 @@ def cli_backfill_audio_linkage(limit, dry_run):
         f"cache_rows_scanned={summary.get('cache_rows_scanned', 0)} "
         f"cache_rows_linked={summary.get('cache_rows_linked', 0)} "
         f"dry_run={summary.get('dry_run', False)}"
+    )
+
+
+@app.cli.command("repair-missing-audio")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit approved words/phrases scanned (0 = all).")
+def cli_repair_missing_audio(limit):
+    """
+    Cache-first audio repair:
+    1) link existing local files
+    2) generate only missing audio with current Azure key
+    """
+    _log_db_context("cli:repair-missing-audio")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    summary = run_repair_missing_audio(limit=int(limit or 0))
+    linkage = summary.get("linkage", {}) or {}
+    click.echo("Repair missing audio completed.")
+    click.echo(
+        f"items_scanned={summary.get('items_scanned', 0)} "
+        f"audio_reused={summary.get('audio_reused', 0)} "
+        f"audio_generated={summary.get('audio_generated', 0)} "
+        f"missing_text={summary.get('missing_text', 0)} "
+        f"missing_voice_config={summary.get('missing_voice_config', 0)} "
+        f"failures={summary.get('failures', 0)} "
+        f"linkage_files_scanned={linkage.get('files_scanned', 0)} "
+        f"linkage_rows_linked={linkage.get('rows_linked', 0)} "
+        f"linkage_rows_already_present={linkage.get('rows_already_present', 0)}"
     )
 
 

@@ -1,8 +1,5 @@
 import hashlib
 import os
-import tempfile
-
-from services.blob_service import upload_file
 
 
 def azure_synthesize_mp3(
@@ -67,22 +64,26 @@ def generate_and_store_tts(
     speech_region,
     voice_name="",
     speech_lang="",
+    upload_dir="",
+    output_filename="",
+    voice_provider="azure_speech",
 ):
     clean_text = (text or "").strip()
     if not clean_text:
         return ""
 
-    text_hash = hashlib.md5(clean_text.encode("utf-8")).hexdigest()
+    text_hash = hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
     cur = db.cursor()
     cur.execute(
         """
         SELECT file_path
         FROM generated_tts_audio
         WHERE entry_type=? AND entry_id=? AND lang_code=? AND text_hash=?
+          AND voice_provider=? AND voice_name=?
         ORDER BY id DESC
         LIMIT 1
         """,
-        (entry_type, int(entry_id or 0), lang_code, text_hash),
+        (entry_type, int(entry_id or 0), lang_code, text_hash, (voice_provider or "azure_speech"), (voice_name or "").strip()),
     )
     row = cur.fetchone()
     if row and row[0]:
@@ -98,37 +99,32 @@ def generate_and_store_tts(
     if err or not audio_bytes:
         return ""
 
-    filename = f"tts_{entry_type}_{entry_id}_{lang_code}_{text_hash}.mp3"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    try:
-        tmp.write(audio_bytes)
-        tmp.close()
-        blob_url = upload_file(tmp.name, filename)
-        if not blob_url:
-            return ""
-        cur.execute(
-            """
-            INSERT INTO generated_tts_audio
-            (entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name) DO UPDATE SET
-                file_path=excluded.file_path
-            """,
-            (
-                entry_type,
-                int(entry_id or 0),
-                lang_code,
-                clean_text,
-                text_hash,
-                "azure",
-                (voice_name or "").strip(),
-                blob_url,
-            ),
-        )
-        db.commit()
-        return blob_url
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except Exception:
-            pass
+    safe_name = (output_filename or "").strip() or f"tts_{entry_type}_{entry_id}_{lang_code}_{text_hash[:12]}.mp3"
+    target_dir = (upload_dir or "").strip() or os.path.join("static", "uploads")
+    os.makedirs(target_dir, exist_ok=True)
+    abs_path = os.path.join(target_dir, safe_name)
+    with open(abs_path, "wb") as fh:
+        fh.write(audio_bytes)
+    file_ref = f"uploads/{safe_name}"
+
+    cur.execute(
+        """
+        INSERT INTO generated_tts_audio
+        (entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name) DO UPDATE SET
+            file_path=excluded.file_path
+        """,
+        (
+            entry_type,
+            int(entry_id or 0),
+            lang_code,
+            clean_text,
+            text_hash,
+            (voice_provider or "azure_speech"),
+            (voice_name or "").strip(),
+            file_ref,
+        ),
+    )
+    db.commit()
+    return file_ref
