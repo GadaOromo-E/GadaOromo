@@ -1215,6 +1215,8 @@ def _collect_db_diagnostics():
         "db_path": DB_NAME,
         "db_abs": os.path.abspath(DB_NAME),
         "db_exists": os.path.isfile(DB_NAME),
+        "upload_folder": UPLOAD_FOLDER,
+        "is_render_disk": bool(IS_RENDER_DISK),
         "require_explicit_db_path": bool(REQUIRE_EXPLICIT_DB_PATH),
         "require_blob_for_generated_tts": bool(REQUIRE_BLOB_FOR_GENERATED_TTS),
         "azure_blob_enabled": bool(_azure_blob_enabled()),
@@ -2895,7 +2897,12 @@ def run_generated_tts_blob_migration(limit: int = 0, chunk_size: int = 100, dry_
     return summary
 
 
-def run_backfill_existing_audio_linkage(limit: int = 0, dry_run: bool = False):
+def run_backfill_existing_audio_linkage(
+    limit: int = 0,
+    dry_run: bool = False,
+    source_dirs=None,
+    promote_to_uploads: bool = True,
+):
     """
     DB/file linkage backfill only.
     - Registers existing tts_*.mp3 files into generated_tts_audio.
@@ -2904,6 +2911,9 @@ def run_backfill_existing_audio_linkage(limit: int = 0, dry_run: bool = False):
     """
     summary = {
         "files_scanned": 0,
+        "files_promoted": 0,
+        "files_already_in_uploads": 0,
+        "files_promotion_failed": 0,
         "rows_linked": 0,
         "rows_already_present": 0,
         "rows_skipped_missing_text": 0,
@@ -2973,8 +2983,15 @@ def run_backfill_existing_audio_linkage(limit: int = 0, dry_run: bool = False):
     }
     conn.close()
 
+    folders = [UPLOAD_FOLDER, STATIC_UPLOADS_FOLDER]
+    if source_dirs:
+        for d in source_dirs:
+            dn = normalize_text(d or "")
+            if dn and dn not in folders:
+                folders.append(dn)
+
     candidate_names = set()
-    for folder in (UPLOAD_FOLDER, STATIC_UPLOADS_FOLDER):
+    for folder in folders:
         if not os.path.isdir(folder):
             continue
         try:
@@ -3012,14 +3029,41 @@ def run_backfill_existing_audio_linkage(limit: int = 0, dry_run: bool = False):
             continue
 
         uploads_abs = os.path.join(UPLOAD_FOLDER, name)
-        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        source_abs = ""
         if os.path.isfile(uploads_abs):
-            file_ref = f"uploads/{name}"
-        elif os.path.isfile(static_abs):
-            file_ref = f"uploads/{name}"
+            source_abs = uploads_abs
+            summary["files_already_in_uploads"] += 1
         else:
+            for folder in folders:
+                cand = os.path.join(folder, name)
+                if os.path.isfile(cand):
+                    source_abs = cand
+                    break
+
+        if not source_abs:
             summary["rows_skipped_missing_file"] += 1
             continue
+
+        if (os.path.abspath(source_abs) != os.path.abspath(uploads_abs)) and promote_to_uploads:
+            if dry_run:
+                summary["files_promoted"] += 1
+            else:
+                try:
+                    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+                    shutil.copy2(source_abs, uploads_abs)
+                    summary["files_promoted"] += 1
+                    source_abs = uploads_abs
+                except Exception:
+                    summary["files_promotion_failed"] += 1
+                    app.logger.exception("audio linkage promote failed for %s from %s", name, source_abs)
+                    summary["rows_skipped_missing_file"] += 1
+                    continue
+
+        if not os.path.isfile(uploads_abs):
+            # Keep generated_tts_audio paths stable for live serving (/uploads/...).
+            summary["rows_skipped_missing_file"] += 1
+            continue
+        file_ref = f"uploads/{name}"
 
         key = (entry_type, int(entry_id), lang_code, full_hash, AZURE_TTS_PROVIDER, voice_name)
         if key in existing_keys:
@@ -6532,27 +6576,54 @@ def admin_repair_generated_phrases():
         ), 200
 
 
-def run_repair_missing_audio(limit: int = 0):
+def run_repair_missing_audio(
+    limit: int = 0,
+    generate_missing: bool = True,
+    source_dirs=None,
+):
     words = _fetch_approved_word_items(limit=limit)
     phrases = _fetch_approved_phrase_items(limit=limit)
-    linkage = run_backfill_existing_audio_linkage(limit=0, dry_run=False)
-    tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
+    linkage = run_backfill_existing_audio_linkage(
+        limit=0,
+        dry_run=False,
+        source_dirs=source_dirs,
+        promote_to_uploads=True,
+    )
+    tts = {
+        "processed_items": 0,
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
+    }
+    if generate_missing:
+        tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
 
     per_language = {}
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    c.execute(
-        """
-        SELECT entry_type, lang_code, COUNT(*) AS n
-        FROM generated_tts_audio
-        GROUP BY entry_type, lang_code
-        ORDER BY entry_type, lang_code
-        """
-    )
-    for entry_type, lang_code, n in c.fetchall():
-        key = f"{entry_type}:{lang_code}"
-        per_language[key] = int(n or 0)
-    conn.close()
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT entry_type, lang_code, COUNT(*) AS n
+            FROM generated_tts_audio
+            GROUP BY entry_type, lang_code
+            ORDER BY entry_type, lang_code
+            """
+        )
+        for entry_type, lang_code, n in c.fetchall():
+            key = f"{entry_type}:{lang_code}"
+            per_language[key] = int(n or 0)
+    except Exception:
+        app.logger.exception("run_repair_missing_audio failed while counting per-language rows")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     return {
         "words_scanned": len(words),
@@ -6566,6 +6637,7 @@ def run_repair_missing_audio(limit: int = 0):
         "processed_items": int(tts.get("processed_items", 0) or 0),
         "linkage": linkage,
         "per_language_counts": per_language,
+        "generation_performed": bool(generate_missing),
     }
 
 
@@ -6579,6 +6651,7 @@ def admin_repair_missing_audio():
     summary = {}
     msg = ""
     has_run = False
+    safe_source_dirs = [STATIC_UPLOADS_FOLDER]
 
     try:
         if request.method == "POST":
@@ -6589,14 +6662,17 @@ def admin_repair_missing_audio():
             else:
                 limit = default_limit
 
-            summary = run_repair_missing_audio(limit=limit)
-            msg = (
-                f"Audio repair done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
-                f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
-                f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
-                f"Failures: {int(summary.get('failures', 0) or 0)}."
+            # Safety: no Azure generation from admin button click.
+            summary = run_repair_missing_audio(
+                limit=limit,
+                generate_missing=False,
+                source_dirs=safe_source_dirs,
             )
-            app.logger.info("admin repair missing audio summary: %s", summary)
+            msg = (
+                "Audio import/link completed. Existing files were promoted to persistent uploads and linked in DB. "
+                "Run CLI repair to generate only truly missing audio."
+            )
+            app.logger.info("admin repair missing audio (link-only) summary: %s", summary)
     except Exception as e:
         app.logger.exception(f"admin_repair_missing_audio failed: {repr(e)}")
         msg = "Audio repair failed safely due to an internal error. Please try again."
@@ -6609,8 +6685,12 @@ def admin_repair_missing_audio():
             summary=(summary or {}),
             has_run=has_run,
             max_items=limit,
-            extra_generated_langs=EXTRA_GENERATED_LANGS,
-            language_options=LANGUAGE_OPTIONS,
+            extra_generated_langs=EXTRA_GENERATED_LANGS if EXTRA_GENERATED_LANGS else tuple(),
+            language_options=LANGUAGE_OPTIONS if isinstance(LANGUAGE_OPTIONS, dict) else {},
+            upload_folder=UPLOAD_FOLDER,
+            is_render_disk=IS_RENDER_DISK,
+            recommend_generate_cmd=f"flask repair-missing-audio --limit {int(limit or default_limit)}",
+            recommend_import_cmd="flask import-existing-audio",
         )
     except Exception as e:
         app.logger.exception(f"admin_repair_missing_audio render failed: {repr(e)}")
@@ -7535,7 +7615,10 @@ def cli_db_diagnostics():
     _log_db_context("cli:db-diagnostics")
     d = _collect_db_diagnostics()
     words_counts = _words_table_counts()
+    click.echo(f"DB_PATH={d.get('db_path', '')}")
     click.echo(f"DB_ABS={d.get('db_abs', '')}")
+    click.echo(f"UPLOAD_FOLDER={d.get('upload_folder', '')}")
+    click.echo(f"RENDER_DISK_ACTIVE={d.get('is_render_disk', False)}")
     click.echo(
         f"words_total={d.get('tables', {}).get('words', -1)} "
         f"approved_words={words_counts.get('approved_rows', 0)} "
@@ -7614,17 +7697,30 @@ def cli_audit_phrase_translations():
 @app.cli.command("backfill-audio-linkage")
 @click.option("--limit", type=int, default=0, show_default=True, help="Limit scanned tts files (0 = all).")
 @click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not write DB updates.")
-def cli_backfill_audio_linkage(limit, dry_run):
+@click.option(
+    "--source-dir",
+    multiple=True,
+    help="Extra folder(s) to scan for existing tts_*.mp3 before promotion to upload folder.",
+)
+def cli_backfill_audio_linkage(limit, dry_run, source_dir):
     """
     Link existing persisted TTS files/URLs into DB caches without regeneration.
     """
     _log_db_context("cli:backfill-audio-linkage")
     click.echo(f"DB_PATH={DB_NAME}")
     click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
-    summary = run_backfill_existing_audio_linkage(limit=int(limit or 0), dry_run=bool(dry_run))
+    summary = run_backfill_existing_audio_linkage(
+        limit=int(limit or 0),
+        dry_run=bool(dry_run),
+        source_dirs=list(source_dir or ()),
+        promote_to_uploads=True,
+    )
     click.echo("Audio linkage backfill completed.")
     click.echo(
         f"files_scanned={summary.get('files_scanned', 0)} "
+        f"files_promoted={summary.get('files_promoted', 0)} "
+        f"files_already_in_uploads={summary.get('files_already_in_uploads', 0)} "
+        f"files_promotion_failed={summary.get('files_promotion_failed', 0)} "
         f"rows_linked={summary.get('rows_linked', 0)} "
         f"rows_already_present={summary.get('rows_already_present', 0)} "
         f"rows_skipped_missing_text={summary.get('rows_skipped_missing_text', 0)} "
@@ -7632,6 +7728,46 @@ def cli_backfill_audio_linkage(limit, dry_run):
         f"rows_skipped_missing_file={summary.get('rows_skipped_missing_file', 0)} "
         f"cache_rows_scanned={summary.get('cache_rows_scanned', 0)} "
         f"cache_rows_linked={summary.get('cache_rows_linked', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
+    )
+
+
+@app.cli.command("import-existing-audio")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit scanned tts files (0 = all).")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not write DB updates.")
+@click.option(
+    "--source-dir",
+    multiple=True,
+    help="Source folder(s) containing local tts_*.mp3 files to import/promote.",
+)
+def cli_import_existing_audio(limit, dry_run, source_dir):
+    """
+    Import/link existing local TTS files into persistent uploads + generated_tts_audio.
+    This command never regenerates audio and never calls Azure.
+    """
+    _log_db_context("cli:import-existing-audio")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    click.echo(f"UPLOAD_FOLDER={UPLOAD_FOLDER}")
+    click.echo(f"RENDER_DISK_ACTIVE={IS_RENDER_DISK}")
+    src_dirs = list(source_dir or ()) or [STATIC_UPLOADS_FOLDER]
+    summary = run_backfill_existing_audio_linkage(
+        limit=int(limit or 0),
+        dry_run=bool(dry_run),
+        source_dirs=src_dirs,
+        promote_to_uploads=True,
+    )
+    click.echo("Existing audio import completed.")
+    click.echo(
+        f"files_scanned={summary.get('files_scanned', 0)} "
+        f"files_promoted={summary.get('files_promoted', 0)} "
+        f"files_already_in_uploads={summary.get('files_already_in_uploads', 0)} "
+        f"files_promotion_failed={summary.get('files_promotion_failed', 0)} "
+        f"rows_linked={summary.get('rows_linked', 0)} "
+        f"rows_already_present={summary.get('rows_already_present', 0)} "
+        f"rows_skipped_missing_text={summary.get('rows_skipped_missing_text', 0)} "
+        f"rows_skipped_hash_mismatch={summary.get('rows_skipped_hash_mismatch', 0)} "
+        f"rows_skipped_missing_file={summary.get('rows_skipped_missing_file', 0)} "
         f"dry_run={summary.get('dry_run', False)}"
     )
 
@@ -7647,7 +7783,9 @@ def cli_repair_missing_audio(limit):
     _log_db_context("cli:repair-missing-audio")
     click.echo(f"DB_PATH={DB_NAME}")
     click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
-    summary = run_repair_missing_audio(limit=int(limit or 0))
+    click.echo(f"UPLOAD_FOLDER={UPLOAD_FOLDER}")
+    click.echo(f"RENDER_DISK_ACTIVE={IS_RENDER_DISK}")
+    summary = run_repair_missing_audio(limit=int(limit or 0), generate_missing=True, source_dirs=[STATIC_UPLOADS_FOLDER])
     linkage = summary.get("linkage", {}) or {}
     click.echo("Repair missing audio completed.")
     click.echo(
@@ -7658,6 +7796,7 @@ def cli_repair_missing_audio(limit):
         f"missing_voice_config={summary.get('missing_voice_config', 0)} "
         f"failures={summary.get('failures', 0)} "
         f"linkage_files_scanned={linkage.get('files_scanned', 0)} "
+        f"linkage_files_promoted={linkage.get('files_promoted', 0)} "
         f"linkage_rows_linked={linkage.get('rows_linked', 0)} "
         f"linkage_rows_already_present={linkage.get('rows_already_present', 0)}"
     )
