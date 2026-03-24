@@ -1089,16 +1089,38 @@ def _public_audio_url(file_path: str) -> str:
             _maybe_promote_tts_to_persistent(name, static_abs)
         if os.path.isfile(uploads_abs):
             return "/uploads/" + name
-        if os.path.isfile(static_abs):
-            return "/static/uploads/" + name
-        # Conservative fallback for historical jobs that wrote to static/uploads.
-        return "/static/uploads/" + name
+        # Route through /uploads even for static-backed legacy files; the route
+        # already falls back to static/uploads and works consistently on Render.
+        return "/uploads/" + name
 
     if fp.startswith("uploads/"):
         return "/" + fp
     if fp.startswith("/uploads/"):
         return fp
     return "/uploads/" + name
+
+
+def _normalize_cached_tts_url(tts_url: str) -> str:
+    """
+    Canonicalize local TTS paths to /uploads/<name> so serving goes through one
+    route with Render-safe fallbacks.
+    """
+    u = normalize_text(tts_url or "")
+    if not u:
+        return ""
+    if _is_remote_audio_ref(u):
+        return u
+    name = os.path.basename(u.replace("\\", "/"))
+    if name.startswith("tts_"):
+        # Ensure stale /static/uploads URLs and relative paths converge.
+        if _has_usable_audio_ref(f"uploads/{name}"):
+            return "/uploads/" + name
+        return ""
+    if u.startswith("/uploads/"):
+        return u
+    if u.startswith("uploads/"):
+        return "/" + u
+    return u
 
 
 def _audio_abs_path(file_path: str) -> str:
@@ -2849,7 +2871,7 @@ def _get_or_generate_word_translation(
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
         app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
         translated_cached = normalize_text(cached[0] or "")
-        tts_cached = normalize_text((cached or [None, ""])[1] or "")
+        tts_cached = _normalize_cached_tts_url((cached or [None, ""])[1] or "")
         if not tts_cached:
             tts_cached = _resolve_or_generate_tts_for_text(
                 "word",
