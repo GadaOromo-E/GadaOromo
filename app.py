@@ -60,7 +60,9 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from openpyxl import load_workbook
 from services.translation_service import google_translate_batch as service_google_translate_batch
 from services.translation_service import google_translate_text as service_google_translate_text
+from services.translation_service import get_or_generate_translation as service_get_or_generate_translation
 from services.tts_service import azure_synthesize_mp3
+from services.tts_service import generate_and_store_tts as service_generate_and_store_tts
 try:
     from azure.storage.blob import BlobServiceClient, ContentSettings
     from azure.core.exceptions import ResourceExistsError
@@ -925,7 +927,23 @@ def ensure_missing_generated_translations_for_words(
             # Per-item fallback avoids all-or-nothing loss when batch fails/mismatches.
             for wid, en in chunk_pairs:
                 try:
-                    translated = google_translate_text_v2(en, target=target_code, source="en")
+                    fallback_conn = None
+                    try:
+                        fallback_conn = sqlite3.connect(DB_NAME)
+                        translated = service_get_or_generate_translation(
+                            db=fallback_conn,
+                            entry_type="word",
+                            entry_id=int(wid or 0),
+                            source_text=en,
+                            target_lang=lang,
+                            api_key=_get_google_key(),
+                        )
+                    finally:
+                        if fallback_conn is not None:
+                            try:
+                                fallback_conn.close()
+                            except Exception:
+                                pass
                     translated_text = normalize_text(translated or "")
                     if not _is_meaningful_generated_text(translated_text):
                         lang_stats["empty_results"] += 1
@@ -2126,11 +2144,23 @@ def ensure_missing_generated_translations_for_phrases(
             else:
                 for pid, en in pairs:
                     try:
-                        translated = google_translate_text_v2(
-                            en,
-                            target=_google_lang_code(lang),
-                            source="en",
-                        )
+                        fallback_conn = None
+                        try:
+                            fallback_conn = sqlite3.connect(DB_NAME)
+                            translated = service_get_or_generate_translation(
+                                db=fallback_conn,
+                                entry_type="phrase",
+                                entry_id=int(pid or 0),
+                                source_text=en,
+                                target_lang=lang,
+                                api_key=_get_google_key(),
+                            )
+                        finally:
+                            if fallback_conn is not None:
+                                try:
+                                    fallback_conn.close()
+                                except Exception:
+                                    pass
                         txt = normalize_text(translated or "")
                         if not _is_meaningful_generated_text(txt):
                             st["empty_results"] += 1
@@ -2462,6 +2492,45 @@ def _resolve_or_generate_tts_for_text(
     if not speech_key or not speech_region:
         return ""
 
+    # Primary path: service-layer DB+Blob workflow.
+    service_conn = None
+    try:
+        service_conn = sqlite3.connect(DB_NAME)
+        stored = normalize_text(
+            service_generate_and_store_tts(
+                db=service_conn,
+                entry_type=entry_type,
+                entry_id=int(entry_id or 0),
+                lang_code=lang_code,
+                text=txt,
+                speech_key=speech_key,
+                speech_region=speech_region,
+                voice_name=voice_name,
+                speech_lang=_speech_lang_code(lang_code),
+            )
+            or ""
+        )
+        if stored:
+            public_url = _public_audio_url(stored)
+            if lang_code in EXTRA_GENERATED_LANGS:
+                _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
+            return public_url
+    except Exception as e:
+        app.logger.exception(
+            "service generate_and_store_tts failed entry_type=%s entry_id=%s lang=%s error=%s",
+            entry_type,
+            entry_id,
+            lang_code,
+            repr(e),
+        )
+    finally:
+        if service_conn is not None:
+            try:
+                service_conn.close()
+            except Exception:
+                pass
+
+    # Fallback path: legacy in-app synthesis + persistence.
     audio_bytes, error = azure_synthesize_mp3(
         text=txt,
         speech_key=speech_key,
@@ -2601,6 +2670,44 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, cached["url"])
             continue
+
+        service_conn = None
+        try:
+            service_conn = sqlite3.connect(DB_NAME)
+            stored = normalize_text(
+                service_generate_and_store_tts(
+                    db=service_conn,
+                    entry_type=entry_type,
+                    entry_id=int(entry_id or 0),
+                    lang_code=lang,
+                    text=text,
+                    speech_key=speech_key,
+                    speech_region=speech_region,
+                    voice_name=voice_name,
+                    speech_lang=_speech_lang_code(lang),
+                )
+                or ""
+            )
+            if stored:
+                public_url = _public_audio_url(stored)
+                if lang in EXTRA_GENERATED_LANGS:
+                    _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
+                result["generated"] += 1
+                continue
+        except Exception as e:
+            app.logger.exception(
+                "service generate_and_store_tts failed entry_type=%s entry_id=%s lang=%s error=%s",
+                entry_type,
+                entry_id,
+                lang,
+                repr(e),
+            )
+        finally:
+            if service_conn is not None:
+                try:
+                    service_conn.close()
+                except Exception:
+                    pass
 
         audio_bytes, error = azure_synthesize_mp3(
             text=text,
@@ -3168,7 +3275,30 @@ def _get_or_generate_word_translation(
                 _save_tts_url_to_translation_cache("word", int(word_id), target_lang, tts_cached)
         return translated_cached, tts_cached, True
 
-    translated = _auto_translate_from_english(english_text, target_lang)
+    translated = ""
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        translated = normalize_text(
+            service_get_or_generate_translation(
+                db=conn,
+                entry_type="word",
+                entry_id=int(word_id or 0),
+                source_text=english_text,
+                target_lang=target_lang,
+                api_key=_get_google_key(),
+            )
+            or ""
+        )
+    except Exception as e:
+        app.logger.exception(f"service get_or_generate_translation failed word_id={word_id} lang={target_lang}: {repr(e)}")
+        translated = _auto_translate_from_english(english_text, target_lang)
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
     if not translated:
         app.logger.info(
             "skipping generation due to API failure word_id=%s lang=%s",
@@ -3177,6 +3307,7 @@ def _get_or_generate_word_translation(
         )
         return "", None, False
 
+    # Ensure local cache table has the value even if service call failed over to direct provider path.
     _save_generated_translation(word_id, target_lang, translated, provider="google_translate_v2", tts_audio_url=None)
     tts_url = _resolve_or_generate_tts_for_text(
         "word",
