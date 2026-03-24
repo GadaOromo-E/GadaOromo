@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repair Missing Audio | Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <style>
+    .summary-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .summary-table th, .summary-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    .summary-table th { background: #f5f5f5; }
+    .summary-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 10px; margin-top: 10px; }
+    .summary-card { border: 1px solid #e2e2e2; border-radius: 8px; padding: 10px; background: #fafafa; }
+    @media (max-width: 700px) { .summary-grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="topbar">
+    <div class="title-row">
+      <div>
+        <h2 style="margin:0;">Repair Missing Audio</h2>
+        <div class="subtle">Admin-only cache-first audio repair for words and phrases using existing Azure key + persistent disk.</div>
+      </div>
+      <a class="btn danger" href="/dashboard">Back</a>
+    </div>
+  </div>
+
+  {% if message %}
+    <div class="result-box">{{ message }}</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="muted" style="margin-bottom:10px; font-size:14px;">
+      DB-backed storage: <b>{{ upload_folder or "" }}</b> |
+      Render persistent disk active: <b>{{ "yes" if is_render_disk else "no" }}</b>
+    </div>
+    <form method="POST" action="/admin/repair-missing-audio" class="row" style="align-items:flex-end;">
+      <div style="display:flex; flex-direction:column; gap:6px; min-width:220px;">
+        <label class="subtle">Max approved items to scan this run</label>
+        <input type="number" min="1" max="50000" step="1" name="max_items" value="{{ max_items or 5000 }}" />
+      </div>
+      <button type="submit" class="btn primary">Import + Link Existing Audio</button>
+    </form>
+    <div class="muted" style="margin-top:10px; font-size:14px;">
+      Existing local audio files are promoted to persistent uploads and linked first. This web action does not call Azure.
+    </div>
+    <div class="muted" style="margin-top:6px; font-size:14px;">
+      For missing audio generation run: <code>{{ recommend_generate_cmd or "flask repair-missing-audio --limit 5000" }}</code>
+    </div>
+    <div class="muted" style="margin-top:4px; font-size:14px;">
+      Import-only CLI: <code>{{ recommend_import_cmd or "flask import-existing-audio" }}</code>
+    </div>
+  </div>
+
+  {% set s = summary or {} %}
+  {% set linkage = s.get("linkage", {}) if s else {} %}
+  {% set per_lang = s.get("per_language_counts", {}) if s else {} %}
+  {% if has_run %}
+    <div class="card">
+      <h2>Summary</h2>
+      <div class="summary-grid">
+        <div class="summary-card"><b>Words scanned:</b> {{ s.get("words_scanned", 0) }}</div>
+        <div class="summary-card"><b>Phrases scanned:</b> {{ s.get("phrases_scanned", 0) }}</div>
+        <div class="summary-card"><b>Items scanned:</b> {{ s.get("items_scanned", 0) }}</div>
+        <div class="summary-card"><b>Processed items:</b> {{ s.get("processed_items", 0) }}</div>
+        <div class="summary-card"><b>Generation performed:</b> {{ "yes" if s.get("generation_performed", False) else "no" }}</div>
+        <div class="summary-card"><b>Audio reused:</b> {{ s.get("audio_reused", 0) }}</div>
+        <div class="summary-card"><b>Audio generated:</b> {{ s.get("audio_generated", 0) }}</div>
+        <div class="summary-card"><b>Missing text:</b> {{ s.get("missing_text", 0) }}</div>
+        <div class="summary-card"><b>Missing voice config:</b> {{ s.get("missing_voice_config", 0) }}</div>
+        <div class="summary-card"><b>Failures:</b> {{ s.get("failures", 0) }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Existing Local Audio Linkage</h2>
+      <div class="summary-grid">
+        <div class="summary-card"><b>Files scanned:</b> {{ linkage.get("files_scanned", 0) }}</div>
+        <div class="summary-card"><b>Files promoted:</b> {{ linkage.get("files_promoted", 0) }}</div>
+        <div class="summary-card"><b>Files already in uploads:</b> {{ linkage.get("files_already_in_uploads", 0) }}</div>
+        <div class="summary-card"><b>Promotion failures:</b> {{ linkage.get("files_promotion_failed", 0) }}</div>
+        <div class="summary-card"><b>Rows linked:</b> {{ linkage.get("rows_linked", 0) }}</div>
+        <div class="summary-card"><b>Rows already present:</b> {{ linkage.get("rows_already_present", 0) }}</div>
+        <div class="summary-card"><b>Missing text:</b> {{ linkage.get("rows_skipped_missing_text", 0) }}</div>
+        <div class="summary-card"><b>Hash mismatch:</b> {{ linkage.get("rows_skipped_hash_mismatch", 0) }}</div>
+        <div class="summary-card"><b>Missing file:</b> {{ linkage.get("rows_skipped_missing_file", 0) }}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Stored Audio Counts (Entry:Language)</h2>
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th>Entry:Language</th>
+            <th>Count</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, n in per_lang.items() %}
+            <tr>
+              <td>{{ key }}</td>
+              <td>{{ n }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>
