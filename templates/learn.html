@@ -101,12 +101,16 @@
 </div>
 
 <div class="container">
-<!-- learn_debug template_version={{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }} build={{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }} render_path={{ (learn_debug or {}).get('render_path', 'unknown') }} legacy_cards_path={{ (learn_debug or {}).get('legacy_cards_path', false) }} rows_loaded={{ (learn_debug or {}).get('rows_loaded', 0) }} rows_rendered_with_audio_url={{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }} audio_js={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }} pwa_ui_js={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }} sw_js={{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }} -->
+<!-- learn_debug template_version={{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }} build={{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }} render_path={{ (learn_debug or {}).get('render_path', 'unknown') }} legacy_cards_path={{ (learn_debug or {}).get('legacy_cards_path', false) }} words_loaded={{ (learn_debug or {}).get('words_loaded', 0) }} phrases_loaded={{ (learn_debug or {}).get('phrases_loaded', 0) }} total_rows_loaded={{ (learn_debug or {}).get('total_rows_loaded', 0) }} rows_with_any_audio={{ (learn_debug or {}).get('rows_with_any_audio', 0) }} rows_rendered_with_audio_url={{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }} audio_js={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }} pwa_ui_js={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }} sw_js={{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }} -->
 <div id="learnDebugMarker" style="display:none"
      data-template-version="{{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }}"
      data-build-token="{{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }}"
      data-render-path="{{ (learn_debug or {}).get('render_path', 'unknown') }}"
      data-legacy-cards-path="{{ (learn_debug or {}).get('legacy_cards_path', false) }}"
+     data-words-loaded="{{ (learn_debug or {}).get('words_loaded', 0) }}"
+     data-phrases-loaded="{{ (learn_debug or {}).get('phrases_loaded', 0) }}"
+     data-total-rows-loaded="{{ (learn_debug or {}).get('total_rows_loaded', 0) }}"
+     data-rows-with-any-audio="{{ (learn_debug or {}).get('rows_with_any_audio', 0) }}"
      data-audio-js-version="{{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}"
      data-pwa-ui-js-version="{{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}"
      data-sw-js-version="{{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }}"
@@ -256,6 +260,11 @@ window.__gadaaLearnDebug = {
   buildToken: "{{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }}",
   renderPath: "{{ (learn_debug or {}).get('render_path', 'unknown') }}",
   legacyCardsPath: "{{ (learn_debug or {}).get('legacy_cards_path', false) }}",
+  wordsLoaded: "{{ (learn_debug or {}).get('words_loaded', 0) }}",
+  phrasesLoaded: "{{ (learn_debug or {}).get('phrases_loaded', 0) }}",
+  totalRowsLoaded: "{{ (learn_debug or {}).get('total_rows_loaded', 0) }}",
+  rowsWithAnyAudio: "{{ (learn_debug or {}).get('rows_with_any_audio', 0) }}",
+  rowsRenderedWithAudioUrl: "{{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }}",
   audioJsVersion: "{{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}",
   pwaUiJsVersion: "{{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}",
   swJsVersion: "{{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }}",

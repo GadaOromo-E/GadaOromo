@@ -4223,8 +4223,7 @@ def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
     return out
 
 
-def _load_learn_rows(limit: int = 200):
-    safe_limit = max(1, min(int(limit or 200), 1000))
+def _load_learn_rows():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
@@ -4236,9 +4235,7 @@ def _load_learn_rows(limit: int = 200):
           AND english IS NOT NULL AND TRIM(english) != ''
           AND oromo IS NOT NULL AND TRIM(oromo) != ''
         ORDER BY english ASC
-        LIMIT ?
         """,
-        (safe_limit,),
     )
     word_rows = c.fetchall()
 
@@ -4268,9 +4265,7 @@ def _load_learn_rows(limit: int = 200):
           AND english IS NOT NULL AND TRIM(english) != ''
           AND oromo IS NOT NULL AND TRIM(oromo) != ''
         ORDER BY english ASC
-        LIMIT ?
         """,
-        (safe_limit,),
     )
     phrase_rows = c.fetchall()
 
@@ -4383,9 +4378,10 @@ def _load_learn_rows(limit: int = 200):
                 rows_rendered_with_audio_url_words += 1
             elif entry_type == "phrase":
                 rows_rendered_with_audio_url_phrases += 1
+    rows_with_any_audio = int(rows_rendered_with_audio_url)
 
     app.logger.info(
-        "/learn loader rows_loaded=%s words_loaded=%s phrases_loaded=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db=%s rows_with_audio_in_db_words=%s rows_with_audio_in_db_phrases=%s rows_rendered_with_audio_url=%s rows_rendered_with_audio_url_words=%s rows_rendered_with_audio_url_phrases=%s audio_attached_count=%s",
+        "/learn loader total_rows_loaded=%s words_loaded=%s phrases_loaded=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db=%s rows_with_audio_in_db_words=%s rows_with_audio_in_db_phrases=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s rows_rendered_with_audio_url_words=%s rows_rendered_with_audio_url_phrases=%s audio_attached_count=%s",
         total_rows_loaded,
         words_loaded,
         phrases_loaded,
@@ -4395,6 +4391,7 @@ def _load_learn_rows(limit: int = 200):
         rows_with_audio_in_db,
         rows_with_audio_in_db_words,
         rows_with_audio_in_db_phrases,
+        rows_with_any_audio,
         rows_rendered_with_audio_url,
         rows_rendered_with_audio_url_words,
         rows_rendered_with_audio_url_phrases,
@@ -4458,29 +4455,43 @@ def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
 def learn():
     _log_db_context("/learn")
     trending = get_trending(limit=15)
-    learn_rows = _load_learn_rows(limit=250)
-    rows_loaded = int(len(learn_rows or []))
+    learn_rows = _load_learn_rows()
+    total_rows_loaded = int(len(learn_rows or []))
+    words_loaded = 0
+    phrases_loaded = 0
     rows_rendered_with_audio_url = 0
     for r in (learn_rows or []):
+        if (r or {}).get("entry_type") == "word":
+            words_loaded += 1
+        elif (r or {}).get("entry_type") == "phrase":
+            phrases_loaded += 1
         a = (r or {}).get("audio") or {}
         if any(normalize_text(v or "") for v in a.values()):
             rows_rendered_with_audio_url += 1
-    learn_render_path = "table_rows" if rows_loaded > 0 else "table_rows_empty"
+    rows_with_any_audio = int(rows_rendered_with_audio_url)
+    learn_render_path = "table_rows" if total_rows_loaded > 0 else "table_rows_empty"
     legacy_cards_path = False
     app.logger.info(
-        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s rows_loaded=%s rows_rendered_with_audio_url=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
+        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s words_loaded=%s phrases_loaded=%s total_rows_loaded=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
         LEARN_TEMPLATE_VERSION,
         APP_BUILD_TOKEN,
         learn_render_path,
         legacy_cards_path,
-        rows_loaded,
+        words_loaded,
+        phrases_loaded,
+        total_rows_loaded,
+        rows_with_any_audio,
         rows_rendered_with_audio_url,
         AUDIO_JS_VERSION,
         PWA_UI_JS_VERSION,
         SW_JS_VERSION,
     )
     learn_debug = {
-        "rows_loaded": rows_loaded,
+        "words_loaded": words_loaded,
+        "phrases_loaded": phrases_loaded,
+        "total_rows_loaded": total_rows_loaded,
+        "rows_loaded": total_rows_loaded,
+        "rows_with_any_audio": rows_with_any_audio,
         "rows_rendered_with_audio_url": rows_rendered_with_audio_url,
         "template_version": LEARN_TEMPLATE_VERSION,
         "build_token": APP_BUILD_TOKEN,
