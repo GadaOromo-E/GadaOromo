@@ -8643,6 +8643,511 @@ def cli_sync_missing_phrase_translations(source_db, dry_run):
     )
 
 
+def _load_entry_identity_maps(cur, table_name: str):
+    cur.execute(f"SELECT id, english, oromo FROM {table_name}")
+    by_id = {}
+    by_text = {}
+    for row_id, en, om in cur.fetchall():
+        rid = int(row_id or 0)
+        if rid <= 0:
+            continue
+        key = (normalize_text(en or ""), normalize_text(om or ""))
+        by_id[rid] = key
+        by_text.setdefault(key, []).append(rid)
+    return {"by_id": by_id, "by_text": by_text}
+
+
+def _resolve_audio_sync_target_entry_id(entry_type: str, src_entry_id: int, src_maps: dict, dst_maps: dict):
+    src = (src_maps or {}).get(entry_type, {}) or {}
+    dst = (dst_maps or {}).get(entry_type, {}) or {}
+    src_by_id = src.get("by_id", {}) or {}
+    dst_by_id = dst.get("by_id", {}) or {}
+    dst_by_text = dst.get("by_text", {}) or {}
+
+    src_id = int(src_entry_id or 0)
+    if src_id <= 0:
+        return 0, "no_match"
+    src_key = src_by_id.get(src_id)
+    if not src_key:
+        return 0, "no_match"
+
+    if (src_id in dst_by_id) and (dst_by_id.get(src_id) == src_key):
+        return src_id, "id_match"
+
+    en_text, om_text = src_key
+    if not en_text or not om_text:
+        return 0, "no_match"
+
+    candidates = dst_by_text.get(src_key, []) or []
+    if len(candidates) == 1:
+        return int(candidates[0] or 0), "text_match"
+    if len(candidates) > 1:
+        return 0, "ambiguous"
+    return 0, "no_match"
+
+
+def _resolve_source_audio_abs_path(source_db_path: str, file_path: str) -> str:
+    fp = normalize_text(file_path or "").replace("\\", "/")
+    if not fp or _is_remote_audio_ref(fp):
+        return ""
+
+    source_db_abs = os.path.abspath(source_db_path)
+    source_root = os.path.dirname(source_db_abs)
+    name = os.path.basename(fp)
+    candidates = []
+
+    if os.path.isabs(fp):
+        candidates.append(fp)
+    else:
+        candidates.append(os.path.join(source_root, fp))
+    if name:
+        candidates.extend(
+            [
+                os.path.join(source_root, "uploads", name),
+                os.path.join(source_root, "static", "uploads", name),
+                os.path.join(source_root, name),
+            ]
+        )
+
+    seen = set()
+    for path in candidates:
+        abs_path = os.path.abspath(path)
+        if abs_path in seen:
+            continue
+        seen.add(abs_path)
+        if os.path.isfile(abs_path):
+            return abs_path
+    return ""
+
+
+def _canonical_audio_sync_lang(lang_code: str) -> str:
+    canonical = _canonical_tts_lang_code(lang_code or "")
+    if canonical in ("en", "am", "ar", "fr", "zh-CN", "om"):
+        return canonical
+    return ""
+
+
+def _collect_phrase_audio_coverage(conn):
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT id
+        FROM phrases
+        WHERE status='approved'
+          AND english IS NOT NULL AND TRIM(english) != ''
+          AND oromo IS NOT NULL AND TRIM(oromo) != ''
+        """
+    )
+    phrase_ids = {int(r[0] or 0) for r in c.fetchall() if int(r[0] or 0) > 0}
+    total = int(len(phrase_ids))
+
+    tts_sets = {lc: set() for lc in ("en", "am", "ar", "fr", "zh-CN", "om")}
+    if phrase_ids:
+        placeholders = ",".join(["?"] * len(phrase_ids))
+        c.execute(
+            f"""
+            SELECT entry_id, lang_code, file_path
+            FROM generated_tts_audio
+            WHERE entry_type='phrase'
+              AND entry_id IN ({placeholders})
+            """,
+            tuple(sorted(phrase_ids)),
+        )
+        for entry_id, lang_code, file_path in c.fetchall():
+            pid = int(entry_id or 0)
+            if pid not in phrase_ids:
+                continue
+            lc = _canonical_audio_sync_lang(lang_code or "")
+            if lc not in tts_sets:
+                continue
+            if _has_usable_audio_ref(file_path or ""):
+                tts_sets[lc].add(pid)
+
+    approved_oromo = set()
+    if phrase_ids:
+        placeholders = ",".join(["?"] * len(phrase_ids))
+        c.execute(
+            f"""
+            SELECT entry_id, file_path
+            FROM audio
+            WHERE status='approved'
+              AND entry_type='phrase'
+              AND lower(lang)='oromo'
+              AND entry_id IN ({placeholders})
+            """,
+            tuple(sorted(phrase_ids)),
+        )
+        for entry_id, file_path in c.fetchall():
+            pid = int(entry_id or 0)
+            if (pid in phrase_ids) and _has_usable_audio_ref(file_path or ""):
+                approved_oromo.add(pid)
+
+    oromo_union = approved_oromo.union(tts_sets.get("om", set()))
+    coverage = {
+        "total_phrases": total,
+        "with_audio": {
+            "en": len(tts_sets.get("en", set())),
+            "am": len(tts_sets.get("am", set())),
+            "ar": len(tts_sets.get("ar", set())),
+            "fr": len(tts_sets.get("fr", set())),
+            "zh-CN": len(tts_sets.get("zh-CN", set())),
+            "oromo": len(oromo_union),
+        },
+    }
+    coverage["missing"] = {
+        lc: max(0, total - int(coverage["with_audio"].get(lc, 0)))
+        for lc in ("en", "am", "ar", "fr", "zh-CN", "oromo")
+    }
+    return coverage
+
+
+def run_sync_missing_audio_from_db(source_db_path: str, dry_run: bool = False):
+    """
+    Sync existing local audio metadata into current DB without generation.
+    Includes:
+      - generated_tts_audio (en/am/ar/fr/zh-CN/om)
+      - approved Oromo audio linkage from audio table (lang='oromo')
+    """
+    summary = {
+        "dry_run": bool(dry_run),
+        "source_generated_rows_scanned": 0,
+        "source_approved_oromo_rows_scanned": 0,
+        "rows_inserted_from_localhost_audio": 0,
+        "rows_inserted_generated_tts_audio": 0,
+        "rows_inserted_approved_oromo_audio": 0,
+        "production_rows_already_present": 0,
+        "rows_skipped_production_has_usable_audio": 0,
+        "rows_skipped_source_file_missing": 0,
+        "rows_skipped_no_destination_match": 0,
+        "rows_skipped_ambiguous_match": 0,
+        "rows_skipped_empty_file_path": 0,
+        "rows_skipped_unsupported_lang_code": 0,
+        "rows_skipped_unknown_entry_type": 0,
+        "files_copied_to_uploads": 0,
+        "files_already_present_in_uploads": 0,
+        "rows_still_missing_after_sync": 0,
+        "phrase_sync_inserted_en": 0,
+        "phrase_sync_inserted_am": 0,
+        "phrase_sync_inserted_ar": 0,
+        "phrase_sync_inserted_fr": 0,
+        "phrase_sync_inserted_zh-CN": 0,
+        "phrase_sync_inserted_oromo": 0,
+    }
+
+    source_db = normalize_text(source_db_path or "")
+    if not source_db:
+        raise click.UsageError("--source-db is required.")
+    if not os.path.isfile(source_db):
+        raise click.UsageError(f"Source DB not found: {source_db}")
+
+    src_conn = sqlite3.connect(source_db)
+    src_cur = src_conn.cursor()
+    dst_conn = sqlite3.connect(DB_NAME)
+    dst_cur = dst_conn.cursor()
+    try:
+        src_maps = {
+            "word": _load_entry_identity_maps(src_cur, "words"),
+            "phrase": _load_entry_identity_maps(src_cur, "phrases"),
+        }
+        dst_maps = {
+            "word": _load_entry_identity_maps(dst_cur, "words"),
+            "phrase": _load_entry_identity_maps(dst_cur, "phrases"),
+        }
+
+        dst_existing_tts_initial = set()
+        dst_existing_tts_usable = {}
+        dst_cur.execute(
+            """
+            SELECT entry_type, entry_id, lang_code, file_path
+            FROM generated_tts_audio
+            """
+        )
+        for entry_type, entry_id, lang_code, file_path in dst_cur.fetchall():
+            et = normalize_text(entry_type or "").lower()
+            if et not in ("word", "phrase"):
+                continue
+            lc = _canonical_audio_sync_lang(lang_code or "")
+            if not lc:
+                continue
+            eid = int(entry_id or 0)
+            if eid <= 0:
+                continue
+            key = (et, eid, lc)
+            usable = _has_usable_audio_ref(file_path or "")
+            if usable:
+                dst_existing_tts_initial.add(key)
+            dst_existing_tts_usable[key] = bool(dst_existing_tts_usable.get(key, False) or usable)
+
+        dst_existing_oromo_initial = set()
+        dst_existing_oromo_usable = {}
+        dst_cur.execute(
+            """
+            SELECT entry_type, entry_id, file_path
+            FROM audio
+            WHERE status='approved'
+              AND lower(lang)='oromo'
+            """
+        )
+        for entry_type, entry_id, file_path in dst_cur.fetchall():
+            et = normalize_text(entry_type or "").lower()
+            if et not in ("word", "phrase"):
+                continue
+            eid = int(entry_id or 0)
+            if eid <= 0:
+                continue
+            key = (et, eid, "oromo")
+            usable = _has_usable_audio_ref(file_path or "")
+            if usable:
+                dst_existing_oromo_initial.add(key)
+            dst_existing_oromo_usable[key] = bool(dst_existing_oromo_usable.get(key, False) or usable)
+
+        desired_keys_tts = set()
+        desired_keys_oromo = set()
+
+        src_cur.execute(
+            """
+            SELECT entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path
+            FROM generated_tts_audio
+            WHERE file_path IS NOT NULL
+              AND TRIM(file_path) != ''
+            ORDER BY id ASC
+            """
+        )
+        for entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path in src_cur.fetchall():
+            summary["source_generated_rows_scanned"] += 1
+            et = normalize_text(entry_type or "").lower()
+            if et not in ("word", "phrase"):
+                summary["rows_skipped_unknown_entry_type"] += 1
+                continue
+            lc = _canonical_audio_sync_lang(lang_code or "")
+            if not lc:
+                summary["rows_skipped_unsupported_lang_code"] += 1
+                continue
+            target_id, reason = _resolve_audio_sync_target_entry_id(et, int(entry_id or 0), src_maps, dst_maps)
+            if target_id <= 0:
+                if reason == "ambiguous":
+                    summary["rows_skipped_ambiguous_match"] += 1
+                else:
+                    summary["rows_skipped_no_destination_match"] += 1
+                continue
+
+            key = (et, int(target_id), lc)
+            desired_keys_tts.add(key)
+            if dst_existing_tts_usable.get(key, False):
+                summary["rows_skipped_production_has_usable_audio"] += 1
+                if key in dst_existing_tts_initial:
+                    summary["production_rows_already_present"] += 1
+                continue
+
+            src_fp = normalize_text(file_path or "")
+            if not src_fp:
+                summary["rows_skipped_empty_file_path"] += 1
+                continue
+
+            stored_ref = src_fp
+            if not _is_remote_audio_ref(src_fp):
+                src_abs = _resolve_source_audio_abs_path(source_db, src_fp)
+                if not src_abs:
+                    summary["rows_skipped_source_file_missing"] += 1
+                    continue
+                name = os.path.basename(src_abs)
+                if not name:
+                    summary["rows_skipped_source_file_missing"] += 1
+                    continue
+                dst_abs = os.path.join(UPLOAD_FOLDER, name)
+                if os.path.isfile(dst_abs):
+                    summary["files_already_present_in_uploads"] += 1
+                else:
+                    summary["files_copied_to_uploads"] += 1
+                    if not dry_run:
+                        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+                        shutil.copy2(src_abs, dst_abs)
+                stored_ref = f"uploads/{name}"
+
+            text_val = normalize_text(text_value or "")
+            text_h = normalize_text(text_hash or "")
+            if (not text_h) and text_val:
+                text_h = hashlib.md5(text_val.encode("utf-8")).hexdigest()
+            if not text_h:
+                text_h = hashlib.md5(f"{et}|{target_id}|{lc}|{os.path.basename(stored_ref)}".encode("utf-8")).hexdigest()
+
+            if not dry_run:
+                dst_cur.execute(
+                    """
+                    INSERT INTO generated_tts_audio
+                    (entry_type, entry_id, lang_code, text_value, text_hash, voice_provider, voice_name, file_path)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        et,
+                        int(target_id),
+                        lc,
+                        text_val or f"sync_local_db:{et}:{target_id}:{lc}",
+                        text_h,
+                        normalize_text(voice_provider or "") or "sync_local_db",
+                        normalize_text(voice_name or ""),
+                        stored_ref,
+                    ),
+                )
+            dst_existing_tts_usable[key] = True
+            summary["rows_inserted_generated_tts_audio"] += 1
+            summary["rows_inserted_from_localhost_audio"] += 1
+            if et == "phrase":
+                summary[f"phrase_sync_inserted_{lc}"] = int(summary.get(f"phrase_sync_inserted_{lc}", 0)) + 1
+
+        src_cur.execute(
+            """
+            SELECT entry_type, entry_id, file_path
+            FROM audio
+            WHERE status='approved'
+              AND lower(lang)='oromo'
+              AND file_path IS NOT NULL
+              AND TRIM(file_path) != ''
+            ORDER BY id ASC
+            """
+        )
+        for entry_type, entry_id, file_path in src_cur.fetchall():
+            summary["source_approved_oromo_rows_scanned"] += 1
+            et = normalize_text(entry_type or "").lower()
+            if et not in ("word", "phrase"):
+                summary["rows_skipped_unknown_entry_type"] += 1
+                continue
+            target_id, reason = _resolve_audio_sync_target_entry_id(et, int(entry_id or 0), src_maps, dst_maps)
+            if target_id <= 0:
+                if reason == "ambiguous":
+                    summary["rows_skipped_ambiguous_match"] += 1
+                else:
+                    summary["rows_skipped_no_destination_match"] += 1
+                continue
+
+            key = (et, int(target_id), "oromo")
+            desired_keys_oromo.add(key)
+            if dst_existing_oromo_usable.get(key, False):
+                summary["rows_skipped_production_has_usable_audio"] += 1
+                if key in dst_existing_oromo_initial:
+                    summary["production_rows_already_present"] += 1
+                continue
+
+            src_fp = normalize_text(file_path or "")
+            if not src_fp:
+                summary["rows_skipped_empty_file_path"] += 1
+                continue
+
+            stored_ref = src_fp
+            if not _is_remote_audio_ref(src_fp):
+                src_abs = _resolve_source_audio_abs_path(source_db, src_fp)
+                if not src_abs:
+                    summary["rows_skipped_source_file_missing"] += 1
+                    continue
+                name = os.path.basename(src_abs)
+                if not name:
+                    summary["rows_skipped_source_file_missing"] += 1
+                    continue
+                dst_abs = os.path.join(UPLOAD_FOLDER, name)
+                if os.path.isfile(dst_abs):
+                    summary["files_already_present_in_uploads"] += 1
+                else:
+                    summary["files_copied_to_uploads"] += 1
+                    if not dry_run:
+                        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+                        shutil.copy2(src_abs, dst_abs)
+                stored_ref = f"uploads/{name}"
+
+            if not dry_run:
+                dst_cur.execute(
+                    """
+                    INSERT INTO audio (entry_type, entry_id, lang, file_path, status)
+                    VALUES (?, ?, 'oromo', ?, 'approved')
+                    """,
+                    (et, int(target_id), stored_ref),
+                )
+            dst_existing_oromo_usable[key] = True
+            summary["rows_inserted_approved_oromo_audio"] += 1
+            summary["rows_inserted_from_localhost_audio"] += 1
+            if et == "phrase":
+                summary["phrase_sync_inserted_oromo"] = int(summary.get("phrase_sync_inserted_oromo", 0)) + 1
+
+        summary["rows_still_missing_after_sync"] = (
+            sum(1 for k in desired_keys_tts if not dst_existing_tts_usable.get(k, False))
+            + sum(1 for k in desired_keys_oromo if not dst_existing_oromo_usable.get(k, False))
+        )
+
+        if not dry_run:
+            dst_conn.commit()
+
+        phrase_cov = _collect_phrase_audio_coverage(dst_conn)
+        summary["phrase_total_approved"] = int(phrase_cov.get("total_phrases", 0))
+        for lc in ("en", "am", "ar", "fr", "zh-CN", "oromo"):
+            summary[f"phrase_with_audio_{lc}"] = int((phrase_cov.get("with_audio", {}) or {}).get(lc, 0))
+            summary[f"phrase_missing_audio_{lc}"] = int((phrase_cov.get("missing", {}) or {}).get(lc, 0))
+    finally:
+        try:
+            src_conn.close()
+        except Exception:
+            pass
+        try:
+            dst_conn.close()
+        except Exception:
+            pass
+
+    return summary
+
+
+@app.cli.command("sync-missing-audio-from-db")
+@click.option("--source-db", required=True, help="Source SQLite DB path (localhost export) to sync audio from.")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not write changes.")
+def cli_sync_missing_audio_from_db(source_db, dry_run):
+    """
+    CLI-only audio sync from source DB to current DB.
+    No generation, no external API calls, no deletes.
+    """
+    _log_db_context("cli:sync-missing-audio-from-db")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    click.echo(f"SOURCE_DB={source_db}")
+    summary = run_sync_missing_audio_from_db(source_db_path=source_db, dry_run=bool(dry_run))
+    click.echo("Audio sync from DB completed.")
+    click.echo(
+        f"source_generated_rows_scanned={summary.get('source_generated_rows_scanned', 0)} "
+        f"source_approved_oromo_rows_scanned={summary.get('source_approved_oromo_rows_scanned', 0)} "
+        f"rows_inserted_from_localhost_audio={summary.get('rows_inserted_from_localhost_audio', 0)} "
+        f"rows_inserted_generated_tts_audio={summary.get('rows_inserted_generated_tts_audio', 0)} "
+        f"rows_inserted_approved_oromo_audio={summary.get('rows_inserted_approved_oromo_audio', 0)} "
+        f"production_rows_already_present={summary.get('production_rows_already_present', 0)} "
+        f"rows_skipped_production_has_usable_audio={summary.get('rows_skipped_production_has_usable_audio', 0)} "
+        f"rows_skipped_source_file_missing={summary.get('rows_skipped_source_file_missing', 0)} "
+        f"rows_skipped_no_destination_match={summary.get('rows_skipped_no_destination_match', 0)} "
+        f"rows_skipped_ambiguous_match={summary.get('rows_skipped_ambiguous_match', 0)} "
+        f"rows_skipped_empty_file_path={summary.get('rows_skipped_empty_file_path', 0)} "
+        f"rows_skipped_unsupported_lang_code={summary.get('rows_skipped_unsupported_lang_code', 0)} "
+        f"files_copied_to_uploads={summary.get('files_copied_to_uploads', 0)} "
+        f"files_already_present_in_uploads={summary.get('files_already_present_in_uploads', 0)} "
+        f"rows_still_missing_after_sync={summary.get('rows_still_missing_after_sync', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
+    )
+    click.echo(
+        f"PHRASE_AUDIO_SYNC inserted_en={summary.get('phrase_sync_inserted_en', 0)} "
+        f"inserted_am={summary.get('phrase_sync_inserted_am', 0)} "
+        f"inserted_ar={summary.get('phrase_sync_inserted_ar', 0)} "
+        f"inserted_fr={summary.get('phrase_sync_inserted_fr', 0)} "
+        f"inserted_zh-CN={summary.get('phrase_sync_inserted_zh-CN', 0)} "
+        f"inserted_oromo={summary.get('phrase_sync_inserted_oromo', 0)}"
+    )
+    click.echo(
+        f"PHRASE_AUDIO_COVERAGE total={summary.get('phrase_total_approved', 0)} "
+        f"with_en={summary.get('phrase_with_audio_en', 0)} missing_en={summary.get('phrase_missing_audio_en', 0)} "
+        f"with_am={summary.get('phrase_with_audio_am', 0)} missing_am={summary.get('phrase_missing_audio_am', 0)} "
+        f"with_ar={summary.get('phrase_with_audio_ar', 0)} missing_ar={summary.get('phrase_missing_audio_ar', 0)} "
+        f"with_fr={summary.get('phrase_with_audio_fr', 0)} missing_fr={summary.get('phrase_missing_audio_fr', 0)} "
+        f"with_zh-CN={summary.get('phrase_with_audio_zh-CN', 0)} missing_zh-CN={summary.get('phrase_missing_audio_zh-CN', 0)} "
+        f"with_oromo={summary.get('phrase_with_audio_oromo', 0)} missing_oromo={summary.get('phrase_missing_audio_oromo', 0)}"
+    )
+    click.echo(
+        "NOTE: localhost audio sync only imports audio that already exists in source DB/files; "
+        "it cannot fill non-English phrase audio if localhost never had translated phrase audio."
+    )
+
+
 @app.cli.command("backfill-word-audio")
 @click.option("--limit", type=int, default=0, show_default=True, help="Limit approved words (0 = all).")
 @click.option("--chunk-size", type=int, default=150, show_default=True, help="Batch size for translation + TTS.")
