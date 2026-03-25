@@ -208,12 +208,30 @@ let deferredPrompt = null;
     if (closeBtn) closeBtn.onclick = () => (updateBar.style.display = "none");
   }
 
-  const SW_URL = "/static/service-worker.js?v=20260322-1";
+  const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
+    || "/service-worker.js?v=20260325-1";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
       try {
-        const reg = await navigator.serviceWorker.register(SW_URL);
+        const reg = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
+        const marker = document.getElementById("pwaSwDebug");
+        const swDebug = {
+          requested_script: SW_URL,
+          registration_scope: (reg && reg.scope) || "",
+          controlled: !!navigator.serviceWorker.controller,
+          controller_script: (navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL) || "",
+        };
+        window.__gadaaSwDebug = swDebug;
+        if (marker) {
+          marker.dataset.requestedSw = swDebug.requested_script || "";
+          marker.dataset.registrationScope = swDebug.registration_scope || "";
+          marker.dataset.controlled = swDebug.controlled ? "1" : "0";
+          marker.dataset.controllerScript = swDebug.controller_script || "";
+        }
+        try {
+          console.info("PWA_SW_DEBUG", swDebug);
+        } catch (_) {}
 
         if (reg.waiting) showUpdateBar(reg);
 
@@ -232,6 +250,25 @@ let deferredPrompt = null;
         navigator.serviceWorker.addEventListener("message", (event) => {
           if (event?.data?.type === "OFFLINE_READY") showToast("Offline ready ✅", 10);
         });
+        navigator.serviceWorker.ready.then((readyReg) => {
+          const marker2 = document.getElementById("pwaSwDebug");
+          const current = window.__gadaaSwDebug || {};
+          const updated = {
+            ...current,
+            ready_scope: (readyReg && readyReg.scope) || "",
+            controlled: !!navigator.serviceWorker.controller,
+            controller_script: (navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL) || "",
+          };
+          window.__gadaaSwDebug = updated;
+          if (marker2) {
+            marker2.dataset.readyScope = updated.ready_scope || "";
+            marker2.dataset.controlled = updated.controlled ? "1" : "0";
+            marker2.dataset.controllerScript = updated.controller_script || "";
+          }
+          try {
+            console.info("PWA_SW_READY_DEBUG", updated);
+          } catch (_) {}
+        }).catch(() => {});
       } catch (_) {
         // ignore
       }

@@ -119,6 +119,17 @@ if IS_PROD and REQUIRE_EXPLICIT_DB_PATH and (not os.environ.get("DB_PATH", "").s
     )
 
 APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
+APP_BUILD_TOKEN = (
+    (os.environ.get("APP_BUILD_TOKEN") or "").strip()
+    or (os.environ.get("RENDER_GIT_COMMIT") or "").strip()
+    or "dev-local"
+)
+APP_BUILD_TOKEN = APP_BUILD_TOKEN[:16]
+LEARN_TEMPLATE_VERSION = "learn_multilingual_table_v1"
+AUDIO_JS_VERSION = (os.environ.get("AUDIO_JS_VERSION") or APP_BUILD_TOKEN).strip()
+PWA_UI_JS_VERSION = (os.environ.get("PWA_UI_JS_VERSION") or APP_BUILD_TOKEN).strip()
+SW_JS_VERSION = (os.environ.get("SW_JS_VERSION") or APP_BUILD_TOKEN).strip()
+SW_CANONICAL_URL = f"/service-worker.js?v={SW_JS_VERSION}"
 
 ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 
@@ -166,6 +177,12 @@ def inject_globals():
         DONATE_URLS=DONATE_URLS,
         WEBSITE_URL=WEBSITE_URL,
         API_URL=API_URL,
+        APP_BUILD_TOKEN=APP_BUILD_TOKEN,
+        LEARN_TEMPLATE_VERSION=LEARN_TEMPLATE_VERSION,
+        AUDIO_JS_VERSION=AUDIO_JS_VERSION,
+        PWA_UI_JS_VERSION=PWA_UI_JS_VERSION,
+        SW_JS_VERSION=SW_JS_VERSION,
+        SW_CANONICAL_URL=SW_CANONICAL_URL,
     )
 
 @app.route("/debug-vars")
@@ -335,6 +352,9 @@ def service_worker():
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
     resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["X-Gadaa-Build"] = APP_BUILD_TOKEN
+    resp.headers["X-SW-JS-Version"] = SW_JS_VERSION
+    resp.headers["X-SW-Canonical-URL"] = SW_CANONICAL_URL
     return resp
 
 @app.route("/sw.js")
@@ -4445,16 +4465,43 @@ def learn():
         a = (r or {}).get("audio") or {}
         if any(normalize_text(v or "") for v in a.values()):
             rows_rendered_with_audio_url += 1
+    learn_render_path = "table_rows" if rows_loaded > 0 else "table_rows_empty"
+    legacy_cards_path = False
     app.logger.info(
-        "/learn render rows_loaded=%s rows_rendered_with_audio_url=%s",
+        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s rows_loaded=%s rows_rendered_with_audio_url=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
+        LEARN_TEMPLATE_VERSION,
+        APP_BUILD_TOKEN,
+        learn_render_path,
+        legacy_cards_path,
         rows_loaded,
         rows_rendered_with_audio_url,
+        AUDIO_JS_VERSION,
+        PWA_UI_JS_VERSION,
+        SW_JS_VERSION,
     )
     learn_debug = {
         "rows_loaded": rows_loaded,
         "rows_rendered_with_audio_url": rows_rendered_with_audio_url,
+        "template_version": LEARN_TEMPLATE_VERSION,
+        "build_token": APP_BUILD_TOKEN,
+        "render_path": learn_render_path,
+        "legacy_cards_path": legacy_cards_path,
+        "audio_js_version": AUDIO_JS_VERSION,
+        "pwa_ui_js_version": PWA_UI_JS_VERSION,
+        "sw_js_version": SW_JS_VERSION,
+        "sw_canonical_url": SW_CANONICAL_URL,
     }
-    return render_template("learn.html", trending=trending, learn_rows=learn_rows, learn_debug=learn_debug)
+    resp = make_response(
+        render_template("learn.html", trending=trending, learn_rows=learn_rows, learn_debug=learn_debug)
+    )
+    resp.headers["X-Gadaa-Build"] = APP_BUILD_TOKEN
+    resp.headers["X-Learn-Template-Version"] = LEARN_TEMPLATE_VERSION
+    resp.headers["X-Learn-Render-Path"] = learn_render_path
+    resp.headers["X-Learn-Legacy-Cards"] = "1" if legacy_cards_path else "0"
+    resp.headers["X-Audio-JS-Version"] = AUDIO_JS_VERSION
+    resp.headers["X-PWA-UI-JS-Version"] = PWA_UI_JS_VERSION
+    resp.headers["X-SW-JS-Version"] = SW_JS_VERSION
+    return resp
 
 
 # ------------------ SUPPORT ------------------
@@ -8017,6 +8064,85 @@ def cli_audit_live_learn_audio(word_text, target_text, entry_type, base_url):
         f"LIVE_LEARN_UPLOADS_CHECK entry_type={entry_type} text={query_text} "
         f"uploads_urls={uploads_urls} uploads_200={uploads_200} all_uploads_200={(uploads_urls > 0 and uploads_urls == uploads_200)}"
     )
+
+
+@app.cli.command("audit-learn-delivery")
+@click.option("--base-url", default="https://gadaadictionary.com", show_default=True, help="Target site base URL.")
+@click.option("--path", default="/learn", show_default=True, help="Path to inspect.")
+def cli_audit_learn_delivery(base_url, path):
+    """
+    Inspect rendered Learn HTML/headers/assets to detect template or cache/version drift.
+    Read-only diagnostics; does not trigger generation or repair.
+    """
+    base = (base_url or "").strip().rstrip("/")
+    rel = "/" + (path or "/learn").lstrip("/")
+    url = f"{base}{rel}"
+    sess = requests.Session()
+    sess.trust_env = False
+
+    try:
+        resp = sess.get(url, timeout=25)
+    except Exception as e:
+        click.echo(f"LEARN_DELIVERY_ERROR url={url} error={repr(e)}")
+        return
+
+    html = resp.text or ""
+    marker_match = re.search(r'<!--\s*learn_debug\s+([^>]*)-->', html, re.IGNORECASE)
+    marker = normalize_text(marker_match.group(1) if marker_match else "")
+    title_match = re.search(r"<title>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    page_title = normalize_text(title_match.group(1) if title_match else "")
+
+    click.echo(f"LEARN_DELIVERY status={resp.status_code} url={resp.url}")
+    click.echo(
+        "LEARN_DELIVERY_HEADERS "
+        f"x_gadaa_build={resp.headers.get('X-Gadaa-Build', '')} "
+        f"x_learn_template={resp.headers.get('X-Learn-Template-Version', '')} "
+        f"x_learn_render_path={resp.headers.get('X-Learn-Render-Path', '')} "
+        f"x_learn_legacy_cards={resp.headers.get('X-Learn-Legacy-Cards', '')} "
+        f"cache_control={resp.headers.get('Cache-Control', '')}"
+    )
+    click.echo(
+        "LEARN_DELIVERY_HTML "
+        f"title={page_title or 'missing'} "
+        f"has_debug_marker={bool(marker)} "
+        f"has_data_audio={'data-audio=' in html} "
+        f"has_table_rows={'Multilingual Study Table' in html} "
+        f"has_legacy_cards={'Quick Practice Cards' in html} "
+        f"contains_no_words_text={'No approved words loaded here yet' in html}"
+    )
+    if marker:
+        click.echo(f"LEARN_DELIVERY_MARKER {marker}")
+
+    script_srcs = re.findall(r'<script[^>]+src=\"([^\"]+)\"', html, re.IGNORECASE)
+    audio_src = ""
+    pwa_src = ""
+    for src in script_srcs:
+        if "audio.js" in src and (not audio_src):
+            audio_src = src
+        if "pwa-ui.js" in src and (not pwa_src):
+            pwa_src = src
+    click.echo(
+        "LEARN_DELIVERY_ASSETS "
+        f"audio_js={audio_src or 'missing'} "
+        f"pwa_ui_js={pwa_src or 'missing'} "
+        f"script_count={len(script_srcs)}"
+    )
+
+    sw_urls = [f"{base}/service-worker.js", f"{base}/sw.js", f"{base}/static/service-worker.js", f"{base}/static/sw.js"]
+    for sw_url in sw_urls:
+        try:
+            sw_resp = sess.get(sw_url, timeout=25)
+            body = sw_resp.text or ""
+            click.echo(
+                "LEARN_DELIVERY_SW "
+                f"url={sw_url} status={sw_resp.status_code} "
+                f"cache_control={sw_resp.headers.get('Cache-Control', '')} "
+                f"service_worker_allowed={sw_resp.headers.get('Service-Worker-Allowed', '')} "
+                f"contains_cache_version={'CACHE_VERSION' in body} "
+                f"contains_nav_fetch={'mode === \"navigate\"' in body}"
+            )
+        except Exception as e:
+            click.echo(f"LEARN_DELIVERY_SW url={sw_url} error={repr(e)}")
 
 
 @app.cli.command("diagnose-data-model")
