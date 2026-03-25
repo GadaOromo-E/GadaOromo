@@ -11,6 +11,9 @@
 */
 
 (function () {
+  if (window.__gadaaAudioBindingsReady) return;
+  window.__gadaaAudioBindingsReady = true;
+
   // Global audio playback manager (shared across Learn/Dictionary/Translate/Word)
   let currentAudio = null;
   let currentButton = null;
@@ -338,13 +341,6 @@
         credentials: "same-origin",
         cache: "no-store",
       });
-
- // Try to parse JSON (your backend returns JSON)
-  try {
-    data = await res.json();
-  } catch (_) {
-    data = null;
-  }
 
     } catch (e) {
       console.error(e);
