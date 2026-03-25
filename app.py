@@ -1048,6 +1048,26 @@ def _is_remote_audio_ref(file_path: str) -> bool:
     return fp.startswith("https://") or fp.startswith("http://")
 
 
+def _canonical_tts_lang_code(lang_code: str) -> str:
+    raw = normalize_text(lang_code or "")
+    if not raw:
+        return ""
+    key = raw.replace("_", "-").strip().casefold()
+    if key in ("en", "english", "en-us", "en-gb"):
+        return "en"
+    if key in ("om", "or", "oromo", "om-et"):
+        return "om"
+    if key in ("am", "amharic", "am-et"):
+        return "am"
+    if key in ("ar", "arabic", "ar-sa"):
+        return "ar"
+    if key in ("fr", "french", "fr-fr"):
+        return "fr"
+    if key in ("zh", "zh-cn", "zh-hans", "chinese", "chinese-simplified", "zh-sg"):
+        return "zh-CN"
+    return raw
+
+
 def _has_usable_audio_ref(file_path: str) -> bool:
     if _is_remote_audio_ref(file_path):
         return True
@@ -2655,22 +2675,21 @@ def _resolve_or_generate_tts_for_text(
 def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
     if entry_type not in ("word", "phrase"):
         return {}, {"audio_rows_found": 0, "audio_urls_attached": 0}
-    lang_list = tuple(langs or ("en", "om"))
-    if not lang_list:
+    requested = {_canonical_tts_lang_code(lc) for lc in (langs or ("en", "om"))}
+    requested.discard("")
+    if not requested:
         return {}, {"audio_rows_found": 0, "audio_urls_attached": 0}
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    placeholders = ",".join("?" for _ in lang_list)
     c.execute(
-        f"""
+        """
         SELECT lang_code, file_path
         FROM generated_tts_audio
         WHERE entry_type=? AND entry_id=?
-          AND lang_code IN ({placeholders})
         ORDER BY id DESC
         """,
-        (entry_type, int(entry_id), *lang_list),
+        (entry_type, int(entry_id)),
     )
     rows = c.fetchall()
     conn.close()
@@ -2678,7 +2697,9 @@ def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
     out = {}
     found_rows = len(rows)
     for lang_code, file_path in rows:
-        lang = normalize_text(lang_code or "")
+        lang = _canonical_tts_lang_code(lang_code or "")
+        if lang not in requested:
+            continue
         key = "english" if lang == "en" else ("oromo" if lang == "om" else lang)
         if key in out:
             continue
@@ -4052,12 +4073,12 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
     """
     if not entry_ids:
         return {}
-    lang_list = tuple(langs or ("en", "am", "ar", "fr", "zh-CN", "om"))
-    if not lang_list:
+    requested = {_canonical_tts_lang_code(lc) for lc in (langs or ("en", "am", "ar", "fr", "zh-CN", "om"))}
+    requested.discard("")
+    if not requested:
         return {}
 
     placeholders = ",".join("?" for _ in entry_ids)
-    lang_placeholders = ",".join("?" for _ in lang_list)
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute(
@@ -4066,17 +4087,19 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
         FROM generated_tts_audio
         WHERE entry_type=?
           AND entry_id IN ({placeholders})
-          AND lang_code IN ({lang_placeholders})
         ORDER BY id DESC
         """,
-        (entry_type, *entry_ids, *lang_list),
+        (entry_type, *entry_ids),
     )
     rows = c.fetchall()
     conn.close()
 
     out = {}
     for entry_id, lang_code, file_path in rows:
-        key = (int(entry_id or 0), normalize_text(lang_code or ""))
+        canonical_lang = _canonical_tts_lang_code(lang_code or "")
+        if canonical_lang not in requested:
+            continue
+        key = (int(entry_id or 0), canonical_lang)
         if key in out:
             continue
         if not normalize_text(file_path or ""):
@@ -4301,10 +4324,18 @@ def _load_learn_rows(limit: int = 200):
         })
 
     total_rows_loaded = int(len(rows))
-    audio_rows_found = int(len(word_tts) + len(phrase_tts) + len(word_oromo_audio) + len(phrase_oromo_audio))
+    words_loaded = int(len(word_rows))
+    phrases_loaded = int(len(phrase_rows))
+    word_audio_rows_found = int(len(word_tts) + len(word_oromo_audio))
+    phrase_audio_rows_found = int(len(phrase_tts) + len(phrase_oromo_audio))
+    audio_rows_found = int(word_audio_rows_found + phrase_audio_rows_found)
     rows_with_audio_in_db = 0
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
+    rows_with_audio_in_db_words = 0
+    rows_with_audio_in_db_phrases = 0
+    rows_rendered_with_audio_url_words = 0
+    rows_rendered_with_audio_url_phrases = 0
     for r in rows:
         audio = (r or {}).get("audio") or {}
         entry_type = (r or {}).get("entry_type")
@@ -4316,6 +4347,10 @@ def _load_learn_rows(limit: int = 200):
             has_audio_db = any((entry_id, lc) in phrase_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om")) or (entry_id in phrase_oromo_audio)
         if has_audio_db:
             rows_with_audio_in_db += 1
+            if entry_type == "word":
+                rows_with_audio_in_db_words += 1
+            elif entry_type == "phrase":
+                rows_with_audio_in_db_phrases += 1
 
         row_has_audio = False
         for u in audio.values():
@@ -4324,13 +4359,25 @@ def _load_learn_rows(limit: int = 200):
                 row_has_audio = True
         if row_has_audio:
             rows_rendered_with_audio_url += 1
+            if entry_type == "word":
+                rows_rendered_with_audio_url_words += 1
+            elif entry_type == "phrase":
+                rows_rendered_with_audio_url_phrases += 1
 
     app.logger.info(
-        "/learn loader rows_loaded=%s audio_rows_found=%s rows_with_audio_in_db=%s rows_rendered_with_audio_url=%s audio_attached_count=%s",
+        "/learn loader rows_loaded=%s words_loaded=%s phrases_loaded=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db=%s rows_with_audio_in_db_words=%s rows_with_audio_in_db_phrases=%s rows_rendered_with_audio_url=%s rows_rendered_with_audio_url_words=%s rows_rendered_with_audio_url_phrases=%s audio_attached_count=%s",
         total_rows_loaded,
+        words_loaded,
+        phrases_loaded,
         audio_rows_found,
+        word_audio_rows_found,
+        phrase_audio_rows_found,
         rows_with_audio_in_db,
+        rows_with_audio_in_db_words,
+        rows_with_audio_in_db_phrases,
         rows_rendered_with_audio_url,
+        rows_rendered_with_audio_url_words,
+        rows_rendered_with_audio_url_phrases,
         audio_attached_count,
     )
 
@@ -7879,17 +7926,26 @@ def cli_audit_live_word_audio(word_text, base_url, source_lang, target_lang):
 
 
 @app.cli.command("audit-live-learn-audio")
-@click.option("--word", "word_text", required=True, help="English word expected on /learn.")
+@click.option("--word", "word_text", default="", help="Backward-compatible alias for --text (word mode).")
+@click.option("--text", "target_text", default="", help="Target word/phrase text expected on /learn.")
+@click.option(
+    "--entry-type",
+    type=click.Choice(["word", "phrase"]),
+    default="word",
+    show_default=True,
+    help="Expected Learn row type.",
+)
 @click.option("--base-url", default="https://gadaadictionary.com", show_default=True, help="Live site base URL.")
-def cli_audit_live_learn_audio(word_text, base_url):
+def cli_audit_live_learn_audio(word_text, target_text, entry_type, base_url):
     """
-    Verify /learn rendered HTML contains a row for the word and at least one data-audio URL.
+    Verify /learn rendered HTML contains a row for the target word/phrase and data-audio URLs.
+    Supports words and phrases without triggering generation/repair.
     Does not trigger generation/repair.
     """
     base = (base_url or "").strip().rstrip("/")
-    w = normalize_text(word_text or "")
-    if not base or (not w):
-        raise click.UsageError("--word and --base-url are required.")
+    query_text = normalize_text(target_text or word_text or "")
+    if not base or (not query_text):
+        raise click.UsageError("--text (or --word) and --base-url are required.")
 
     sess = requests.Session()
     sess.trust_env = False
@@ -7905,37 +7961,62 @@ def cli_audit_live_learn_audio(word_text, base_url):
     click.echo(
         f"LIVE_LEARN_RENDER contains_data_audio={'data-audio=' in html} "
         f"contains_uploads_tts={'/uploads/tts_' in html} "
-        f"contains_word={w.lower() in html.lower()}"
+        f"contains_text={query_text.lower() in html.lower()}"
     )
 
-    # Narrow to the first table row containing the target word, then capture data-audio refs.
+    # Narrow to the first table row containing the target word/phrase, then capture data-audio refs.
     row_re = re.compile(r"<tr[\s\S]*?</tr>", re.IGNORECASE)
     target_row = ""
+    type_marker = f'data-entry-type="{entry_type}"'
     for m in row_re.finditer(html):
         row_html = m.group(0) or ""
-        if w.lower() in row_html.lower():
-            target_row = row_html
-            break
+        if query_text.lower() not in row_html.lower():
+            continue
+        if type_marker and (type_marker not in row_html):
+            continue
+        target_row = row_html
+        break
 
     if not target_row:
-        click.echo(f"LIVE_LEARN_WORD_ROW missing word={w}")
+        click.echo(f"LIVE_LEARN_ROW missing text={query_text} entry_type={entry_type}")
         return
 
+    row_type_match = re.search(r'data-entry-type="([^"]+)"', target_row, re.IGNORECASE)
+    row_id_match = re.search(r'data-entry-id="([^"]+)"', target_row, re.IGNORECASE)
+    row_type = normalize_text((row_type_match.group(1) if row_type_match else "") or "")
+    row_id = normalize_text((row_id_match.group(1) if row_id_match else "") or "")
+
     refs = re.findall(r'data-audio=\"([^\"]+)\"', target_row)
-    click.echo(f"LIVE_LEARN_WORD_ROW word={w} data_audio_count={len(refs)}")
+    click.echo(
+        f"LIVE_LEARN_ROW_META text={query_text} entry_type={row_type or entry_type} entry_id={row_id or 'unknown'}"
+    )
+    click.echo(f"LIVE_LEARN_ROW text={query_text} entry_type={entry_type} data_audio_count={len(refs)}")
+    if refs:
+        click.echo("LIVE_LEARN_AUDIO_URLS " + " | ".join(refs))
     if not refs:
         return
 
+    uploads_urls = 0
+    uploads_200 = 0
     for idx, ref in enumerate(refs, start=1):
         full = ref if ref.startswith("http") else f"{base}{ref}"
         try:
             rr = sess.get(full, timeout=25, allow_redirects=True)
+            is_upload_ref = ref.startswith("/uploads/") or ("/uploads/" in ref)
+            if is_upload_ref:
+                uploads_urls += 1
+                if rr.status_code == 200:
+                    uploads_200 += 1
             click.echo(
                 f"LIVE_LEARN_AUDIO_{idx} ref={ref} final={rr.url} status={rr.status_code} "
                 f"content_type={(rr.headers.get('content-type') or '').strip()}"
             )
         except Exception as e:
             click.echo(f"LIVE_LEARN_AUDIO_{idx} ref={ref} error={repr(e)}")
+    click.echo(
+        f"LIVE_LEARN_UPLOADS_CHECK entry_type={entry_type} text={query_text} "
+        f"uploads_urls={uploads_urls} uploads_200={uploads_200} all_uploads_200={(uploads_urls > 0 and uploads_urls == uploads_200)}"
+    )
 
 
 @app.cli.command("diagnose-data-model")

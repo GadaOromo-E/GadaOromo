@@ -158,7 +158,7 @@
             </thead>
             <tbody>
               {% for row in learn_rows %}
-                <tr>
+                <tr data-entry-type="{{ row.entry_type }}" data-entry-id="{{ row.entry_id }}">
                   <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
                     <span class="learn-word-text">{{ row.english }}</span>
                     {% if row.audio.en %}
@@ -221,7 +221,7 @@
         <h2>Trending searches</h2>
         <div class="chips" style="margin-top:10px;">
           {% for row in trending %}
-            <span class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</span>
+            <button type="button" class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</button>
           {% endfor %}
         </div>
       </section>
