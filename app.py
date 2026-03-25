@@ -8412,6 +8412,237 @@ def cli_backfill_phrase_translations(limit, chunk_size):
     )
 
 
+def _canonical_phrase_sync_lang(lang_code: str) -> str:
+    k = normalize_text(lang_code or "").replace("_", "-").casefold()
+    if k in ("am",):
+        return "am"
+    if k in ("ar",):
+        return "ar"
+    if k in ("fr",):
+        return "fr"
+    if k in ("zh-cn",):
+        return "zh-CN"
+    return ""
+
+
+def run_sync_missing_phrase_translations(source_db_path: str, dry_run: bool = False):
+    """
+    Sync only missing generated_phrase_translations rows from source DB into current DB.
+    Safe behavior:
+      - never deletes
+      - never overwrites existing non-empty target rows
+      - no external API calls
+    """
+    summary = {
+        "source_rows_scanned": 0,
+        "production_rows_already_present": 0,
+        "rows_inserted": 0,
+        "rows_skipped_no_phrase_match": 0,
+        "rows_skipped_ambiguous_phrase_match": 0,
+        "rows_skipped_unsupported_lang_code": 0,
+        "rows_skipped_missing_text": 0,
+        "rows_updated_empty_existing": 0,
+        "dry_run": bool(dry_run),
+    }
+
+    source_db = normalize_text(source_db_path or "")
+    if not source_db:
+        raise click.UsageError("--source-db is required.")
+    if not os.path.isfile(source_db):
+        raise click.UsageError(f"Source DB not found: {source_db}")
+
+    src_conn = sqlite3.connect(source_db)
+    src_cur = src_conn.cursor()
+    dst_conn = sqlite3.connect(DB_NAME)
+    dst_cur = dst_conn.cursor()
+    try:
+        # Source phrase identity map
+        src_cur.execute(
+            """
+            SELECT id, english, oromo
+            FROM phrases
+            """
+        )
+        src_phrase_by_id = {
+            int(pid or 0): (normalize_text(en or ""), normalize_text(om or ""))
+            for pid, en, om in src_cur.fetchall()
+            if int(pid or 0) > 0
+        }
+
+        # Destination phrase identity maps
+        dst_cur.execute(
+            """
+            SELECT id, english, oromo
+            FROM phrases
+            """
+        )
+        dst_phrase_by_id = {}
+        dst_phrase_by_text = {}
+        for pid, en, om in dst_cur.fetchall():
+            pid_int = int(pid or 0)
+            if pid_int <= 0:
+                continue
+            key = (normalize_text(en or ""), normalize_text(om or ""))
+            dst_phrase_by_id[pid_int] = key
+            dst_phrase_by_text.setdefault(key, []).append(pid_int)
+
+        # Existing destination translation rows
+        dst_cur.execute(
+            """
+            SELECT phrase_id, lang_code, translated_text
+            FROM generated_phrase_translations
+            """
+        )
+        dst_existing = {}
+        for pid, lang, txt in dst_cur.fetchall():
+            pid_int = int(pid or 0)
+            c_lang = _canonical_phrase_sync_lang(lang or "")
+            if pid_int <= 0 or not c_lang:
+                continue
+            key = (pid_int, c_lang)
+            state = dst_existing.get(key, {"row_exists": False, "non_empty": False})
+            state["row_exists"] = True
+            if normalize_text(txt or ""):
+                state["non_empty"] = True
+            dst_existing[key] = state
+
+        # Source translation rows
+        src_cur.execute(
+            """
+            SELECT phrase_id, lang_code, translated_text
+            FROM generated_phrase_translations
+            WHERE translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            ORDER BY phrase_id ASC
+            """
+        )
+        src_rows = src_cur.fetchall()
+
+        for src_phrase_id, src_lang, src_text in src_rows:
+            summary["source_rows_scanned"] += 1
+            pid_src = int(src_phrase_id or 0)
+            c_lang = _canonical_phrase_sync_lang(src_lang or "")
+            if not c_lang:
+                summary["rows_skipped_unsupported_lang_code"] += 1
+                continue
+            translated = normalize_text(src_text or "")
+            if not translated:
+                summary["rows_skipped_missing_text"] += 1
+                continue
+
+            src_phrase_key = src_phrase_by_id.get(pid_src)
+            target_phrase_id = 0
+
+            # Preferred: same phrase_id only when phrase texts align.
+            if pid_src in dst_phrase_by_id and src_phrase_key and (dst_phrase_by_id.get(pid_src) == src_phrase_key):
+                target_phrase_id = pid_src
+            else:
+                # Fallback: exact English+Oromo text match, only when unambiguous.
+                if not src_phrase_key or (not src_phrase_key[0]) or (not src_phrase_key[1]):
+                    summary["rows_skipped_no_phrase_match"] += 1
+                    continue
+                candidates = dst_phrase_by_text.get(src_phrase_key, [])
+                if len(candidates) == 1:
+                    target_phrase_id = int(candidates[0] or 0)
+                elif len(candidates) == 0:
+                    summary["rows_skipped_no_phrase_match"] += 1
+                    continue
+                else:
+                    summary["rows_skipped_ambiguous_phrase_match"] += 1
+                    continue
+
+            if target_phrase_id <= 0:
+                summary["rows_skipped_no_phrase_match"] += 1
+                continue
+
+            key = (target_phrase_id, c_lang)
+            state = dst_existing.get(key, {"row_exists": False, "non_empty": False})
+            if state.get("non_empty"):
+                summary["production_rows_already_present"] += 1
+                continue
+
+            if dry_run:
+                if state.get("row_exists"):
+                    summary["rows_updated_empty_existing"] += 1
+                else:
+                    summary["rows_inserted"] += 1
+                # Simulate destination state for subsequent duplicates.
+                dst_existing[key] = {"row_exists": True, "non_empty": True}
+                continue
+
+            if state.get("row_exists"):
+                dst_cur.execute(
+                    """
+                    UPDATE generated_phrase_translations
+                    SET translated_text=?, provider='sync_local_db', updated_at=CURRENT_TIMESTAMP
+                    WHERE phrase_id=? AND lang_code=?
+                      AND (translated_text IS NULL OR TRIM(translated_text) = '')
+                    """,
+                    (translated, int(target_phrase_id), c_lang),
+                )
+                if int(dst_cur.rowcount or 0) > 0:
+                    summary["rows_updated_empty_existing"] += 1
+                    dst_existing[key] = {"row_exists": True, "non_empty": True}
+                else:
+                    # Another process may have filled it between preload and now.
+                    summary["production_rows_already_present"] += 1
+                continue
+
+            dst_cur.execute(
+                """
+                INSERT INTO generated_phrase_translations
+                (phrase_id, lang_code, translated_text, provider, updated_at)
+                VALUES (?, ?, ?, 'sync_local_db', CURRENT_TIMESTAMP)
+                """,
+                (int(target_phrase_id), c_lang, translated),
+            )
+            summary["rows_inserted"] += 1
+            dst_existing[key] = {"row_exists": True, "non_empty": True}
+
+        if not dry_run:
+            dst_conn.commit()
+    finally:
+        try:
+            src_conn.close()
+        except Exception:
+            pass
+        try:
+            dst_conn.close()
+        except Exception:
+            pass
+
+    return summary
+
+
+@app.cli.command("sync-missing-phrase-translations")
+@click.option("--source-db", required=True, help="Source SQLite DB path (local export) to sync from.")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not write changes.")
+def cli_sync_missing_phrase_translations(source_db, dry_run):
+    """
+    Sync missing generated_phrase_translations rows from source DB into current DB.
+    Conservative matching:
+      1) phrase_id + exact phrase text alignment
+      2) fallback exact English+Oromo match when unique
+    """
+    _log_db_context("cli:sync-missing-phrase-translations")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    click.echo(f"SOURCE_DB={source_db}")
+    summary = run_sync_missing_phrase_translations(source_db_path=source_db, dry_run=bool(dry_run))
+    click.echo("Phrase translation sync completed.")
+    click.echo(
+        f"source_rows_scanned={summary.get('source_rows_scanned', 0)} "
+        f"production_rows_already_present={summary.get('production_rows_already_present', 0)} "
+        f"rows_inserted={summary.get('rows_inserted', 0)} "
+        f"rows_updated_empty_existing={summary.get('rows_updated_empty_existing', 0)} "
+        f"rows_skipped_no_phrase_match={summary.get('rows_skipped_no_phrase_match', 0)} "
+        f"rows_skipped_ambiguous_phrase_match={summary.get('rows_skipped_ambiguous_phrase_match', 0)} "
+        f"rows_skipped_unsupported_lang_code={summary.get('rows_skipped_unsupported_lang_code', 0)} "
+        f"rows_skipped_missing_text={summary.get('rows_skipped_missing_text', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
+    )
+
+
 @app.cli.command("backfill-word-audio")
 @click.option("--limit", type=int, default=0, show_default=True, help="Limit approved words (0 = all).")
 @click.option("--chunk-size", type=int, default=150, show_default=True, help="Batch size for translation + TTS.")
