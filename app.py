@@ -2464,9 +2464,35 @@ def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, t
         LIMIT 1
     """, (entry_type, int(entry_id), lang_code, th, AZURE_TTS_PROVIDER, voice_name))
     row = c.fetchone()
-    conn.close()
     if not row:
-        return None
+        # Fallback for imported rows that may have different voice/provider metadata:
+        # still reuse latest saved audio for entry/lang to avoid regeneration costs.
+        c.execute(
+            """
+            SELECT id, file_path, text_hash
+            FROM generated_tts_audio
+            WHERE entry_type=? AND entry_id=? AND lang_code=?
+              AND file_path IS NOT NULL
+              AND TRIM(file_path) != ''
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (entry_type, int(entry_id), lang_code),
+        )
+        row = c.fetchone()
+        conn.close()
+        if not row:
+            return None
+        file_path = (row[1] or "").strip()
+        if not file_path or (not _has_usable_audio_ref(file_path)):
+            return None
+        return {
+            "id": int(row[0]),
+            "file_path": file_path,
+            "url": _public_audio_url(file_path),
+            "text_hash": (row[2] or ""),
+        }
+    conn.close()
     file_path = (row[1] or "").strip()
     if not file_path:
         return None
@@ -2626,14 +2652,58 @@ def _resolve_or_generate_tts_for_text(
         return ""
 
 
+def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
+    if entry_type not in ("word", "phrase"):
+        return {}, {"audio_rows_found": 0, "audio_urls_attached": 0}
+    lang_list = tuple(langs or ("en", "om"))
+    if not lang_list:
+        return {}, {"audio_rows_found": 0, "audio_urls_attached": 0}
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    placeholders = ",".join("?" for _ in lang_list)
+    c.execute(
+        f"""
+        SELECT lang_code, file_path
+        FROM generated_tts_audio
+        WHERE entry_type=? AND entry_id=?
+          AND lang_code IN ({placeholders})
+        ORDER BY id DESC
+        """,
+        (entry_type, int(entry_id), *lang_list),
+    )
+    rows = c.fetchall()
+    conn.close()
+
+    out = {}
+    found_rows = len(rows)
+    for lang_code, file_path in rows:
+        lang = normalize_text(lang_code or "")
+        key = "english" if lang == "en" else ("oromo" if lang == "om" else lang)
+        if key in out:
+            continue
+        if not _has_usable_audio_ref(file_path or ""):
+            continue
+        out[key] = _public_audio_url(file_path or "")
+
+    return out, {"audio_rows_found": found_rows, "audio_urls_attached": len(out)}
+
+
 def _get_saved_audio_for_entry(
     entry_type: str,
     entry_id: int,
     english_text: str = "",
     oromo_text: str = "",
     allow_generate: bool = False,
+    return_meta: bool = False,
 ):
     out = get_approved_audio(entry_type, int(entry_id)) or {}
+    gen_audio, gen_meta = _get_saved_generated_tts_audio(entry_type, int(entry_id), langs=("en", "om"))
+    if gen_audio.get("english") and not out.get("english"):
+        out["english"] = gen_audio.get("english", "")
+    if gen_audio.get("oromo") and not out.get("oromo"):
+        out["oromo"] = gen_audio.get("oromo", "")
+
     if english_text and not out.get("english"):
         en_url = _resolve_or_generate_tts_for_text(
             entry_type,
@@ -2654,6 +2724,11 @@ def _get_saved_audio_for_entry(
         )
         if om_url:
             out["oromo"] = om_url
+    if return_meta:
+        return out, {
+            "audio_rows_found": int(gen_meta.get("audio_rows_found", 0) or 0),
+            "audio_urls_attached": len([u for u in out.values() if normalize_text(u or "")]),
+        }
     return out
 
 
@@ -4409,18 +4484,34 @@ def dictionary():
                 lookup_error = "Auto translation unavailable. Showing base Oromo-English result."
 
             if result_id:
-                audio = _get_saved_audio_for_entry(
+                audio, audio_meta = _get_saved_audio_for_entry(
                     "word",
                     int(result_id),
                     english_text=(result or {}).get("english", ""),
                     oromo_text=(result or {}).get("oromo", ""),
                     allow_generate=False,
+                    return_meta=True,
+                )
+                app.logger.info(
+                    "/dictionary audio loader rows_loaded=%s audio_rows_found=%s audio_urls_attached=%s entry_type=%s entry_id=%s",
+                    1,
+                    int((audio_meta or {}).get("audio_rows_found", 0) or 0),
+                    int((audio_meta or {}).get("audio_urls_attached", 0) or 0),
+                    "word",
+                    int(result_id or 0),
                 )
                 try:
                     other_translations = get_saved_extra_translations(result_id)
                 except Exception as e:
                     app.logger.exception(f"/dictionary extra translations failed: {repr(e)}")
                     other_translations = {}
+            else:
+                app.logger.info(
+                    "/dictionary audio loader rows_loaded=%s audio_rows_found=%s audio_urls_attached=%s",
+                    0,
+                    0,
+                    0,
+                )
 
             if (not from_base) and source_lang in ("om", "en"):
                 word = make_search_key(q)
@@ -4588,12 +4679,21 @@ def word_detail(term):
 
     audio = {}
     try:
-        audio = _get_saved_audio_for_entry(
+        audio, audio_meta = _get_saved_audio_for_entry(
             "word",
             int(wid),
             english_text=normalize_text(en or ""),
             oromo_text=normalize_text(om or ""),
             allow_generate=False,
+            return_meta=True,
+        )
+        app.logger.info(
+            "/word audio loader rows_loaded=%s audio_rows_found=%s audio_urls_attached=%s entry_type=%s entry_id=%s",
+            1,
+            int((audio_meta or {}).get("audio_rows_found", 0) or 0),
+            int((audio_meta or {}).get("audio_urls_attached", 0) or 0),
+            "word",
+            int(wid or 0),
         )
     except Exception as e:
         app.logger.exception(f"/word audio lookup failed: {repr(e)}")
