@@ -4298,25 +4298,25 @@ def _load_learn_rows(limit: int = 200):
         })
 
     total_rows_loaded = int(len(rows))
-    total_audio_mappings = int(len(word_tts) + len(phrase_tts) + len(word_oromo_audio) + len(phrase_oromo_audio))
+    audio_rows_found = int(len(word_tts) + len(phrase_tts) + len(word_oromo_audio) + len(phrase_oromo_audio))
     rows_with_any_audio = 0
-    attached_audio_urls = 0
+    audio_attached_count = 0
     for r in rows:
         audio = (r or {}).get("audio") or {}
         row_has_audio = False
         for u in audio.values():
             if normalize_text(u or ""):
-                attached_audio_urls += 1
+                audio_attached_count += 1
                 row_has_audio = True
         if row_has_audio:
             rows_with_any_audio += 1
 
     app.logger.info(
-        "/learn loader rows_loaded=%s audio_mappings_found=%s rows_with_audio=%s audio_urls_attached=%s",
+        "/learn loader rows_loaded=%s audio_rows_found=%s audio_attached_count=%s rows_with_audio=%s",
         total_rows_loaded,
-        total_audio_mappings,
+        audio_rows_found,
+        audio_attached_count,
         rows_with_any_audio,
-        attached_audio_urls,
     )
 
     rows.sort(key=lambda r: (r.get("english", "").casefold(), r.get("entry_type", ""), int(r.get("entry_id", 0))))
