@@ -4565,8 +4565,6 @@ def home():
                 "om": suggest_terms(word, "om_en")
             }
 
-    c.execute("SELECT id, english, oromo FROM words WHERE status='approved' ORDER BY english ASC")
-    all_words = c.fetchall()
     conn.close()
 
     trending = get_trending(limit=15)
@@ -4577,7 +4575,6 @@ def home():
         result=result,
         result_id=result_id,
         audio=audio,
-        words=all_words,
         suggestions=suggestions,
         trending=trending,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids

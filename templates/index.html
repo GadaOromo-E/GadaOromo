@@ -66,13 +66,6 @@
   </div>
 </div>
 
-<!-- iOS Install Help (only shows on iPhone/iPad Safari when not installed) -->
-<div id="iosInstallHelp" class="card" style="display:none; margin-top:10px;">
-  <b>Install on iPhone</b>
-  <div class="muted" style="margin-top:6px; line-height:1.5;">
-    Tap <b>Share</b> (⬆️) → <b>Add to Home Screen</b>.
-  </div>
-</div>
 
 <!-- Toast -->
 <div id="pwaToast" class="card" style="display:none; position:fixed; left:12px; right:12px; bottom:12px; z-index:1000;">
@@ -132,7 +125,6 @@
       <label for="searchWord" class="sr-only">Search English or Oromo word</label>
       <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
       <button type="button" onclick="startVoiceSearch()" title="Speak search" aria-label="Speak search word">🎤</button>
-      <button type="submit">Search</button>
     </form>
 
     <div class="subtle" style="margin-top:10px;">
@@ -288,28 +280,27 @@
 </section>
 
   <section class="card">
-    <h2>Approved Words</h2>
-
-    {% if words and words|length > 0 %}
-      <div class="word-list">
-    {% for w in words %}
-  <div class="word-row">
-    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-      <span><b>{{ w[1] }}</b></span>
-      <span class="muted">→</span>
-      <span><b>{{ w[2] }}</b></span>
-
-      {% if w[0] in approved_oromo_audio_word_ids %}
-        <span class="muted" style="font-size:13px;">✅ Oromo audio approved</span>
-      {% endif %}
+    <h2>Motivational Expressions</h2>
+    <div class="muted" style="line-height:1.6;">
+      <div><b>Hojii fi obsaan milkaa&#39;ina.</b> Work and patience lead to success.</div>
+      <div style="margin-top:8px;"><b>Har&#39;a jalqabi.</b> Start today.</div>
+      <div style="margin-top:8px;"><b>Abdiin jiraadhu.</b> Live with hope.</div>
     </div>
-  </div>
-{% endfor %}
-             
-</div>
-    {% else %}
-      <p class="muted">No approved words yet. Be the first to submit!</p>
-    {% endif %}
+
+    <div style="margin-top:14px;">
+      <h2 style="margin-bottom:8px;">Install on Android</h2>
+      <div class="muted">Get the app from Google Play:</div>
+      <div style="margin-top:8px;">
+        <a class="btn" href="https://play.google.com/store/apps/details?id=com.gadaoromo.app">Android App</a>
+      </div>
+    </div>
+
+    <div id="iosInstallHelp" class="card" style="margin-top:14px; padding:12px;">
+      <b>Install on iPhone</b>
+      <div class="muted" style="margin-top:6px; line-height:1.5;">
+        Tap <b>Share</b> and then <b>Add to Home Screen</b>.
+      </div>
+    </div>
   </section>
 
  <footer class="footer">
@@ -336,3 +327,4 @@
 
 </body>
 </html>
+
