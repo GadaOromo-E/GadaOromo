@@ -5008,6 +5008,7 @@ def translate():
     is_auto_translation = False
     tts_audio_url = None
     translate_error = None
+    is_query_variant = (request.method == "GET" and bool(request.query_string))
 
     if request.method == "POST":
         text = request.form.get("text", "")
@@ -5074,7 +5075,7 @@ def translate():
     approved_oromo_audio_phrase_ids = get_approved_oromo_audio_ids("phrase")
     approved_oromo_audio_word_ids = get_approved_oromo_audio_ids("word")
 
-    return render_template(
+    resp = make_response(render_template(
         "translate.html",
         result=result,
         text=text,
@@ -5094,8 +5095,12 @@ def translate():
         matched=matched,
         audio=audio,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids,
-        approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids
-    )
+        approved_oromo_audio_phrase_ids=approved_oromo_audio_phrase_ids,
+        is_query_variant=is_query_variant,
+    ))
+    if is_query_variant:
+        resp.headers["X-Robots-Tag"] = "noindex, follow"
+    return resp
 
 
 # ------------------ MULTI-SENTENCE TRANSLATION ------------------
