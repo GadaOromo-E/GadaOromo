@@ -90,10 +90,12 @@
               <option value="{{ code }}" {% if target_lang == code %}selected{% endif %}>To: {{ cfg.label }}</option>
             {% endfor %}
           </select>
-          <button type="button" onclick="startVoiceSearch()" aria-label="Speak search query">Speak</button>
-          <button type="submit">Search</button>
+          <button type="button" onclick="startVoiceSearch()" title="Speak search" aria-label="Speak search word">🎤</button>
         </div>
       </form>
+      <div class="subtle" style="margin-top:10px;">
+        Tip: press 🎤 and speak the word if you cannot type.
+      </div>
 
       {% if lookup_error %}
         <div class="result-box" style="margin-top:10px;"><div class="muted">{{ lookup_error }}</div></div>
