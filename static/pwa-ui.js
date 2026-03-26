@@ -209,29 +209,15 @@ let deferredPrompt = null;
   }
 
   const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
-    || "/service-worker.js?v=20260325-1";
-  const SW_FALLBACK_URL = "/sw.js";
+    || "/service-worker.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
       try {
-        let reg;
-        try {
-          reg = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
-        } catch (err) {
-          // Fallback for environments where /service-worker.js is unavailable.
-          reg = await navigator.serviceWorker.register(SW_FALLBACK_URL, { scope: "/" });
-          try {
-            console.warn("SW register fallback used", {
-              primary: SW_URL,
-              fallback: SW_FALLBACK_URL,
-              error: String((err && err.message) || err || "unknown"),
-            });
-          } catch (_) {}
-        }
+        const reg = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
         const marker = document.getElementById("pwaSwDebug");
         const swDebug = {
-          requested_script: (reg && reg.active && reg.active.scriptURL) || SW_URL,
+          requested_script: SW_URL,
           registration_scope: (reg && reg.scope) || "",
           controlled: !!navigator.serviceWorker.controller,
           controller_script: (navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL) || "",
