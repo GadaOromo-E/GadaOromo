@@ -70,8 +70,15 @@
 
 
   <main class="content" id="main">
-    <div class="card">
-      <h2>Dictionary</h2>
+    <section class="card" aria-labelledby="dictionary-page-title">
+      <h1 id="dictionary-page-title">Oromo-English Dictionary and Phrase Hub</h1>
+      <p class="subtle">
+        Find Oromo and English dictionary entries, browse approved words and phrases, and view available translations in Amharic, Arabic, French, and Chinese.
+      </p>
+    </section>
+
+    <section class="card" aria-labelledby="dictionary-search-title">
+      <h2 id="dictionary-search-title">Dictionary Search</h2>
       <div class="subtle">Search words using Oromo, English, Amharic, Arabic, French, or Chinese.</div>
 
       <form method="GET" action="/dictionary" id="dictionarySearchForm" style="margin-top:12px;">
@@ -100,10 +107,11 @@
       {% if lookup_error %}
         <div class="result-box" style="margin-top:10px;"><div class="muted">{{ lookup_error }}</div></div>
       {% endif %}
-    </div>
+    </section>
 
     {% if result %}
-      <div class="result-box" style="margin-top:14px;">
+      <section class="result-box" style="margin-top:14px;" aria-labelledby="dictionary-result-title">
+        <h2 id="dictionary-result-title" class="sr-only">Dictionary Result</h2>
         <div><b>{{ language_options[source_lang].label }}:</b> <span id="srcText">{{ result.source_text }}</span></div>
 
         <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -198,21 +206,27 @@
           <button type="button" class="btn" onclick="speakSource()">Speak Source</button>
           <button type="button" class="btn" onclick="speakTarget()">Speak Target</button>
         </div>
-      </div>
+      </section>
     {% elif result is not none %}
-      <div class="result-box" style="margin-top:14px;"><div class="muted">No result found.</div></div>
+      <section class="result-box" style="margin-top:14px;" aria-labelledby="dictionary-no-result-title">
+        <h2 id="dictionary-no-result-title" class="sr-only">No Dictionary Result</h2>
+        <div class="muted">No result found.</div>
+      </section>
     {% endif %}
 
     {% if not q %}
-      <div class="card">
+      <section class="card" aria-labelledby="dictionary-words-title">
         {% if words %}
-          <div class="subtle" style="margin-bottom:10px;"><b>Words</b></div>
+          <h2 id="dictionary-words-title" class="subtle" style="margin-bottom:10px;">Words</h2>
           <div class="word-list">
             {% for w in words %}
               <div class="word-row">
                 <div>
-                  <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;">{{ w[1] }}</a>
+                  <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;" aria-label="Open word page for {{ w[1] }}">{{ w[1] }}</a>
                   <div class="subtle">{{ w[2] }}</div>
+                  <div class="small-actions" style="margin-top:6px;">
+                    <a class="btn" href="/word/{{ w[1]|urlencode }}">View Word Details</a>
+                  </div>
                   {% set wt = list_other_translations.get(w[0], {}) %}
                   {% if wt %}
                     <div class="multi-values">
@@ -235,11 +249,11 @@
         {% else %}
           <div class="muted">No words found.</div>
         {% endif %}
-      </div>
+      </section>
 
-      <div class="card" style="margin-top:12px;">
+      <section class="card" style="margin-top:12px;" aria-labelledby="dictionary-phrases-title">
         {% if phrases %}
-          <div class="subtle" style="margin-bottom:10px;"><b>Phrases</b></div>
+          <h2 id="dictionary-phrases-title" class="subtle" style="margin-bottom:10px;">Phrases</h2>
           <div class="word-list">
             {% for p in phrases %}
               <div class="word-row">
@@ -268,12 +282,12 @@
         {% else %}
           <div class="muted">No phrases found.</div>
         {% endif %}
-      </div>
+      </section>
     {% endif %}
 
     {% if suggestions %}
-      <div style="margin-top:14px;">
-        <h2>Did you mean...</h2>
+      <section style="margin-top:14px;" aria-labelledby="dictionary-suggestions-title">
+        <h2 id="dictionary-suggestions-title">Did you mean...</h2>
         {% if suggestions.en %}
           <div class="subtle">English suggestions</div>
           <div class="chips">
@@ -290,7 +304,7 @@
             {% for s in suggestions.om.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
           </div>
         {% endif %}
-      </div>
+      </section>
     {% endif %}
 
     <footer class="footer"><p>Copyright 2026 Gadaa</p></footer>
