@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  {% set english_phrase = (phrase.english if phrase and phrase.english is defined else "") %}
+  {% set oromo_phrase = (phrase.oromo if phrase and phrase.oromo is defined else "") %}
+
+  {% set am_raw = other_translations.get("am") if other_translations else "" %}
+  {% set ar_raw = other_translations.get("ar") if other_translations else "" %}
+  {% set zh_raw = other_translations.get("zh-CN") if other_translations else "" %}
+  {% set fr_raw = other_translations.get("fr") if other_translations else "" %}
+
+  {% set am = ((am_raw.get("text") if am_raw is mapping else am_raw) or "") %}
+  {% set ar = ((ar_raw.get("text") if ar_raw is mapping else ar_raw) or "") %}
+  {% set zh = ((zh_raw.get("text") if zh_raw is mapping else zh_raw) or "") %}
+  {% set fr = ((fr_raw.get("text") if fr_raw is mapping else fr_raw) or "") %}
+
+  <title>{{ page_title or (english_phrase ~ " meaning in Oromo | " ~ (APP_NAME or "Gadaa Dictionary")) }}</title>
+  <meta name="description" content="{{ meta_description or '' }}">
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="{{ canonical_url }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <style>
+    .page-wrap { max-width: 960px; margin: 0 auto; padding: 20px; }
+    .phrase-card { background: #fff; border: 1px solid #e5e5e5; border-radius: 14px; padding: 24px; margin-top: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.04); }
+    .phrase-title { margin: 0 0 8px 0; font-size: 2rem; line-height: 1.2; }
+    .main-translation { font-size: 1.1rem; margin: 8px 0 16px 0; }
+    .section-title { margin-top: 22px; margin-bottom: 10px; font-size: 1.15rem; }
+    .translation-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    .translation-table th, .translation-table td { border: 1px solid #ddd; padding: 10px 12px; text-align: left; vertical-align: top; }
+    .translation-table th { background: #f7f7f7; font-weight: 700; }
+    .translation-table td:first-child { font-weight: 700; width: 180px; white-space: nowrap; }
+    .quick-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
+    .btn-link { display: inline-block; text-decoration: none; padding: 10px 16px; border-radius: 10px; border: 1px solid #d8d8d8; background: #fff; color: #111; font-weight: 600; }
+    .btn-link.primary { background: #c40000; color: #fff; border-color: #c40000; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <header>
+      <h1>{{ APP_NAME }}</h1>
+      <p class="muted">Oromo-English Phrase Dictionary</p>
+    </header>
+
+    <main id="main">
+      <section class="phrase-card">
+        <h1 class="phrase-title">{{ english_phrase }}</h1>
+
+        {% if oromo_phrase %}
+          <p class="main-translation"><strong>Oromo:</strong> {{ oromo_phrase }}</p>
+        {% endif %}
+
+        {% if am or ar or zh or fr %}
+          <h2 class="section-title">Available translations</h2>
+          <table class="translation-table">
+            <thead>
+              <tr>
+                <th>Language</th>
+                <th>Translation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% if am %}<tr><td>Amharic</td><td>{{ am }}</td></tr>{% endif %}
+              {% if ar %}<tr><td>Arabic</td><td dir="rtl">{{ ar }}</td></tr>{% endif %}
+              {% if fr %}<tr><td>French</td><td>{{ fr }}</td></tr>{% endif %}
+              {% if zh %}<tr><td>Chinese</td><td>{{ zh }}</td></tr>{% endif %}
+            </tbody>
+          </table>
+        {% endif %}
+
+        {% set paudio = phrase.audio if phrase and phrase.audio is defined and phrase.audio else {} %}
+        {% set audio_oromo = paudio.get("oromo", "") %}
+        {% set audio_english = paudio.get("english", "") %}
+        {% set audio_am = paudio.get("am", "") %}
+        {% set audio_ar = paudio.get("ar", "") %}
+        {% set audio_fr = paudio.get("fr", "") %}
+        {% set audio_zh = paudio.get("zh-CN", "") %}
+
+        {% if audio_oromo or audio_english or audio_am or audio_ar or audio_fr or audio_zh %}
+          <h2 class="section-title">Pronunciation</h2>
+
+          {% if audio_oromo %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_oromo }}" aria-label="Play Oromo pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">Oromo</span>
+            </div>
+          {% endif %}
+          {% if audio_english %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_english }}" aria-label="Play English pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">English</span>
+            </div>
+          {% endif %}
+          {% if audio_am %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_am }}" aria-label="Play Amharic pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">Amharic</span>
+            </div>
+          {% endif %}
+          {% if audio_ar %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_ar }}" aria-label="Play Arabic pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">Arabic</span>
+            </div>
+          {% endif %}
+          {% if audio_fr %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_fr }}" aria-label="Play French pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">French</span>
+            </div>
+          {% endif %}
+          {% if audio_zh %}
+            <div class="audio-row" style="margin-top:8px;">
+              <button class="audio-btn" type="button" data-audio="{{ audio_zh }}" aria-label="Play Chinese pronunciation"><span class="audio-icon" aria-hidden="true"></span></button>
+              <span class="muted">Chinese</span>
+            </div>
+          {% endif %}
+        {% endif %}
+
+        <div class="quick-actions">
+          <a class="btn-link primary" href="/dictionary?q={{ english_phrase|urlencode }}&source_lang=en&target_lang=om">Search</a>
+          <a class="btn-link" href="/dictionary">Dictionary</a>
+        </div>
+      </section>
+
+      <footer style="margin-top:24px;">
+        <p class="muted">&copy; {{ current_year }} {{ APP_NAME }}</p>
+      </footer>
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1" defer></script>
+</body>
+</html>

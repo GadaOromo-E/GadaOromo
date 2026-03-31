@@ -258,7 +258,15 @@
             {% for p in phrases %}
               <div class="word-row">
                 <div>
-                  <div style="font-weight:800;">{{ p[1] }}</div>
+                  {% set pslug = phrase_slugs.get(p[0], "") %}
+                  {% if pslug %}
+                    <a href="/phrase/{{ pslug }}" style="font-weight:800; text-decoration:none;">{{ p[1] }}</a>
+                    <div style="margin-top:4px;">
+                      <a href="/phrase/{{ pslug }}" class="muted" style="font-size:13px; text-decoration:underline;">See phrase details &rarr;</a>
+                    </div>
+                  {% else %}
+                    <div style="font-weight:800;">{{ p[1] }}</div>
+                  {% endif %}
                   <div class="subtle">{{ p[2] }}</div>
                   {% set pt = list_phrase_translations.get(p[0], {}) %}
                   {% if pt %}

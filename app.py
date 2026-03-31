@@ -57,6 +57,7 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.exceptions import HTTPException
 from openpyxl import load_workbook
 from services.translation_service import google_translate_batch as service_google_translate_batch
 from services.translation_service import google_translate_text as service_google_translate_text
@@ -4583,6 +4584,23 @@ def home():
 
 # ------------------ DICTIONARY ------------------
 
+def make_phrase_slug(english_text: str) -> str:
+    """
+    Build a stable phrase slug from English text:
+    - lowercase
+    - punctuation removed safely
+    - spaces/underscores -> hyphens
+    """
+    t = normalize_text(english_text or "").casefold()
+    if not t:
+        return ""
+    t = unicodedata.normalize("NFKD", t)
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    t = re.sub(r"[^\w\s-]", " ", t)
+    t = re.sub(r"[\s_]+", "-", t).strip("-")
+    t = re.sub(r"-{2,}", "-", t)
+    return t
+
 @app.route("/dictionary", methods=["GET", "POST"])
 def dictionary():
     _log_db_context("/dictionary")
@@ -4692,6 +4710,13 @@ def dictionary():
             ORDER BY english ASC
         """)
     all_phrases = c.fetchall()
+    phrase_slugs = {}
+    for pid, en, _om in all_phrases:
+        pid_int = int(pid or 0)
+        if pid_int <= 0:
+            continue
+        phrase_slugs[pid_int] = make_phrase_slug(en or "")
+
     list_other_translations = {}
     list_phrase_translations = {}
 
@@ -4774,6 +4799,119 @@ def dictionary():
         trending=trending,
         approved_oromo_audio_word_ids=approved_oromo_audio_word_ids,
         list_phrase_translations=list_phrase_translations,
+        phrase_slugs=phrase_slugs,
+    )
+
+@app.route("/phrase/<slug>", methods=["GET"])
+def phrase_detail(slug):
+    _log_db_context("/phrase")
+    incoming_slug = normalize_text(unquote(slug or "")).strip().casefold()
+    if not incoming_slug:
+        abort(404)
+
+    row = None
+    other_translations = {}
+    audio = {}
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id, english, oromo
+            FROM phrases
+            WHERE status='approved'
+            ORDER BY id ASC
+            """
+        )
+        for pid, en, om in c.fetchall():
+            s = make_phrase_slug(en or "")
+            if s == incoming_slug:
+                row = (int(pid or 0), en or "", om or "", s)
+                break
+
+        if not row:
+            conn.close()
+            conn = None
+            abort(404)
+
+        pid, en, om, canonical_slug = row
+        if not canonical_slug:
+            conn.close()
+            conn = None
+            abort(404)
+        if incoming_slug != canonical_slug:
+            conn.close()
+            conn = None
+            return redirect(f"/phrase/{canonical_slug}", code=301)
+
+        placeholders = ",".join("?" for _ in EXTRA_GENERATED_LANGS)
+        c.execute(
+            f"""
+            SELECT lang_code, translated_text
+            FROM generated_phrase_translations
+            WHERE phrase_id=?
+              AND lang_code IN ({placeholders})
+              AND translated_text IS NOT NULL
+              AND TRIM(translated_text) != ''
+            """,
+            (pid, *EXTRA_GENERATED_LANGS),
+        )
+        other_translations = {}
+        for lang_code, translated_text in c.fetchall():
+            txt = normalize_text(translated_text or "")
+            if txt and _is_meaningful_generated_text(txt):
+                other_translations[lang_code] = txt
+
+        try:
+            audio = _get_saved_audio_for_entry(
+                "phrase",
+                int(pid),
+                english_text=normalize_text(en or ""),
+                oromo_text=normalize_text(om or ""),
+                allow_generate=False,
+            ) or {}
+        except Exception as e:
+            app.logger.exception(f"/phrase audio lookup failed: {repr(e)}")
+            audio = {}
+
+        conn.close()
+        conn = None
+    except HTTPException:
+        raise
+    except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        app.logger.exception(f"/phrase lookup failed: {repr(e)}")
+        abort(404)
+
+    phrase = {
+        "id": int(pid),
+        "english": en,
+        "oromo": om,
+        "audio": audio,
+    }
+
+    page_title = f"{en} meaning in Oromo ({om}) | {APP_NAME}" if om else f"{en} meaning in Oromo | {APP_NAME}"
+    meta_description = (
+        f"{en} means {om or 'this Oromo translation'}. "
+        f"Find phrase translations in Oromo, Amharic, Arabic, French, and Chinese on {APP_NAME}."
+    )[:160]
+    canonical_url = f"https://gadaadictionary.com/phrase/{canonical_slug}"
+
+    return render_template(
+        "phrase.html",
+        phrase=phrase,
+        other_translations=other_translations,
+        language_options=LANGUAGE_OPTIONS,
+        current_year=datetime.utcnow().year,
+        APP_NAME=APP_NAME,
+        page_title=page_title,
+        meta_description=meta_description,
+        canonical_url=canonical_url,
     )
 
 @app.route("/word/<path:term>", methods=["GET"])
