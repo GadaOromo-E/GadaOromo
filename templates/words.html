@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7,10 +7,15 @@
   {% set english_word = (word.english if word and word.english is defined and word.english else (word.en if word and word.en is defined and word.en else "")) %}
   {% set oromo_word = (word.oromo if word and word.oromo is defined and word.oromo else (word.om if word and word.om is defined and word.om else "")) %}
 
-  {% set am = other_translations.get("am") if other_translations else "" %}
-  {% set ar = other_translations.get("ar") if other_translations else "" %}
-  {% set zh = other_translations.get("zh-CN") if other_translations else "" %}
-  {% set fr = other_translations.get("fr") if other_translations else "" %}
+  {% set am_raw = other_translations.get("am") if other_translations else "" %}
+  {% set ar_raw = other_translations.get("ar") if other_translations else "" %}
+  {% set zh_raw = other_translations.get("zh-CN") if other_translations else "" %}
+  {% set fr_raw = other_translations.get("fr") if other_translations else "" %}
+
+  {% set am = ((am_raw.get("text") if am_raw is mapping else am_raw) or "") %}
+  {% set ar = ((ar_raw.get("text") if ar_raw is mapping else ar_raw) or "") %}
+  {% set zh = ((zh_raw.get("text") if zh_raw is mapping else zh_raw) or "") %}
+  {% set fr = ((fr_raw.get("text") if fr_raw is mapping else fr_raw) or "") %}
 
   {% set page_title = english_word ~ " meaning in Oromo" %}
   {% if oromo_word %}
@@ -158,7 +163,7 @@
   <div class="page-wrap">
     <header>
       <h1>{{ APP_NAME }}</h1>
-      <p class="muted">Oromo ↔ English Dictionary</p>
+      <p class="muted">Oromo-English Dictionary</p>
     </header>
     <main id="main">
 
@@ -173,7 +178,7 @@
       </section>
     {% else %}
       <section class="word-card">
-        <h2 class="word-title">{{ english_word }}</h2>
+        <h1 class="word-title">{{ english_word }}</h1>
 
         {% if oromo_word %}
           <p class="main-translation">

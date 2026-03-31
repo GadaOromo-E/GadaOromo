@@ -224,8 +224,8 @@
                 <div>
                   <a href="/word/{{ w[1]|urlencode }}" style="font-weight:800; text-decoration:none;" aria-label="Open word page for {{ w[1] }}">{{ w[1] }}</a>
                   <div class="subtle">{{ w[2] }}</div>
-                  <div class="small-actions" style="margin-top:6px;">
-                    <a class="btn" href="/word/{{ w[1]|urlencode }}">View Word Details</a>
+                  <div style="margin-top:4px;">
+                    <a href="/word/{{ w[1]|urlencode }}" class="muted" style="font-size:13px; text-decoration:underline;">See details &rarr;</a>
                   </div>
                   {% set wt = list_other_translations.get(w[0], {}) %}
                   {% if wt %}
