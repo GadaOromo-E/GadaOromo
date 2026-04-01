@@ -228,6 +228,8 @@ def sitemap_xml():
     urls = [
         ("/", "daily", "1.0"),
         ("/dictionary", "daily", "0.9"),
+        ("/translate", "daily", "0.8"),
+        ("/learn", "weekly", "0.8"),
     ]
 
     now = datetime.utcnow().strftime("%Y-%m-%d")
@@ -238,7 +240,9 @@ def sitemap_xml():
     ]
     static_url_count = len(urls)
     emitted_word_urls = 0
+    emitted_phrase_urls = 0
     fetched_word_rows = 0
+    fetched_phrase_rows = 0
     for path, freq, prio in urls:
         loc = f"{base}{path}"
         xml_parts.append("<url>")
@@ -253,22 +257,57 @@ def sitemap_xml():
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
         c.execute("""
-            SELECT DISTINCT TRIM(english)
-            FROM words
-            WHERE status='approved'
-            AND english IS NOT NULL
-            AND TRIM(english) != ''
+            SELECT DISTINCT w.id, TRIM(w.english) AS english
+            FROM words w
+            WHERE w.status='approved'
+              AND w.english IS NOT NULL
+              AND TRIM(w.english) != ''
+              AND w.oromo IS NOT NULL
+              AND TRIM(w.oromo) != ''
+              AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM generated_translations gt
+                        WHERE gt.word_id = w.id
+                          AND gt.translated_text IS NOT NULL
+                          AND TRIM(gt.translated_text) != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM audio a
+                        WHERE a.entry_type='word'
+                          AND a.entry_id=w.id
+                          AND a.status='approved'
+                          AND a.file_path IS NOT NULL
+                          AND TRIM(a.file_path) != ''
+                    )
+              )
             ORDER BY english ASC
         """)
         rows = c.fetchall()
         fetched_word_rows = len(rows)
+        if not rows:
+            # Safe fallback: keep approved word pages discoverable even if enrichment tables are empty.
+            c.execute("""
+                SELECT DISTINCT w.id, TRIM(w.english) AS english
+                FROM words w
+                WHERE w.status='approved'
+                  AND w.english IS NOT NULL
+                  AND TRIM(w.english) != ''
+                  AND w.oromo IS NOT NULL
+                  AND TRIM(w.oromo) != ''
+                ORDER BY english ASC
+            """)
+            rows = c.fetchall()
+            fetched_word_rows = len(rows)
 
-        for (en,) in rows:
+        for _wid, en in rows:
             try:
                 url = f"{base}/word/{quote(en, safe='')}"
                 xml_parts.append(f"""
     <url>
         <loc>{url}</loc>
+        <lastmod>{now}</lastmod>
         <changefreq>weekly</changefreq>
         <priority>0.8</priority>
     </url>
@@ -277,8 +316,71 @@ def sitemap_xml():
             except Exception as e:
                 print("skip bad word:", en, e)
 
+        # --- PHRASE URLS ---
+        c.execute("""
+            SELECT DISTINCT p.id, TRIM(p.english) AS english
+            FROM phrases p
+            WHERE p.status='approved'
+              AND p.english IS NOT NULL
+              AND TRIM(p.english) != ''
+              AND p.oromo IS NOT NULL
+              AND TRIM(p.oromo) != ''
+              AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM generated_phrase_translations gpt
+                        WHERE gpt.phrase_id = p.id
+                          AND gpt.translated_text IS NOT NULL
+                          AND TRIM(gpt.translated_text) != ''
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM audio a
+                        WHERE a.entry_type='phrase'
+                          AND a.entry_id=p.id
+                          AND a.status='approved'
+                          AND a.file_path IS NOT NULL
+                          AND TRIM(a.file_path) != ''
+                    )
+              )
+            ORDER BY english ASC
+        """)
+        phrase_rows = c.fetchall()
+        fetched_phrase_rows = len(phrase_rows)
+        if not phrase_rows:
+            c.execute("""
+                SELECT DISTINCT p.id, TRIM(p.english) AS english
+                FROM phrases p
+                WHERE p.status='approved'
+                  AND p.english IS NOT NULL
+                  AND TRIM(p.english) != ''
+                  AND p.oromo IS NOT NULL
+                  AND TRIM(p.oromo) != ''
+                ORDER BY english ASC
+            """)
+            phrase_rows = c.fetchall()
+            fetched_phrase_rows = len(phrase_rows)
+
+        for _pid, en in phrase_rows:
+            try:
+                slug = make_phrase_slug(en or "")
+                if not slug:
+                    continue
+                url = f"{base}/phrase/{quote(slug, safe='')}"
+                xml_parts.append(f"""
+    <url>
+        <loc>{url}</loc>
+        <lastmod>{now}</lastmod>
+        <changefreq>weekly</changefreq>
+        <priority>0.7</priority>
+    </url>
+""")
+                emitted_phrase_urls += 1
+            except Exception as e:
+                print("skip bad phrase:", en, e)
+
     except Exception as e:
-        print("sitemap word error:", e)
+        print("sitemap content error:", e)
     finally:
         try:
             conn.close()
@@ -286,10 +388,13 @@ def sitemap_xml():
             pass
 
     xml_parts.append("</urlset>")
-    final_total_urls = static_url_count + emitted_word_urls
+    final_total_urls = static_url_count + emitted_word_urls + emitted_phrase_urls
     sitemap_log_line = (
         f"sitemap_xml db_path={DB_NAME} "
         f"fetched_word_rows={fetched_word_rows} "
+        f"fetched_phrase_rows={fetched_phrase_rows} "
+        f"emitted_word_urls={emitted_word_urls} "
+        f"emitted_phrase_urls={emitted_phrase_urls} "
         f"final_total_urls={final_total_urls}"
     )
     app.logger.info(sitemap_log_line)
