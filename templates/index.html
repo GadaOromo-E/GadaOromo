@@ -273,6 +273,25 @@
     </div>
   </section>
 
+  <section class="card" aria-labelledby="share-gadaa-title">
+    <h2 id="share-gadaa-title">Share Gadaa Dictionary</h2>
+    <p class="muted" style="margin-top:6px;">
+      Help more people discover Gadaa Dictionary by sharing the website online.
+    </p>
+    <p style="margin-top:8px;">
+      <a href="https://gadaadictionary.com" target="_blank" rel="noopener noreferrer">https://gadaadictionary.com</a>
+    </p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+      <a class="btn" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on Facebook">Facebook</a>
+      <a class="btn" href="https://twitter.com/intent/tweet?text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.&url=https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on X">X</a>
+      <a class="btn" href="https://wa.me/?text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.%20https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on WhatsApp">WhatsApp</a>
+      <a class="btn" href="https://t.me/share/url?url=https%3A%2F%2Fgadaadictionary.com&text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools." target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on Telegram">Telegram</a>
+      <a class="btn" href="mailto:?subject=Explore%20Gadaa%20Dictionary&body=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.%0Ahttps%3A%2F%2Fgadaadictionary.com" aria-label="Share Gadaa Dictionary by email">Email</a>
+      <button type="button" class="btn" id="copyHomeShareLink" aria-label="Copy Gadaa Dictionary website link">Copy Link</button>
+      <span id="copyHomeShareFeedback" class="muted" aria-live="polite" style="align-self:center; min-height:1.2em;"></span>
+    </div>
+  </section>
+
   <section class="card small-note">
   <div class="muted" style="font-weight:600;">
     © 2026 Gada — Open community dictionary
@@ -310,6 +329,34 @@
 
 <script>
 /* your existing JS unchanged */
+(function () {
+  const btn = document.getElementById("copyHomeShareLink");
+  const feedback = document.getElementById("copyHomeShareFeedback");
+  if (!btn || !feedback) return;
+
+  const shareUrl = "https://gadaadictionary.com";
+  let resetTimer = null;
+
+  btn.addEventListener("click", async function () {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      feedback.textContent = "Link copied";
+    } catch (err) {
+      const tempInput = document.createElement("input");
+      tempInput.value = shareUrl;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand("copy");
+      document.body.removeChild(tempInput);
+      feedback.textContent = "Link copied";
+    }
+
+    if (resetTimer) clearTimeout(resetTimer);
+    resetTimer = setTimeout(function () {
+      feedback.textContent = "";
+    }, 2000);
+  });
+})();
 </script>
 
 
