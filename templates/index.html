@@ -185,149 +185,15 @@
   </aside>
 
  <main class="content" id="main">
-   <section class="card">
-    <h2>Search Dictionary</h2>
-
-    <form method="POST" id="searchForm" class="row" style="align-items:stretch;">
-      <label for="searchWord" class="sr-only">Search </label>
-      <input type="text" name="word" id="searchWord" placeholder="Type English or Oromo word..." required>
-      <button type="button" onclick="startVoiceSearch()" title="Speak search" aria-label="Speak search word">🎤</button>
-    </form>
-
-    <div class="subtle" style="margin-top:10px;">
-      Tip: press 🎤 and speak the word if you can’t type.
+  <section class="card">
+    <div class="quick-actions">
+      <a class="btn" href="/submit">➕ Add Word</a>
+      <a class="btn" href="/submit_phrase">➕ Add Phrase</a>
+      <a class="btn" href="/recorder">🎙 Add Voice</a>
     </div>
+  </section>
 
-    {% if result %}
-      <div class="result-box" style="margin-top:14px;">
-        <div><b>English:</b> <span id="enText">{{ result[0] }}</span></div>
-
-        <div style="margin-top:6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-          <div><b>Oromo:</b> <span id="omText">{{ result[1] }}</span></div>
-
-          {% if result_id %}
-            {% if result_id not in approved_oromo_audio_word_ids %}
-              <button
-                type="button"
-                class="btn"
-                style="padding:8px 10px;"
-                data-record-btn
-                data-entry-type="word"
-                data-entry-id="{{ result_id }}"
-                data-lang="oromo"
-                title="Record Oromo pronunciation"
-              >🎙 Record Oromo</button>
-
-              <button
-                type="button"
-                class="btn"
-                style="padding:8px 10px; display:none;"
-                data-stop-btn
-                data-entry-type="word"
-                data-entry-id="{{ result_id }}"
-                data-lang="oromo"
-              >⏹ Stop</button>
-
-              <audio data-preview-audio controls style="width:100%; display:none; margin-top:8px;"></audio>
-
-              <div style="margin-top:8px;">
-                <button
-                  type="button"
-                  class="btn primary"
-                  data-submit-btn
-                  data-entry-type="word"
-                  data-entry-id="{{ result_id }}"
-                  data-lang="oromo"
-                  style="display:none;"
-                >✅ Submit</button>
-
-                <button
-                  type="button"
-                  class="btn"
-                  data-rerecord-btn
-                  data-entry-type="word"
-                  data-entry-id="{{ result_id }}"
-                  data-lang="oromo"
-                  style="display:none;"
-                >🔁 Re-record</button>
-              </div>
-
-              <!-- keep your old one too (compat) -->
-              <span class="muted" data-status-for="{{ result_id }}" style="font-size:14px;"></span>
-            {% else %}
-              <span class="muted" style="font-size:14px;">✅ Oromo audio approved</span>
-            {% endif %}
-          {% endif %}
-        </div>
-
-        {% if audio and (audio.oromo or audio.english) %}
-          <div style="margin-top:14px;">
-            <div class="subtle">🎧 Pronunciation</div>
-
-            {% if audio.oromo %}
-              <div class="subtle" style="margin-top:10px;">Oromo audio</div>
-              <audio controls style="width:100%;">
-                <source src="{{ audio.oromo }}">
-              </audio>
-            {% endif %}
-
-            {% if audio.english %}
-              <div class="subtle" style="margin-top:10px;">English audio</div>
-              <audio controls style="width:100%;">
-                <source src="{{ audio.english }}">
-              </audio>
-            {% endif %}
-          </div>
-        {% else %}
-          <div class="muted" style="margin-top:10px;">
-            No approved audio yet. You can help by recording Oromo here.
-          </div>
-        {% endif %}
-
-        <div class="small-actions" style="margin-top:12px;">
-          <button type="button" class="btn" onclick="speakEnglish()">🔊 Speak English</button>
-          <button type="button" class="btn" onclick="speakOromo()">🔊 Speak Oromo</button>
-        </div>
-
-        {% if result_id %}
-          <div class="muted" style="margin-top:8px; font-size:14px;">
-            Recorded Oromo becomes public after admin approval.
-          </div>
-        {% endif %}
-      </div>
-
-    {% elif result is not none %}
-      <div class="result-box" style="margin-top:14px;"
-           data-entry-type="word"
-           data-entry-id="{{ result_id }}"
-           data-lang="oromo">
-      </div>
-    {% endif %}
-
-    {% if suggestions %}
-      <div style="margin-top:14px;">
-        <h2>Did you mean…</h2>
-
-        {% if suggestions.en %}
-          <div class="subtle">English suggestions</div>
-          <div class="chips">
-            {% for s in suggestions.en.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.en.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.en.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-          </div>
-        {% endif %}
-
-        {% if suggestions.om %}
-          <div class="subtle" style="margin-top:10px;">Oromo suggestions</div>
-          <div class="chips">
-            {% for s in suggestions.om.closest %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.om.prefix %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-            {% for s in suggestions.om.partial %}<button type="button" class="chip" onclick="useSuggestion('{{ s|e }}')">{{ s }}</button>{% endfor %}
-          </div>
-        {% endif %}
-      </div>
-    {% endif %}
-
+  <section class="card">
     <div class="quick-actions">
       <a class="btn primary" href="/translate">🌍 Translator</a>
       <a class="btn primary" href="/dictionary">📖 Dictionary</a>
@@ -379,7 +245,6 @@
         Tap <b>Share</b> and then <b>Add to Home Screen</b>.
       </div>
     </div>
-  </section>
 
  <footer class="footer">
   <p>© 2026 Gada — Open community dictionary</p>
