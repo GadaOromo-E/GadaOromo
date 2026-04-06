@@ -33,6 +33,73 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+
+  <style>
+    .share-card {
+      padding: 14px;
+    }
+
+    .share-title {
+      margin: 0;
+      line-height: 1.25;
+    }
+
+    .share-desc {
+      margin: 6px 0 0;
+    }
+
+    .share-site-wrap {
+      margin-top: 10px;
+    }
+
+    .share-site-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 10px;
+      border: 1px solid #d9dce4;
+      border-radius: 999px;
+      background: #f7f8fb;
+      color: #2f3542;
+      font-size: 14px;
+      text-decoration: none;
+      line-height: 1;
+    }
+
+    .share-site-badge:hover,
+    .share-site-badge:focus-visible {
+      background: #eef1f7;
+      border-color: #c8ced9;
+    }
+
+    .share-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .share-actions .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+      width: auto;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 10px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+
+    .share-feedback {
+      display: inline-flex;
+      align-items: center;
+      color: #4a5568;
+      font-size: 13px;
+      padding: 0 4px;
+      min-height: 38px;
+    }
+  </style>
 </head>
 
 <body>
@@ -273,22 +340,22 @@
     </div>
   </section>
 
-  <section class="card" aria-labelledby="share-gadaa-title">
-    <h2 id="share-gadaa-title">Share Gadaa Dictionary</h2>
-    <p class="muted" style="margin-top:6px;">
+  <section class="card share-card" aria-labelledby="share-gadaa-title">
+    <h2 id="share-gadaa-title" class="share-title">Share Gadaa Dictionary</h2>
+    <p class="muted share-desc">
       Help more people discover Gadaa Dictionary by sharing the website online.
     </p>
-    <p style="margin-top:8px;">
-      <a href="https://gadaadictionary.com" target="_blank" rel="noopener noreferrer">https://gadaadictionary.com</a>
+    <p class="share-site-wrap">
+      <a class="share-site-badge" href="https://gadaadictionary.com" target="_blank" rel="noopener noreferrer">gadaadictionary.com</a>
     </p>
-    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">
+    <div class="share-actions">
       <a class="btn" href="https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on Facebook">Facebook</a>
       <a class="btn" href="https://twitter.com/intent/tweet?text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.&url=https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on X">X</a>
       <a class="btn" href="https://wa.me/?text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.%20https%3A%2F%2Fgadaadictionary.com" target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on WhatsApp">WhatsApp</a>
       <a class="btn" href="https://t.me/share/url?url=https%3A%2F%2Fgadaadictionary.com&text=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools." target="_blank" rel="noopener noreferrer" aria-label="Share Gadaa Dictionary on Telegram">Telegram</a>
       <a class="btn" href="mailto:?subject=Explore%20Gadaa%20Dictionary&body=Explore%20Gadaa%20Dictionary%20%E2%80%94%20words%2C%20phrases%2C%20translations%2C%20audio%2C%20and%20learning%20tools.%0Ahttps%3A%2F%2Fgadaadictionary.com" aria-label="Share Gadaa Dictionary by email">Email</a>
       <button type="button" class="btn" id="copyHomeShareLink" aria-label="Copy Gadaa Dictionary website link">Copy Link</button>
-      <span id="copyHomeShareFeedback" class="muted" aria-live="polite" style="align-self:center; min-height:1.2em;"></span>
+      <span id="copyHomeShareFeedback" class="share-feedback" aria-live="polite"></span>
     </div>
   </section>
 
