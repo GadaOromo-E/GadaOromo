@@ -42,6 +42,7 @@ import csv
 import hashlib
 import shutil
 import time
+import threading
 import click
 from uuid import uuid4
 from difflib import get_close_matches
@@ -2453,6 +2454,140 @@ def _fetch_approved_phrase_items(limit: int = 0):
     return [(pid, en) for pid, en in rows if pid and en]
 
 
+def ensure_missing_oromo_for_entries(
+    entry_type: str,
+    items,
+    chunk_size: int = None,
+    log_context: str = "post_import_oromo",
+):
+    """
+    Best-effort Oromo backfill for base entries that were imported without Oromo text.
+    Updates base table rows only when Oromo is currently blank.
+    """
+    summary = {
+        "items_seen": 0,
+        "missing_before": 0,
+        "updated": 0,
+        "already_present": 0,
+        "empty_results": 0,
+        "provider_errors": 0,
+    }
+    if entry_type not in ("word", "phrase") or not items:
+        return summary
+
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    table = "words" if entry_type == "word" else "phrases"
+    unique_items = []
+    seen_ids = set()
+    for eid, en in items:
+        eid_int = int(eid or 0)
+        en_norm = normalize_text(en or "")
+        if not eid_int or not en_norm or eid_int in seen_ids:
+            continue
+        seen_ids.add(eid_int)
+        unique_items.append((eid_int, en_norm))
+
+    summary["items_seen"] = len(unique_items)
+    if not unique_items:
+        return summary
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    missing_pairs = []
+    for eid, en in unique_items:
+        c.execute(
+            f"SELECT oromo FROM {table} WHERE id=? AND status='approved' LIMIT 1",
+            (eid,),
+        )
+        row = c.fetchone()
+        existing_om = normalize_text((row or [""])[0] or "")
+        if existing_om:
+            summary["already_present"] += 1
+            continue
+        missing_pairs.append((eid, en))
+
+    summary["missing_before"] = len(missing_pairs)
+    if not missing_pairs:
+        conn.close()
+        return summary
+
+    for i in range(0, len(missing_pairs), safe_chunk):
+        chunk = missing_pairs[i:i + safe_chunk]
+        if not chunk:
+            continue
+
+        english_batch = [en for _eid, en in chunk]
+        translated_list = google_translate_batch_v2(
+            english_batch,
+            target=_google_lang_code("om"),
+            source="en",
+        )
+
+        if translated_list and len(translated_list) == len(chunk):
+            for (eid, _en), om_raw in zip(chunk, translated_list):
+                om = normalize_text(om_raw or "")
+                if not om:
+                    summary["empty_results"] += 1
+                    continue
+                om_key = make_search_key(_strip_edge_punct(om))
+                c.execute(
+                    f"""
+                    UPDATE {table}
+                    SET oromo=?, oromo_key=?
+                    WHERE id=?
+                      AND (oromo IS NULL OR TRIM(oromo)='')
+                    """,
+                    (om, om_key, eid),
+                )
+                if int(c.rowcount or 0) > 0:
+                    summary["updated"] += 1
+        else:
+            for eid, en in chunk:
+                try:
+                    om = google_translate_text_v2(
+                        en,
+                        target=_google_lang_code("om"),
+                        source="en",
+                    )
+                    om = normalize_text(om or "")
+                    if not om:
+                        summary["empty_results"] += 1
+                        continue
+                    om_key = make_search_key(_strip_edge_punct(om))
+                    c.execute(
+                        f"""
+                        UPDATE {table}
+                        SET oromo=?, oromo_key=?
+                        WHERE id=?
+                          AND (oromo IS NULL OR TRIM(oromo)='')
+                        """,
+                        (om, om_key, eid),
+                    )
+                    if int(c.rowcount or 0) > 0:
+                        summary["updated"] += 1
+                except Exception:
+                    summary["provider_errors"] += 1
+
+    conn.commit()
+    conn.close()
+
+    app.logger.info(
+        "%s Oromo backfill summary entry_type=%s seen=%s missing=%s updated=%s already_present=%s empty=%s errors=%s",
+        log_context,
+        entry_type,
+        summary["items_seen"],
+        summary["missing_before"],
+        summary["updated"],
+        summary["already_present"],
+        summary["empty_results"],
+        summary["provider_errors"],
+    )
+    return summary
+
+
 def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
     """
     Return phrase rows with non-empty English source text and at least one missing
@@ -3485,6 +3620,219 @@ def ensure_missing_tts_for_words(
             summary["failed"],
         )
     return summary
+
+
+def ensure_missing_tts_for_phrases(
+    phrase_items,
+    force_regenerate: bool = False,
+    chunk_size: int = None,
+    log_context: str = "phrase_tts_backfill",
+):
+    summary = {
+        "phrases_seen": 0,
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
+    }
+    if not phrase_items:
+        return summary
+
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    unique_items = []
+    seen = set()
+    for pid, en in phrase_items:
+        pid_int = int(pid or 0)
+        en_norm = normalize_text(en or "")
+        if not pid_int or not en_norm or pid_int in seen:
+            continue
+        seen.add(pid_int)
+        unique_items.append((pid_int, en_norm))
+
+    if not unique_items:
+        return summary
+
+    for i in range(0, len(unique_items), safe_chunk):
+        chunk = unique_items[i:i + safe_chunk]
+        for pid, _en in chunk:
+            row = generate_tts_for_entry("phrase", pid, force_regenerate=force_regenerate)
+            summary["phrases_seen"] += 1
+            for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+                summary[key] += int(row.get(key, 0) or 0)
+        app.logger.info(
+            "%s chunk_done start=%s size=%s generated=%s cached=%s failed=%s",
+            log_context,
+            i,
+            len(chunk),
+            summary["generated"],
+            summary["cached"],
+            summary["failed"],
+        )
+    return summary
+
+
+def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None):
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    word_ids = [int(x) for x in (word_ids or []) if int(x or 0) > 0]
+    phrase_ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
+    app.logger.info(
+        "Post-import pipeline started word_ids=%s phrase_ids=%s",
+        len(word_ids),
+        len(phrase_ids),
+    )
+
+    conn = None
+    cursor = None
+    try:
+        # Background thread must use its own SQLite connection and cursor.
+        conn = sqlite3.connect(app.DB_NAME)
+        cursor = conn.cursor()
+
+        def _fetch_items_by_ids(table_name, ids):
+            if not ids:
+                return []
+
+            ordered_ids = []
+            seen_ids = set()
+            for raw_id in ids:
+                rid = int(raw_id or 0)
+                if rid > 0 and rid not in seen_ids:
+                    ordered_ids.append(rid)
+                    seen_ids.add(rid)
+
+            if not ordered_ids:
+                return []
+
+            rows_by_id = {}
+            for i in range(0, len(ordered_ids), safe_chunk):
+                chunk_ids = ordered_ids[i:i + safe_chunk]
+                placeholders = ",".join("?" for _ in chunk_ids)
+                cursor.execute(
+                    f"""
+                    SELECT id, english
+                    FROM {table_name}
+                    WHERE status='approved'
+                      AND id IN ({placeholders})
+                      AND english IS NOT NULL
+                      AND TRIM(english) != ''
+                    """,
+                    tuple(chunk_ids),
+                )
+                for rid, english in cursor.fetchall():
+                    rid_int = int(rid or 0)
+                    english_norm = normalize_text(english or "")
+                    if rid_int and english_norm:
+                        rows_by_id[rid_int] = english_norm
+
+            return [(rid, rows_by_id[rid]) for rid in ordered_ids if rid in rows_by_id]
+
+        # Re-fetch from DB inside this thread; do not use caller-owned row objects.
+        word_items = _fetch_items_by_ids("words", word_ids)
+        phrase_items = _fetch_items_by_ids("phrases", phrase_ids)
+
+        # Fill Oromo base field first for newly inserted entries.
+        if word_items:
+            ensure_missing_oromo_for_entries(
+                "word",
+                word_items,
+                chunk_size=safe_chunk,
+                log_context="post_import_pipeline",
+            )
+        if phrase_items:
+            ensure_missing_oromo_for_entries(
+                "phrase",
+                phrase_items,
+                chunk_size=safe_chunk,
+                log_context="post_import_pipeline",
+            )
+
+        words_saved = 0
+        phrases_saved = 0
+        if word_items:
+            words_saved, _ = ensure_missing_generated_translations_for_words(
+                word_items,
+                langs=EXTRA_GENERATED_LANGS,
+                chunk_size=safe_chunk,
+                log_context="post_import_pipeline_words",
+            )
+        if phrase_items:
+            phrases_saved, _ = ensure_missing_generated_translations_for_phrases(
+                phrase_items,
+                langs=EXTRA_GENERATED_LANGS,
+                chunk_size=safe_chunk,
+                log_context="post_import_pipeline_phrases",
+            )
+        app.logger.info(
+            "Translations completed words_saved=%s phrases_saved=%s",
+            int(words_saved or 0),
+            int(phrases_saved or 0),
+        )
+
+        words_tts = ensure_missing_tts_for_words(
+            word_items,
+            force_regenerate=False,
+            chunk_size=safe_chunk,
+            log_context="post_import_pipeline_tts_words",
+        ) if word_items else {}
+        phrases_tts = ensure_missing_tts_for_phrases(
+            phrase_items,
+            force_regenerate=False,
+            chunk_size=safe_chunk,
+            log_context="post_import_pipeline_tts_phrases",
+        ) if phrase_items else {}
+        app.logger.info(
+            "TTS completed word_generated=%s word_cached=%s phrase_generated=%s phrase_cached=%s",
+            int((words_tts or {}).get("generated", 0) or 0),
+            int((words_tts or {}).get("cached", 0) or 0),
+            int((phrases_tts or {}).get("generated", 0) or 0),
+            int((phrases_tts or {}).get("cached", 0) or 0),
+        )
+        conn.commit()
+    except Exception:
+        app.logger.exception("Post-import pipeline failed with unhandled exception")
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def trigger_post_import_pipeline_async(word_ids, phrase_ids, chunk_size: int = None):
+    word_ids = [int(x) for x in (word_ids or []) if int(x or 0) > 0]
+    phrase_ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
+    if not word_ids and not phrase_ids:
+        return False
+
+    try:
+        worker = threading.Thread(
+            target=_run_post_import_pipeline,
+            args=(word_ids, phrase_ids, chunk_size),
+            daemon=True,
+            name="post_import_pipeline",
+        )
+        worker.start()
+        return True
+    except Exception as e:
+        app.logger.exception("Failed to start post-import pipeline thread: %s", repr(e))
+        return False
 
 
 def run_word_audio_backfill(limit: int = 0, chunk_size: int = None, force_regenerate: bool = False):
@@ -7587,6 +7935,8 @@ def admin_import():
                 "skipped_missing_text": 0,
                 "skipped_missing_voice": 0,
             }
+            inserted_word_items = []
+            inserted_phrase_items = []
 
             conn = sqlite3.connect(app.DB_NAME)
             app.logger.info(
@@ -7691,8 +8041,10 @@ def admin_import():
                     if was_inserted:
                         if entry_type == "word":
                             inserted_words += 1
+                            inserted_word_items.append((int(eid), en))
                         else:
                             inserted_phrases += 1
+                            inserted_phrase_items.append((int(eid), en))
                     elif insert_reason == "existing_english":
                         skipped_existing_during_insert += 1
                     else:
@@ -7731,6 +8083,22 @@ def admin_import():
             conn.close()
             conn = None
 
+            new_words = list(inserted_word_items or [])
+            new_phrases = list(inserted_phrase_items or [])
+            word_ids = [int(w[0]) for w in new_words if w and int(w[0] or 0) > 0]
+            phrase_ids = [int(p[0]) for p in new_phrases if p and int(p[0] or 0) > 0]
+            pipeline_queued = trigger_post_import_pipeline_async(
+                word_ids,
+                phrase_ids,
+                chunk_size=IMPORT_BATCH_SIZE,
+            )
+            _perf_log(
+                "post_import_pipeline_queued",
+                queued=bool(pipeline_queued),
+                inserted_word_items=len(inserted_word_items),
+                inserted_phrase_items=len(inserted_phrase_items),
+            )
+
             skipped_existing_total = skipped_existing_precheck + skipped_existing_during_insert
             rows_inserted_total = inserted_words + inserted_phrases
             skipped_total = skipped_existing_total + duplicate_rows + empty_rows + over_limit_rows
@@ -7742,8 +8110,8 @@ def admin_import():
             )
             print(f"admin_import: rows_inserted_total={rows_inserted_total}")
             print(f"admin_import: errors_total={errors_total}")
-            app.logger.info("Import completed (DB only). Run backfill commands separately.")
-            print("Import completed (DB only). Run backfill commands separately.")
+            app.logger.info("Import completed. Post-import pipeline queued=%s", bool(pipeline_queued))
+            print(f"Import completed. Post-import pipeline queued={bool(pipeline_queued)}")
             _perf_log(
                 "request_complete",
                 rows_read=rows_read,
@@ -7791,6 +8159,7 @@ def admin_import():
                     "generated_word_by_lang": {},
                     "generated_phrase_by_lang": {},
                     "tts_summary": {},
+                    "post_import_pipeline_queued": bool(pipeline_queued),
                     "google_calls_used": 0,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_items": IMPORT_MAX_WORDS,
