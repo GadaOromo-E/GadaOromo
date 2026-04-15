@@ -531,6 +531,7 @@ def uploads(filename):
 
 IMPORT_BATCH_SIZE = 100
 IMPORT_MAX_WORDS = 200
+MISSING_OROMO_KEY_SENTINEL = "__missing_oromo__"
 
 
 # ------------------ STOPWORDS ------------------
@@ -694,6 +695,63 @@ def parse_xlsx_english_rows(file_bytes: bytes):
         words.append(str(a))
 
     return words
+
+
+def parse_csv_admin_import_rows(file_bytes: bytes):
+    """
+    Admin import parser that preserves optional Oromo when provided.
+    Returns rows as tuples: (entry_type_hint, english_text, oromo_text)
+    """
+    text = file_bytes.decode("utf-8", errors="replace")
+    f = StringIO(text)
+    reader = csv.DictReader(f)
+    if not reader.fieldnames:
+        return []
+
+    english_key = None
+    oromo_key = None
+    for k in (reader.fieldnames or []):
+        lk = (k or "").strip().lower()
+        if lk in ("english", "en") and english_key is None:
+            english_key = k
+        if lk in ("oromo", "om") and oromo_key is None:
+            oromo_key = k
+    first_key = (reader.fieldnames or [""])[0]
+
+    rows = []
+    for row in reader:
+        en_raw = row.get(english_key, "") if english_key else row.get(first_key, "")
+        om_raw = row.get(oromo_key, "") if oromo_key else ""
+        en = normalize_text(str(en_raw or ""))
+        om = normalize_text(str(om_raw or ""))
+        entry_type_hint = "phrase" if om else ""
+        rows.append((entry_type_hint, en, om))
+    return rows
+
+
+def parse_xlsx_admin_import_rows(file_bytes: bytes):
+    """
+    XLSX admin import parser with optional Oromo in second column.
+    Returns rows as tuples: (entry_type_hint, english_text, oromo_text)
+    """
+    wb = load_workbook(BytesIO(file_bytes))
+    ws = wb.active
+
+    rows = []
+    for idx, row in enumerate(ws.iter_rows(values_only=True)):
+        if not row:
+            rows.append(("", "", ""))
+            continue
+        a = normalize_text(str((row[0] if len(row) > 0 else "") or ""))
+        b = normalize_text(str((row[1] if len(row) > 1 else "") or ""))
+
+        # Header row variants
+        if idx == 0 and (a or "").casefold() in ("english", "en"):
+            continue
+
+        entry_type_hint = "phrase" if b else ""
+        rows.append((entry_type_hint, a, b))
+    return rows
 
 
 def parse_txt_english(file_bytes: bytes):
@@ -2229,7 +2287,7 @@ def _save_generated_phrase_translation(
     tts_audio_url: str = None
 ):
     if not _is_meaningful_generated_text(translated_text):
-        return
+        return False
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -2245,8 +2303,12 @@ def _save_generated_phrase_translation(
         """, (phrase_id, lang_code, translated_text, provider, tts_audio_url))
         conn.commit()
         conn.close()
+        return True
     except Exception as e:
+        if "no such table: generated_phrase_translations" in str(e).lower():
+            ensure_generated_phrase_translations_table()
         app.logger.exception(f"generated_phrase_translations cache write failed: {repr(e)}")
+        return False
 
 
 def ensure_missing_generated_translations_for_phrases(
@@ -2279,6 +2341,10 @@ def ensure_missing_generated_translations_for_phrases(
 
     total_saved = 0
     stats = {}
+    phrase_debug = {
+        int(pid): {"attempted": [], "saved": [], "skips": []}
+        for pid, _en in unique_items
+    }
 
     for lang in langs:
         st = {
@@ -2299,11 +2365,14 @@ def ensure_missing_generated_translations_for_phrases(
         skipped_existing_log_count = 0
         processed_new_log_count = 0
         for pid, en in unique_items:
+            phrase_debug.setdefault(int(pid), {"attempted": [], "saved": [], "skips": []})
+            phrase_debug[int(pid)]["attempted"].append(lang)
             cached = _get_cached_generated_phrase_translation(pid, lang)
             cached_text = normalize_text((cached or [""])[0] or "")
             if not overwrite_existing:
                 if _is_meaningful_generated_text(cached_text):
                     st["already_cached"] += 1
+                    phrase_debug[int(pid)]["skips"].append(f"{lang}:already_cached")
                     if skipped_existing_log_count < 5:
                         app.logger.info(
                             "%s skipped_existing type=generated_translation entry_type=phrase entry_id=%s lang=%s value=%r",
@@ -2328,6 +2397,8 @@ def ensure_missing_generated_translations_for_phrases(
             if not api_key:
                 st["provider_errors"] += len(pairs)
                 st["missing_api_key"] += len(pairs)
+                for pid, _en in pairs:
+                    phrase_debug[int(pid)]["skips"].append(f"{lang}:missing_api_key")
                 app.logger.error(
                     "phrase translation skipped: missing Google API key context=%s lang=%s missing_pairs=%s",
                     log_context,
@@ -2344,6 +2415,8 @@ def ensure_missing_generated_translations_for_phrases(
                 if not translated:
                     st["provider_errors"] += len(pairs)
                     st["request_failures"] += len(pairs)
+                    for pid, _en in pairs:
+                        phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_batch_response")
                     app.logger.error(
                         "phrase batch translate empty response context=%s lang=%s pairs=%s key_source=%s",
                         log_context,
@@ -2354,11 +2427,15 @@ def ensure_missing_generated_translations_for_phrases(
                     continue
                 if len(translated) != len(pairs):
                     st["batch_mismatch_fallback"] += len(pairs)
+                    for pid, _en in pairs:
+                        phrase_debug[int(pid)]["skips"].append(f"{lang}:batch_mismatch_fallback")
                     translated = []
             except Exception:
                 translated = []
                 st["provider_errors"] += len(pairs)
                 st["request_failures"] += len(pairs)
+                for pid, _en in pairs:
+                    phrase_debug[int(pid)]["skips"].append(f"{lang}:batch_exception")
                 app.logger.exception(
                     "phrase batch translate exception context=%s lang=%s pairs=%s",
                     log_context,
@@ -2372,11 +2449,20 @@ def ensure_missing_generated_translations_for_phrases(
                     txt = normalize_text(out or "")
                     if not _is_meaningful_generated_text(txt):
                         st["empty_results"] += 1
+                        phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_text")
                         continue
                     try:
-                        _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
-                        st["saved"] += 1
-                        total_saved += 1
+                        write_ok = _save_generated_phrase_translation(
+                            pid, lang, txt, provider="google_translate_v2", tts_audio_url=None
+                        )
+                        if write_ok:
+                            st["saved"] += 1
+                            total_saved += 1
+                            phrase_debug[int(pid)]["saved"].append(lang)
+                        else:
+                            st["provider_errors"] += 1
+                            phrase_debug[int(pid)]["skips"].append(f"{lang}:write_failed")
+                            continue
                         if processed_new_log_count < 5:
                             app.logger.info(
                                 "%s processed_new type=generated_translation entry_type=phrase entry_id=%s lang=%s",
@@ -2387,6 +2473,7 @@ def ensure_missing_generated_translations_for_phrases(
                             processed_new_log_count += 1
                     except Exception:
                         st["provider_errors"] += 1
+                        phrase_debug[int(pid)]["skips"].append(f"{lang}:save_exception")
             else:
                 for pid, en in pairs:
                     try:
@@ -2411,10 +2498,19 @@ def ensure_missing_generated_translations_for_phrases(
                         if not _is_meaningful_generated_text(txt):
                             st["request_failures"] += 1
                             st["empty_results"] += 1
+                            phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_empty_text")
                             continue
-                        _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
-                        st["saved"] += 1
-                        total_saved += 1
+                        write_ok = _save_generated_phrase_translation(
+                            pid, lang, txt, provider="google_translate_v2", tts_audio_url=None
+                        )
+                        if write_ok:
+                            st["saved"] += 1
+                            total_saved += 1
+                            phrase_debug[int(pid)]["saved"].append(lang)
+                        else:
+                            st["provider_errors"] += 1
+                            phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_write_failed")
+                            continue
                         if processed_new_log_count < 5:
                             app.logger.info(
                                 "%s processed_new type=generated_translation entry_type=phrase entry_id=%s lang=%s",
@@ -2426,6 +2522,7 @@ def ensure_missing_generated_translations_for_phrases(
                     except Exception:
                         st["provider_errors"] += 1
                         st["fallback_errors"] += 1
+                        phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_exception")
                         app.logger.exception(
                             "phrase fallback translate failed context=%s phrase_id=%s lang=%s",
                             log_context,
@@ -2455,6 +2552,22 @@ def ensure_missing_generated_translations_for_phrases(
             total_saved,
             compact,
         )
+    except Exception:
+        pass
+
+    try:
+        for pid, dbg in phrase_debug.items():
+            saved_langs = sorted(set(dbg.get("saved", []) or []))
+            attempted_langs = sorted(set(dbg.get("attempted", []) or []))
+            skips = dbg.get("skips", []) or []
+            app.logger.info(
+                "%s phrase_translation_detail phrase_id=%s attempted=%s saved=%s skipped=%s",
+                log_context,
+                pid,
+                attempted_langs,
+                saved_langs,
+                skips[:20],
+            )
     except Exception:
         pass
 
@@ -3113,7 +3226,14 @@ def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
 
 
 def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: bool = False):
-    result = {"generated": 0, "cached": 0, "failed": 0, "skipped_missing_text": 0, "skipped_missing_voice": 0}
+    result = {
+        "generated": 0,
+        "cached": 0,
+        "failed": 0,
+        "skipped_missing_text": 0,
+        "skipped_missing_voice": 0,
+        "by_language": {},
+    }
     texts = _get_entry_texts_for_tts(entry_type, entry_id)
     speech_key = _get_azure_speech_key()
     speech_region = _get_azure_speech_region()
@@ -3125,15 +3245,36 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         text = normalize_text(texts.get(lang, "") or "")
         if not text:
             result["skipped_missing_text"] += 1
+            result["by_language"][lang] = "missing_text"
+            app.logger.info(
+                "tts lang_skip entry_type=%s entry_id=%s lang=%s reason=missing_text",
+                entry_type,
+                entry_id,
+                lang,
+            )
             continue
 
         voice_name = _azure_voice_for_lang(lang)
         if not voice_name:
             result["skipped_missing_voice"] += 1
+            result["by_language"][lang] = "missing_voice"
+            app.logger.info(
+                "tts lang_skip entry_type=%s entry_id=%s lang=%s reason=missing_voice",
+                entry_type,
+                entry_id,
+                lang,
+            )
             continue
         cached = None if force_regenerate else _resolve_generated_tts_row(entry_type, entry_id, lang, text, voice_name)
         if cached:
             result["cached"] += 1
+            result["by_language"][lang] = "already_exists"
+            app.logger.info(
+                "tts lang_skip entry_type=%s entry_id=%s lang=%s reason=already_exists",
+                entry_type,
+                entry_id,
+                lang,
+            )
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, cached["url"])
             continue
@@ -3163,6 +3304,13 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                 if lang in EXTRA_GENERATED_LANGS:
                     _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
                 result["generated"] += 1
+                result["by_language"][lang] = "generated"
+                app.logger.info(
+                    "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated",
+                    entry_type,
+                    entry_id,
+                    lang,
+                )
                 continue
             app.logger.error(
                 "service generate_and_store_tts returned empty entry_type=%s entry_id=%s lang=%s upload_folder=%s render_disk_active=%s",
@@ -3196,6 +3344,7 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         )
         if error or not audio_bytes:
             result["failed"] += 1
+            result["by_language"][lang] = "failed"
             app.logger.error(
                 "TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s speech_key_present=%s speech_region_present=%s upload_folder=%s",
                 entry_type,
@@ -3219,8 +3368,16 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
             result["generated"] += 1
+            result["by_language"][lang] = "generated"
+            app.logger.info(
+                "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated",
+                entry_type,
+                entry_id,
+                lang,
+            )
         except Exception as e:
             result["failed"] += 1
+            result["by_language"][lang] = "failed"
             app.logger.exception(f"Failed to persist TTS audio for {entry_type}:{entry_id}:{lang}: {repr(e)}")
 
     return result
@@ -3712,6 +3869,7 @@ def ensure_missing_tts_for_phrases(
         "failed": 0,
         "skipped_missing_text": 0,
         "skipped_missing_voice": 0,
+        "generated_by_language": {lang: 0 for lang in LEARN_TTS_LANGS},
     }
     if not phrase_items:
         return summary
@@ -3740,21 +3898,52 @@ def ensure_missing_tts_for_phrases(
             if not force_regenerate:
                 texts = _get_entry_texts_for_tts("phrase", pid)
                 missing_langs = []
+                lang_status = {}
                 for lang in LEARN_TTS_LANGS:
                     text = normalize_text((texts or {}).get(lang, "") or "")
                     if not text:
+                        lang_status[lang] = "missing_text"
+                        app.logger.info(
+                            "%s phrase_tts_lang_status entry_id=%s lang=%s reason=missing_text",
+                            log_context,
+                            pid,
+                            lang,
+                        )
                         continue
                     voice_name = _azure_voice_for_lang(lang)
                     if not voice_name:
+                        lang_status[lang] = "missing_voice"
+                        app.logger.info(
+                            "%s phrase_tts_lang_status entry_id=%s lang=%s reason=missing_voice",
+                            log_context,
+                            pid,
+                            lang,
+                        )
                         continue
                     if not _resolve_generated_tts_row("phrase", pid, lang, text, voice_name):
                         missing_langs.append(lang)
+                        lang_status[lang] = "missing_audio"
+                        app.logger.info(
+                            "%s phrase_tts_lang_status entry_id=%s lang=%s reason=missing_audio",
+                            log_context,
+                            pid,
+                            lang,
+                        )
+                    else:
+                        lang_status[lang] = "already_exists"
+                        app.logger.info(
+                            "%s phrase_tts_lang_status entry_id=%s lang=%s reason=already_exists",
+                            log_context,
+                            pid,
+                            lang,
+                        )
                 if not missing_langs:
                     summary["skipped_existing"] += 1
                     app.logger.info(
-                        "%s skipped_existing type=tts entry_type=phrase entry_id=%s",
+                        "%s skipped_existing type=tts entry_type=phrase entry_id=%s lang_status=%s",
                         log_context,
                         pid,
+                        lang_status,
                     )
                     continue
             summary["processed_new"] += 1
@@ -3766,6 +3955,10 @@ def ensure_missing_tts_for_phrases(
             row = generate_tts_for_entry("phrase", pid, force_regenerate=force_regenerate)
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
+            by_lang = (row or {}).get("by_language", {}) or {}
+            for lang, state in by_lang.items():
+                if state == "generated":
+                    summary["generated_by_language"][lang] = int(summary["generated_by_language"].get(lang, 0) or 0) + 1
         app.logger.info(
             "%s chunk_done start=%s size=%s processed_new=%s skipped_existing=%s generated=%s cached=%s failed=%s",
             log_context,
@@ -7303,7 +7496,7 @@ def _insert_admin_import_phrase_english_only(
     en = english_norm or ""
     en_key = english_key or ""
     om = normalize_text(oromo_text or "")
-    om_key = make_search_key(_strip_edge_punct(om)) if om else ""
+    om_key = make_search_key(_strip_edge_punct(om)) if om else MISSING_OROMO_KEY_SENTINEL
 
     if not en or not en_key:
         return None, False, "invalid"
@@ -7902,8 +8095,22 @@ def admin_import():
                     return jsonify({"error": "JSON must include 'words' as a list"}), 400
                 if incoming_phrases is not None and not isinstance(incoming_phrases, list):
                     return jsonify({"error": "JSON 'phrases' must be a list"}), 400
-                raw_items.extend([("word", str(x or "")) for x in incoming_words])
-                raw_items.extend([("phrase", str(x or "")) for x in (incoming_phrases or [])])
+                for item in (incoming_words or []):
+                    if isinstance(item, dict):
+                        en_raw = item.get("english", "") or item.get("text", "") or item.get("word", "")
+                        om_raw = item.get("oromo", "")
+                    else:
+                        en_raw = item
+                        om_raw = ""
+                    raw_items.append(("word", str(en_raw or ""), str(om_raw or "")))
+                for item in (incoming_phrases or []):
+                    if isinstance(item, dict):
+                        en_raw = item.get("english", "") or item.get("phrase", "") or item.get("text", "")
+                        om_raw = item.get("oromo", "")
+                    else:
+                        en_raw = item
+                        om_raw = ""
+                    raw_items.append(("phrase", str(en_raw or ""), str(om_raw or "")))
             else:
                 if not request.files or len(request.files) == 0:
                     msg = "No upload detected. Please choose a TXT / CSV / XLSX file."
@@ -7922,11 +8129,11 @@ def admin_import():
 
                 try:
                     if filename.endswith(".txt"):
-                        raw_words = parse_txt_english_rows(file_bytes)
+                        raw_rows = [("", str(x or ""), "") for x in parse_txt_english_rows(file_bytes)]
                     elif filename.endswith(".csv"):
-                        raw_words = parse_csv_english_rows(file_bytes)
+                        raw_rows = parse_csv_admin_import_rows(file_bytes)
                     elif filename.endswith(".xlsx"):
-                        raw_words = parse_xlsx_english_rows(file_bytes)
+                        raw_rows = parse_xlsx_admin_import_rows(file_bytes)
                     else:
                         msg = "Only .txt, .csv, .xlsx files are supported."
                         return render_template("admin_import.html", msg=msg)
@@ -7935,7 +8142,7 @@ def admin_import():
                     msg = "Could not read the file. Please check its format."
                     return render_template("admin_import.html", msg=msg)
 
-                raw_items = [("", str(x or "")) for x in raw_words]
+                raw_items = [(str(t or ""), str(en or ""), str(om or "")) for t, en, om in (raw_rows or [])]
                 _perf_log(
                     "file_parsed",
                     filename=filename,
@@ -7958,24 +8165,36 @@ def admin_import():
             seen_keys = set()
             unique_items = []
             unique_preview = []
+            key_to_item_index = {}
 
             norm_loop_started = time.perf_counter()
-            for row_idx, (source_type, raw) in enumerate(raw_items, start=1):
-                raw_orig = str(raw or "")
-                w = normalize_text(raw or "")
+            for row_idx, (source_type, raw_en, raw_om) in enumerate(raw_items, start=1):
+                raw_orig = str(raw_en or "")
+                w = normalize_text(raw_en or "")
+                om_in = normalize_text(raw_om or "")
                 k = make_search_key(_strip_edge_punct(w))
                 if not w or not k:
                     empty_rows += 1
                     continue
-                entry_type = source_type if source_type in ("word", "phrase") else ("phrase" if len(w.split()) > 1 else "word")
+                entry_type = source_type if source_type in ("word", "phrase") else ("phrase" if (om_in or len(w.split()) > 1) else "word")
                 dedup_key = (entry_type, k)
                 if dedup_key in seen_keys:
+                    existing_idx = key_to_item_index.get(dedup_key)
+                    if (
+                        existing_idx is not None
+                        and entry_type == "phrase"
+                        and om_in
+                        and (not normalize_text((unique_items[existing_idx][3] if len(unique_items[existing_idx]) > 3 else "") or ""))
+                    ):
+                        prev = unique_items[existing_idx]
+                        unique_items[existing_idx] = (prev[0], prev[1], prev[2], om_in)
                     duplicate_rows += 1
                     continue
                 seen_keys.add(dedup_key)
-                unique_items.append((entry_type, w, k))
+                key_to_item_index[dedup_key] = len(unique_items)
+                unique_items.append((entry_type, w, k, om_in))
                 if len(unique_preview) < 10:
-                    unique_preview.append((entry_type, raw_orig, w, k))
+                    unique_preview.append((entry_type, raw_orig, w, k, om_in))
                 if row_idx % 100 == 0:
                     elapsed = max(0.001, (time.perf_counter() - norm_loop_started))
                     _perf_log(
@@ -8011,6 +8230,10 @@ def admin_import():
                         "phrases_inserted": 0,
                         "skipped": 0,
                         "errors": 0,
+                        "imported_with_oromo": 0,
+                        "imported_missing_oromo": 0,
+                        "phrase_translations_saved": 0,
+                        "phrase_audio_generated_by_language": {lang: 0 for lang in LEARN_TTS_LANGS},
                         "empty_rows": empty_rows,
                         "duplicate_rows": duplicate_rows,
                         "message": summary,
@@ -8025,6 +8248,8 @@ def admin_import():
             failed = 0
             failed_base_inserts = 0
             oromo_missing_on_insert = 0
+            imported_with_oromo = 0
+            imported_missing_oromo = 0
             cached_generated_words = 0
             cached_generated_phrases = 0
             generated_word_stats = {}
@@ -8056,7 +8281,7 @@ def admin_import():
             phrase_alias_updates = []
 
             precheck_started = time.perf_counter()
-            for idx, (entry_type, en, en_key) in enumerate(unique_items, start=1):
+            for idx, (entry_type, en, en_key, om_in) in enumerate(unique_items, start=1):
                 existing = _find_word_by_english(conn, en) if entry_type == "word" else _find_phrase_by_english(conn, en)
                 if idx <= 10:
                     app.logger.info(
@@ -8076,7 +8301,7 @@ def admin_import():
                     else:
                         phrases_for_cache.append((eid, existing_en))
                 else:
-                    new_items.append((entry_type, en, en_key))
+                    new_items.append((entry_type, en, en_key, om_in))
                 if idx % 100 == 0:
                     elapsed = max(0.001, (time.perf_counter() - precheck_started))
                     _perf_log(
@@ -8115,11 +8340,19 @@ def admin_import():
 
             insert_started = time.perf_counter()
             insert_rows_processed = 0
-            for entry_type, en, en_key in items_for_base_insert:
+            for entry_type, en, en_key, om_in in items_for_base_insert:
                 try:
-                    # DB-only import: keep Oromo empty and run backfills separately.
                     om_text = ""
-                    oromo_missing_on_insert += 1
+                    if entry_type == "phrase":
+                        om_text = normalize_text(om_in or "")
+                        if om_text:
+                            imported_with_oromo += 1
+                        else:
+                            imported_missing_oromo += 1
+                            oromo_missing_on_insert += 1
+                    else:
+                        # Keep word import behavior unchanged.
+                        om_text = ""
 
                     if entry_type == "word":
                         eid, was_inserted, insert_reason = _insert_admin_import_word_english_only(
@@ -8150,6 +8383,13 @@ def admin_import():
                         else:
                             inserted_phrases += 1
                             inserted_phrase_items.append((int(eid), en))
+                            if not om_text:
+                                app.logger.warning(
+                                    "phrase import missing_oromo_marked_incomplete entry_id=%s english=%r status=%s",
+                                    int(eid),
+                                    en,
+                                    "approved",
+                                )
                     elif insert_reason == "existing_english":
                         skipped_existing_during_insert += 1
                     else:
@@ -8192,6 +8432,60 @@ def admin_import():
             new_phrases = list(inserted_phrase_items or [])
             word_ids = [int(w[0]) for w in new_words if w and int(w[0] or 0) > 0]
             phrase_ids = [int(p[0]) for p in new_phrases if p and int(p[0] or 0) > 0]
+            phrase_translations_saved = 0
+            phrase_audio_generated_by_language = {lang: 0 for lang in LEARN_TTS_LANGS}
+            unresolved_phrase_oromo_ids = []
+
+            if new_phrases:
+                try:
+                    oromo_fill_summary = ensure_missing_oromo_for_entries(
+                        "phrase",
+                        new_phrases,
+                        chunk_size=IMPORT_BATCH_SIZE,
+                        log_context="admin_import_phrase_oromo_sync",
+                    )
+                    phrase_translations_saved, generated_phrase_stats = ensure_missing_generated_translations_for_phrases(
+                        new_phrases,
+                        langs=EXTRA_GENERATED_LANGS,
+                        chunk_size=IMPORT_BATCH_SIZE,
+                        log_context="admin_import_phrase_translations_sync",
+                    )
+                    phrase_tts_summary = ensure_missing_tts_for_phrases(
+                        new_phrases,
+                        force_regenerate=False,
+                        chunk_size=IMPORT_BATCH_SIZE,
+                        log_context="admin_import_phrase_tts_sync",
+                    )
+                    phrase_audio_generated_by_language = dict(
+                        (phrase_tts_summary or {}).get("generated_by_language", {}) or {}
+                    )
+
+                    if phrase_ids:
+                        check_conn = sqlite3.connect(app.DB_NAME)
+                        check_cur = check_conn.cursor()
+                        marks = ",".join("?" for _ in phrase_ids)
+                        check_cur.execute(
+                            f"""
+                            SELECT id
+                            FROM phrases
+                            WHERE id IN ({marks})
+                              AND status='approved'
+                              AND (oromo IS NULL OR TRIM(oromo)='')
+                            ORDER BY id ASC
+                            """,
+                            tuple(phrase_ids),
+                        )
+                        unresolved_phrase_oromo_ids = [int(r[0] or 0) for r in check_cur.fetchall() if int(r[0] or 0) > 0]
+                        check_conn.close()
+                    if unresolved_phrase_oromo_ids:
+                        app.logger.warning(
+                            "admin_import phrases still missing Oromo after sync_backfill ids=%s oromo_fill_summary=%s",
+                            unresolved_phrase_oromo_ids[:50],
+                            oromo_fill_summary,
+                        )
+                except Exception as phrase_sync_err:
+                    app.logger.exception(f"admin_import phrase sync pipeline failed: {repr(phrase_sync_err)}")
+
             pipeline_queued = trigger_post_import_pipeline_async(
                 word_ids,
                 phrase_ids,
@@ -8212,6 +8506,14 @@ def admin_import():
             app.logger.info(
                 "admin_import summary: rows_read=%s words_inserted=%s phrases_inserted=%s skipped=%s errors=%s db_path=%s",
                 rows_read, inserted_words, inserted_phrases, skipped_total, errors_total, app.DB_NAME
+            )
+            app.logger.info(
+                "admin_import phrase_summary imported_with_oromo=%s imported_missing_oromo=%s phrase_translations_saved=%s phrase_audio_generated_by_language=%s unresolved_missing_oromo_ids=%s",
+                imported_with_oromo,
+                imported_missing_oromo,
+                int(phrase_translations_saved or 0),
+                phrase_audio_generated_by_language,
+                unresolved_phrase_oromo_ids[:50],
             )
             print(f"admin_import: rows_inserted_total={rows_inserted_total}")
             print(f"admin_import: errors_total={errors_total}")
@@ -8254,9 +8556,14 @@ def admin_import():
                     "failed": failed,
                     "failed_base_inserts": failed_base_inserts,
                     "oromo_missing_on_insert": oromo_missing_on_insert,
+                    "imported_with_oromo": imported_with_oromo,
+                    "imported_missing_oromo": imported_missing_oromo,
                     "empty_rows": empty_rows,
                     "duplicate_rows": duplicate_rows,
                     "ignored_due_limit": over_limit_rows,
+                    "phrase_translations_saved": int(phrase_translations_saved or 0),
+                    "phrase_audio_generated_by_language": phrase_audio_generated_by_language,
+                    "unresolved_phrase_oromo_ids": unresolved_phrase_oromo_ids,
                     "updated_missing_word_translations": 0,
                     "updated_missing_phrase_translations": 0,
                     "cached_generated_word_translations": 0,
