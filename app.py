@@ -41,6 +41,7 @@ import logging
 import csv
 import hashlib
 import shutil
+import time
 import click
 from uuid import uuid4
 from difflib import get_close_matches
@@ -7419,9 +7420,25 @@ def admin_import():
 
     msg = None
     conn = None
+    req_started_at_iso = None
+    req_started_perf = None
 
     try:
         if request.method == "POST":
+            req_started_at_iso = datetime.utcnow().isoformat() + "Z"
+            req_started_perf = time.perf_counter()
+
+            def _perf_log(phase: str, **fields):
+                payload = {
+                    "phase": phase,
+                    "ts": datetime.utcnow().isoformat() + "Z",
+                    "elapsed_s": round(time.perf_counter() - req_started_perf, 3) if req_started_perf else None,
+                }
+                payload.update(fields or {})
+                app.logger.info("admin_import perf: %s", payload)
+                print(f"admin_import perf: {payload}")
+
+            _perf_log("request_start", started_at=req_started_at_iso, is_json=bool(request.is_json))
             raw_items = []
 
             if request.is_json:
@@ -7466,6 +7483,12 @@ def admin_import():
                     return render_template("admin_import.html", msg=msg)
 
                 raw_items = [("", str(x or "")) for x in raw_words]
+                _perf_log(
+                    "file_parsed",
+                    filename=filename,
+                    bytes_read=len(file_bytes or b""),
+                    parsed_rows=len(raw_items),
+                )
 
             rows_read = len(raw_items)
             app.logger.info(
@@ -7474,6 +7497,7 @@ def admin_import():
                 [x[1] for x in raw_items[:10]],
             )
             print(f"admin_import: rows_read={rows_read}")
+            _perf_log("rows_loaded", rows_read=rows_read)
 
             empty_rows = 0
             duplicate_rows = 0
@@ -7482,7 +7506,8 @@ def admin_import():
             unique_items = []
             unique_preview = []
 
-            for source_type, raw in raw_items:
+            norm_loop_started = time.perf_counter()
+            for row_idx, (source_type, raw) in enumerate(raw_items, start=1):
                 raw_orig = str(raw or "")
                 w = normalize_text(raw or "")
                 k = make_search_key(_strip_edge_punct(w))
@@ -7498,11 +7523,27 @@ def admin_import():
                 unique_items.append((entry_type, w, k))
                 if len(unique_preview) < 10:
                     unique_preview.append((entry_type, raw_orig, w, k))
+                if row_idx % 100 == 0:
+                    elapsed = max(0.001, (time.perf_counter() - norm_loop_started))
+                    _perf_log(
+                        "normalize_dedup_progress",
+                        rows_processed=row_idx,
+                        rows_per_sec=round(row_idx / elapsed, 2),
+                        unique_so_far=len(unique_items),
+                        duplicate_rows=duplicate_rows,
+                        empty_rows=empty_rows,
+                    )
 
             app.logger.info(
                 "admin_import diagnostics: unique_count=%s first10_unique_norm=%s",
                 len(unique_items),
                 unique_preview,
+            )
+            _perf_log(
+                "normalize_dedup_done",
+                unique_count=len(unique_items),
+                duplicate_rows=duplicate_rows,
+                empty_rows=empty_rows,
             )
 
             if not unique_items:
@@ -7553,17 +7594,19 @@ def admin_import():
                 app.DB_NAME,
                 os.path.abspath(app.DB_NAME),
             )
+            _perf_log("db_opened", db_path=app.DB_NAME)
             new_items = []
             words_for_cache = []
             phrases_for_cache = []
             phrase_alias_updates = []
 
-            for idx, (entry_type, en, en_key) in enumerate(unique_items):
+            precheck_started = time.perf_counter()
+            for idx, (entry_type, en, en_key) in enumerate(unique_items, start=1):
                 existing = _find_word_by_english(conn, en) if entry_type == "word" else _find_phrase_by_english(conn, en)
-                if idx < 10:
+                if idx <= 10:
                     app.logger.info(
                         "admin_import diagnostics: probe idx=%s type=%s norm=%r key=%r existing=%r",
-                        idx,
+                        (idx - 1),
                         entry_type,
                         en,
                         en_key,
@@ -7579,11 +7622,26 @@ def admin_import():
                         phrases_for_cache.append((eid, existing_en))
                 else:
                     new_items.append((entry_type, en, en_key))
+                if idx % 100 == 0:
+                    elapsed = max(0.001, (time.perf_counter() - precheck_started))
+                    _perf_log(
+                        "db_precheck_progress",
+                        rows_processed=idx,
+                        rows_per_sec=round(idx / elapsed, 2),
+                        skipped_existing_precheck=skipped_existing_precheck,
+                        new_items=len(new_items),
+                    )
 
             app.logger.info(
                 "admin_import diagnostics: existing_bucket=%s new_bucket=%s",
                 skipped_existing_precheck,
                 len(new_items),
+            )
+            _perf_log(
+                "db_precheck_done",
+                scanned=len(unique_items),
+                skipped_existing_precheck=skipped_existing_precheck,
+                new_items=len(new_items),
             )
 
             items_for_base_insert = new_items[:IMPORT_MAX_WORDS]
@@ -7600,175 +7658,76 @@ def admin_import():
                 duplicate_rows,
             )
 
-            for i in range(0, len(items_for_base_insert), IMPORT_BATCH_SIZE):
-                batch_items = items_for_base_insert[i:i + IMPORT_BATCH_SIZE]
-                if not batch_items:
-                    continue
-                batch = [en for _entry_type, en, _en_key in batch_items]
-
+            insert_started = time.perf_counter()
+            insert_rows_processed = 0
+            for entry_type, en, en_key in items_for_base_insert:
                 try:
-                    google_calls += 1
-                    oms = google_translate_batch_v2(batch, target="om", source="en")
+                    # DB-only import: keep Oromo empty and run backfills separately.
+                    om_text = ""
+                    oromo_missing_on_insert += 1
 
-                    if oms and len(oms) == len(batch):
-                        translated_pairs = [
-                            (entry_type, en, en_key, om)
-                            for (entry_type, en, en_key), om in zip(batch_items, oms)
-                        ]
+                    if entry_type == "word":
+                        eid, was_inserted, insert_reason = _insert_admin_import_word_english_only(
+                            conn,
+                            english_norm=en,
+                            english_key=en_key,
+                            oromo_text=om_text,
+                            status="approved",
+                        )
                     else:
-                        translated_pairs = []
-                        for entry_type, en, en_key in batch_items:
-                            google_calls += 1
-                            translated_pairs.append(
-                                (entry_type, en, en_key, google_translate_text_v2(en, target="om", source="en"))
-                            )
-                except Exception as batch_err:
-                    app.logger.exception(f"admin_import batch translate failed: {repr(batch_err)}")
-                    translated_pairs = [(entry_type, en, en_key, "") for entry_type, en, en_key in batch_items]
+                        eid, was_inserted, insert_reason = _insert_admin_import_phrase_english_only(
+                            conn,
+                            english_norm=en,
+                            english_key=en_key,
+                            oromo_text=om_text,
+                            status="approved",
+                        )
 
-                for entry_type, en, en_key, om in translated_pairs:
-                    try:
-                        om_text = normalize_text(om or "")
-                        if not om_text:
-                            oromo_missing_on_insert += 1
-
-                        if entry_type == "word":
-                            eid, was_inserted, insert_reason = _insert_admin_import_word_english_only(
-                                conn,
-                                english_norm=en,
-                                english_key=en_key,
-                                oromo_text=om_text,
-                                status="approved",
-                            )
-                        else:
-                            eid, was_inserted, insert_reason = _insert_admin_import_phrase_english_only(
-                                conn,
-                                english_norm=en,
-                                english_key=en_key,
-                                oromo_text=om_text,
-                                status="approved",
-                            )
-
-                        if not eid:
-                            failed += 1
-                            failed_base_inserts += 1
-                            continue
-
-                        if was_inserted:
-                            if entry_type == "word":
-                                inserted_words += 1
-                            else:
-                                inserted_phrases += 1
-                        elif insert_reason == "existing_english":
-                            skipped_existing_during_insert += 1
-                        else:
-                            failed += 1
-                            failed_base_inserts += 1
-                            continue
-
-                        if entry_type == "word":
-                            words_for_cache.append((eid, en))
-                        else:
-                            phrases_for_cache.append((eid, en))
-                            if was_inserted:
-                                phrase_alias_updates.append((int(eid), en, om_text))
-                    except Exception as row_err:
-                        app.logger.exception(f"admin_import row insert failed type={entry_type} en={repr(en)}: {repr(row_err)}")
+                    if not eid:
                         failed += 1
                         failed_base_inserts += 1
                         continue
 
-            unique_word_cache_items = []
-            seen_ids = set()
-            for wid, en in words_for_cache:
-                if not wid or not en or wid in seen_ids:
+                    if was_inserted:
+                        if entry_type == "word":
+                            inserted_words += 1
+                        else:
+                            inserted_phrases += 1
+                    elif insert_reason == "existing_english":
+                        skipped_existing_during_insert += 1
+                    else:
+                        failed += 1
+                        failed_base_inserts += 1
+                        continue
+
+                    insert_rows_processed += 1
+                    if insert_rows_processed % 100 == 0:
+                        elapsed = max(0.001, (time.perf_counter() - insert_started))
+                        _perf_log(
+                            "insert_progress",
+                            rows_processed=insert_rows_processed,
+                            rows_per_sec=round(insert_rows_processed / elapsed, 2),
+                            inserted_words=inserted_words,
+                            inserted_phrases=inserted_phrases,
+                            failed=failed,
+                        )
+                except Exception as row_err:
+                    app.logger.exception(f"admin_import row insert failed type={entry_type} en={repr(en)}: {repr(row_err)}")
+                    failed += 1
+                    failed_base_inserts += 1
                     continue
-                seen_ids.add(wid)
-                unique_word_cache_items.append((wid, en))
 
-            unique_phrase_cache_items = []
-            seen_phrase_ids = set()
-            for pid, en in phrases_for_cache:
-                if not pid or not en or pid in seen_phrase_ids:
-                    continue
-                seen_phrase_ids.add(pid)
-                unique_phrase_cache_items.append((pid, en))
+            _perf_log(
+                "insert_done",
+                rows_processed=insert_rows_processed,
+                inserted_words=inserted_words,
+                inserted_phrases=inserted_phrases,
+                failed=failed,
+            )
 
-            missing_words_before = {}
-            for wid, _en in unique_word_cache_items:
-                missing_words_before[wid] = _count_missing_generated_langs(conn, wid)
-            missing_phrases_before = {}
-            for pid, _en in unique_phrase_cache_items:
-                missing_phrases_before[pid] = _count_missing_generated_phrase_langs(conn, pid)
-
-            # Commit base inserts before cache warmup.
-            # Cache warmup writes through separate SQLite connections; holding this
-            # transaction open can trigger "database is locked" and skip cache writes.
+            commit_t0 = time.perf_counter()
             conn.commit()
-            conn.close()
-            conn = None
-
-            for pid, en, om in phrase_alias_updates:
-                try:
-                    upsert_phrase_aliases(pid, en, om, source="admin_import")
-                except Exception as alias_err:
-                    app.logger.exception(f"admin_import phrase alias upsert failed phrase_id={pid}: {repr(alias_err)}")
-
-            try:
-                cached_generated_words, generated_word_stats = ensure_missing_generated_translations_for_words(
-                    unique_word_cache_items,
-                    langs=EXTRA_GENERATED_LANGS,
-                    chunk_size=IMPORT_BATCH_SIZE,
-                    log_context="admin_import_words",
-                )
-            except Exception as e:
-                app.logger.exception(f"admin_import word cache warmup failed: {repr(e)}")
-                cached_generated_words = 0
-                generated_word_stats = {}
-
-            try:
-                cached_generated_phrases, generated_phrase_stats = ensure_missing_generated_translations_for_phrases(
-                    unique_phrase_cache_items,
-                    langs=EXTRA_GENERATED_LANGS,
-                    chunk_size=IMPORT_BATCH_SIZE,
-                    log_context="admin_import_phrases",
-                )
-            except Exception as e:
-                app.logger.exception(f"admin_import phrase cache warmup failed: {repr(e)}")
-                cached_generated_phrases = 0
-                generated_phrase_stats = {}
-
-            if TTS_GENERATE_ON_IMPORT:
-                try:
-                    tts_summary = ensure_missing_tts_for_words(
-                        unique_word_cache_items,
-                        force_regenerate=False,
-                        chunk_size=IMPORT_BATCH_SIZE,
-                        log_context="admin_import_tts",
-                    )
-                except Exception as e:
-                    app.logger.exception(f"admin_import tts warmup failed: {repr(e)}")
-                    tts_summary = {
-                        "words_seen": 0,
-                        "generated": 0,
-                        "cached": 0,
-                        "failed": 0,
-                        "skipped_missing_text": 0,
-                        "skipped_missing_voice": 0,
-                    }
-
-            conn = sqlite3.connect(app.DB_NAME)
-            for wid in missing_words_before.keys():
-                before = missing_words_before.get(wid, 0)
-                after = _count_missing_generated_langs(conn, wid)
-                if after < before:
-                    updated_missing_translations_words += 1
-            for pid in missing_phrases_before.keys():
-                before = missing_phrases_before.get(pid, 0)
-                after = _count_missing_generated_phrase_langs(conn, pid)
-                if after < before:
-                    updated_missing_translations_phrases += 1
-
+            _perf_log("db_commit_done", commit_elapsed_s=round(time.perf_counter() - commit_t0, 3))
             conn.close()
             conn = None
 
@@ -7783,6 +7742,23 @@ def admin_import():
             )
             print(f"admin_import: rows_inserted_total={rows_inserted_total}")
             print(f"admin_import: errors_total={errors_total}")
+            app.logger.info("Import completed (DB only). Run backfill commands separately.")
+            print("Import completed (DB only). Run backfill commands separately.")
+            _perf_log(
+                "request_complete",
+                rows_read=rows_read,
+                rows_inserted_total=rows_inserted_total,
+                words_inserted=inserted_words,
+                phrases_inserted=inserted_phrases,
+                skipped=skipped_total,
+                errors=errors_total,
+                external_calls={
+                    "google_calls_used": 0,
+                    "translation_warmup_words": 0,
+                    "translation_warmup_phrases": 0,
+                    "tts_enabled": False,
+                },
+            )
 
             msg = (
                 f"Import done. Rows read: {rows_read} | "
@@ -7808,14 +7784,14 @@ def admin_import():
                     "empty_rows": empty_rows,
                     "duplicate_rows": duplicate_rows,
                     "ignored_due_limit": over_limit_rows,
-                    "updated_missing_word_translations": updated_missing_translations_words,
-                    "updated_missing_phrase_translations": updated_missing_translations_phrases,
-                    "cached_generated_word_translations": cached_generated_words,
-                    "cached_generated_phrase_translations": cached_generated_phrases,
-                    "generated_word_by_lang": generated_word_stats,
-                    "generated_phrase_by_lang": generated_phrase_stats,
-                    "tts_summary": tts_summary,
-                    "google_calls_used": google_calls,
+                    "updated_missing_word_translations": 0,
+                    "updated_missing_phrase_translations": 0,
+                    "cached_generated_word_translations": 0,
+                    "cached_generated_phrase_translations": 0,
+                    "generated_word_by_lang": {},
+                    "generated_phrase_by_lang": {},
+                    "tts_summary": {},
+                    "google_calls_used": 0,
                     "batch_size": IMPORT_BATCH_SIZE,
                     "max_items": IMPORT_MAX_WORDS,
                     "db_path": app.DB_NAME,
@@ -7829,6 +7805,21 @@ def admin_import():
             return jsonify({"error": safe_msg}), 500
         msg = safe_msg
     finally:
+        if req_started_perf:
+            ended_iso = datetime.utcnow().isoformat() + "Z"
+            duration_s = (time.perf_counter() - req_started_perf)
+            app.logger.info(
+                "admin_import request_end: started_at=%s ended_at=%s duration_s=%.3f",
+                req_started_at_iso,
+                ended_iso,
+                duration_s,
+            )
+            print(
+                "admin_import request_end: "
+                f"started_at={req_started_at_iso} "
+                f"ended_at={ended_iso} "
+                f"duration_s={round(duration_s, 3)}"
+            )
         if conn is not None:
             try:
                 conn.close()
