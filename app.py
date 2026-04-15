@@ -1013,6 +1013,7 @@ def ensure_missing_generated_translations_for_words(
         missing_pairs = []
         cache_skip_log_count = 0
         invalid_cache_log_count = 0
+        processed_new_log_count = 0
         for wid, en in unique_items:
             cached = _get_cached_generated_translation(wid, lang)
             if cached:
@@ -1021,7 +1022,8 @@ def ensure_missing_generated_translations_for_words(
                     lang_stats["already_cached"] += 1
                     if cache_skip_log_count < 5:
                         app.logger.info(
-                            "generated cache hit; skipping generation word_id=%s lang=%s value=%r",
+                            "%s skipped_existing type=generated_translation entry_type=word entry_id=%s lang=%s value=%r",
+                            log_context,
                             wid,
                             lang,
                             cached_text[:120],
@@ -1074,6 +1076,14 @@ def ensure_missing_generated_translations_for_words(
                         )
                         lang_stats["saved"] += 1
                         total_saved += 1
+                        if processed_new_log_count < 5:
+                            app.logger.info(
+                                "%s processed_new type=generated_translation entry_type=word entry_id=%s lang=%s",
+                                log_context,
+                                wid,
+                                lang,
+                            )
+                            processed_new_log_count += 1
                 else:
                     lang_stats["batch_mismatch_fallback"] += len(chunk_pairs)
             except Exception:
@@ -1115,6 +1125,14 @@ def ensure_missing_generated_translations_for_words(
                     )
                     lang_stats["saved"] += 1
                     total_saved += 1
+                    if processed_new_log_count < 5:
+                        app.logger.info(
+                            "%s processed_new type=generated_translation entry_type=word entry_id=%s lang=%s",
+                            log_context,
+                            wid,
+                            lang,
+                        )
+                        processed_new_log_count += 1
                 except Exception:
                     lang_stats["provider_errors"] += 1
 
@@ -2278,12 +2296,23 @@ def ensure_missing_generated_translations_for_phrases(
         }
         stats[lang] = st
         missing = []
+        skipped_existing_log_count = 0
+        processed_new_log_count = 0
         for pid, en in unique_items:
             cached = _get_cached_generated_phrase_translation(pid, lang)
             cached_text = normalize_text((cached or [""])[0] or "")
             if not overwrite_existing:
                 if _is_meaningful_generated_text(cached_text):
                     st["already_cached"] += 1
+                    if skipped_existing_log_count < 5:
+                        app.logger.info(
+                            "%s skipped_existing type=generated_translation entry_type=phrase entry_id=%s lang=%s value=%r",
+                            log_context,
+                            pid,
+                            lang,
+                            cached_text[:120],
+                        )
+                        skipped_existing_log_count += 1
                     continue
                 if cached:
                     st["invalid_cached_treated_missing"] += 1
@@ -2348,6 +2377,14 @@ def ensure_missing_generated_translations_for_phrases(
                         _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
                         st["saved"] += 1
                         total_saved += 1
+                        if processed_new_log_count < 5:
+                            app.logger.info(
+                                "%s processed_new type=generated_translation entry_type=phrase entry_id=%s lang=%s",
+                                log_context,
+                                pid,
+                                lang,
+                            )
+                            processed_new_log_count += 1
                     except Exception:
                         st["provider_errors"] += 1
             else:
@@ -2378,6 +2415,14 @@ def ensure_missing_generated_translations_for_phrases(
                         _save_generated_phrase_translation(pid, lang, txt, provider="google_translate_v2", tts_audio_url=None)
                         st["saved"] += 1
                         total_saved += 1
+                        if processed_new_log_count < 5:
+                            app.logger.info(
+                                "%s processed_new type=generated_translation entry_type=phrase entry_id=%s lang=%s",
+                                log_context,
+                                pid,
+                                lang,
+                            )
+                            processed_new_log_count += 1
                     except Exception:
                         st["provider_errors"] += 1
                         st["fallback_errors"] += 1
@@ -3577,6 +3622,8 @@ def ensure_missing_tts_for_words(
 ):
     summary = {
         "words_seen": 0,
+        "processed_new": 0,
+        "skipped_existing": 0,
         "generated": 0,
         "cached": 0,
         "failed": 0,
@@ -3606,15 +3653,43 @@ def ensure_missing_tts_for_words(
     for i in range(0, len(unique_items), safe_chunk):
         chunk = unique_items[i:i + safe_chunk]
         for wid, _en in chunk:
-            row = generate_tts_for_entry("word", wid, force_regenerate=force_regenerate)
             summary["words_seen"] += 1
+            if not force_regenerate:
+                texts = _get_entry_texts_for_tts("word", wid)
+                missing_langs = []
+                for lang in LEARN_TTS_LANGS:
+                    text = normalize_text((texts or {}).get(lang, "") or "")
+                    if not text:
+                        continue
+                    voice_name = _azure_voice_for_lang(lang)
+                    if not voice_name:
+                        continue
+                    if not _resolve_generated_tts_row("word", wid, lang, text, voice_name):
+                        missing_langs.append(lang)
+                if not missing_langs:
+                    summary["skipped_existing"] += 1
+                    app.logger.info(
+                        "%s skipped_existing type=tts entry_type=word entry_id=%s",
+                        log_context,
+                        wid,
+                    )
+                    continue
+            summary["processed_new"] += 1
+            app.logger.info(
+                "%s processed_new type=tts entry_type=word entry_id=%s",
+                log_context,
+                wid,
+            )
+            row = generate_tts_for_entry("word", wid, force_regenerate=force_regenerate)
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
         app.logger.info(
-            "%s chunk_done start=%s size=%s generated=%s cached=%s failed=%s",
+            "%s chunk_done start=%s size=%s processed_new=%s skipped_existing=%s generated=%s cached=%s failed=%s",
             log_context,
             i,
             len(chunk),
+            summary["processed_new"],
+            summary["skipped_existing"],
             summary["generated"],
             summary["cached"],
             summary["failed"],
@@ -3630,6 +3705,8 @@ def ensure_missing_tts_for_phrases(
 ):
     summary = {
         "phrases_seen": 0,
+        "processed_new": 0,
+        "skipped_existing": 0,
         "generated": 0,
         "cached": 0,
         "failed": 0,
@@ -3659,15 +3736,43 @@ def ensure_missing_tts_for_phrases(
     for i in range(0, len(unique_items), safe_chunk):
         chunk = unique_items[i:i + safe_chunk]
         for pid, _en in chunk:
-            row = generate_tts_for_entry("phrase", pid, force_regenerate=force_regenerate)
             summary["phrases_seen"] += 1
+            if not force_regenerate:
+                texts = _get_entry_texts_for_tts("phrase", pid)
+                missing_langs = []
+                for lang in LEARN_TTS_LANGS:
+                    text = normalize_text((texts or {}).get(lang, "") or "")
+                    if not text:
+                        continue
+                    voice_name = _azure_voice_for_lang(lang)
+                    if not voice_name:
+                        continue
+                    if not _resolve_generated_tts_row("phrase", pid, lang, text, voice_name):
+                        missing_langs.append(lang)
+                if not missing_langs:
+                    summary["skipped_existing"] += 1
+                    app.logger.info(
+                        "%s skipped_existing type=tts entry_type=phrase entry_id=%s",
+                        log_context,
+                        pid,
+                    )
+                    continue
+            summary["processed_new"] += 1
+            app.logger.info(
+                "%s processed_new type=tts entry_type=phrase entry_id=%s",
+                log_context,
+                pid,
+            )
+            row = generate_tts_for_entry("phrase", pid, force_regenerate=force_regenerate)
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
         app.logger.info(
-            "%s chunk_done start=%s size=%s generated=%s cached=%s failed=%s",
+            "%s chunk_done start=%s size=%s processed_new=%s skipped_existing=%s generated=%s cached=%s failed=%s",
             log_context,
             i,
             len(chunk),
+            summary["processed_new"],
+            summary["skipped_existing"],
             summary["generated"],
             summary["cached"],
             summary["failed"],
