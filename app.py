@@ -704,24 +704,37 @@ def parse_csv_admin_import_rows(file_bytes: bytes):
     """
     text = file_bytes.decode("utf-8", errors="replace")
     f = StringIO(text)
-    reader = csv.DictReader(f)
-    if not reader.fieldnames:
+    reader = csv.reader(f)
+    raw_rows = [list(r or []) for r in reader]
+    if not raw_rows:
         return []
 
-    english_key = None
-    oromo_key = None
-    for k in (reader.fieldnames or []):
-        lk = (k or "").strip().lower()
-        if lk in ("english", "en") and english_key is None:
-            english_key = k
-        if lk in ("oromo", "om") and oromo_key is None:
-            oromo_key = k
-    first_key = (reader.fieldnames or [""])[0]
+    header = [normalize_text(str(x or "")) for x in (raw_rows[0] or [])]
+    header_keys = [h.casefold() for h in header]
+
+    english_idx = None
+    oromo_idx = None
+    for i, hk in enumerate(header_keys):
+        if hk in ("english", "en") and english_idx is None:
+            english_idx = i
+        if hk in ("oromo", "om") and oromo_idx is None:
+            oromo_idx = i
+
+    has_named_header = (english_idx is not None) or (oromo_idx is not None)
+    start_idx = 1 if has_named_header else 0
+    if english_idx is None:
+        english_idx = 0
+    if oromo_idx is None:
+        # Keep Oromo optional, but reliably pick column B when present.
+        oromo_idx = 1
 
     rows = []
-    for row in reader:
-        en_raw = row.get(english_key, "") if english_key else row.get(first_key, "")
-        om_raw = row.get(oromo_key, "") if oromo_key else ""
+    for cells in raw_rows[start_idx:]:
+        if not cells:
+            rows.append(("", "", ""))
+            continue
+        en_raw = cells[english_idx] if english_idx < len(cells) else ""
+        om_raw = cells[oromo_idx] if oromo_idx < len(cells) else ""
         en = normalize_text(str(en_raw or ""))
         om = normalize_text(str(om_raw or ""))
         entry_type_hint = "phrase" if om else ""
@@ -915,6 +928,12 @@ DEFAULT_AZURE_VOICES = {
     # Optional Oromo voice (if Azure account provides one).
     "om": (os.environ.get("AZURE_VOICE_OM", "").strip() or os.environ.get("AZURE_VOICE_OROMO", "").strip()),
 }
+_phrase_tts_voice_map_logged = False
+if not (DEFAULT_AZURE_VOICES.get("om") or "").strip():
+    app.logger.warning(
+        "Azure Oromo TTS voice is not configured (AZURE_VOICE_OM/AZURE_VOICE_OROMO). "
+        "Oromo phrase/word TTS generation will be skipped with reason=missing_voice."
+    )
 
 LEARN_TTS_LAZY_WARMUP = (os.environ.get("LEARN_TTS_LAZY_WARMUP", "0").strip() == "1")
 try:
@@ -2664,6 +2683,13 @@ def ensure_missing_oromo_for_entries(
         existing_om = normalize_text((row or [""])[0] or "")
         if existing_om:
             summary["already_present"] += 1
+            if entry_type == "phrase":
+                app.logger.info(
+                    "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=already_present",
+                    log_context,
+                    eid,
+                    en,
+                )
             continue
         missing_pairs.append((eid, en))
 
@@ -2702,6 +2728,20 @@ def ensure_missing_oromo_for_entries(
                 )
                 if int(c.rowcount or 0) > 0:
                     summary["updated"] += 1
+                    if entry_type == "phrase":
+                        app.logger.info(
+                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_filled reason=google_batch",
+                            log_context,
+                            eid,
+                            (next((p_en for p_id, p_en in chunk if p_id == eid), "") or ""),
+                        )
+                elif entry_type == "phrase":
+                    app.logger.info(
+                        "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=google_batch_update_skipped",
+                        log_context,
+                        eid,
+                        (next((p_en for p_id, p_en in chunk if p_id == eid), "") or ""),
+                    )
         else:
             for eid, en in chunk:
                 try:
@@ -2726,8 +2766,29 @@ def ensure_missing_oromo_for_entries(
                     )
                     if int(c.rowcount or 0) > 0:
                         summary["updated"] += 1
+                        if entry_type == "phrase":
+                            app.logger.info(
+                                "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_filled reason=google_single",
+                                log_context,
+                                eid,
+                                en,
+                            )
+                    elif entry_type == "phrase":
+                        app.logger.info(
+                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=google_single_update_skipped",
+                            log_context,
+                            eid,
+                            en,
+                        )
                 except Exception:
                     summary["provider_errors"] += 1
+                    if entry_type == "phrase":
+                        app.logger.info(
+                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=provider_exception",
+                            log_context,
+                            eid,
+                            en,
+                        )
 
     conn.commit()
     conn.close()
@@ -3226,6 +3287,7 @@ def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
 
 
 def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: bool = False):
+    global _phrase_tts_voice_map_logged
     result = {
         "generated": 0,
         "cached": 0,
@@ -3240,6 +3302,13 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
     if not speech_key or not speech_region:
         app.logger.warning("Azure Speech credentials missing; skipping TTS generation.")
         return result
+    if entry_type == "phrase" and (not _phrase_tts_voice_map_logged):
+        _phrase_tts_voice_map_logged = True
+        app.logger.info(
+            "phrase_tts_voice_map provider=%s voices=%s",
+            AZURE_TTS_PROVIDER,
+            {lc: (DEFAULT_AZURE_VOICES.get(lc) or "") for lc in ("en", "om", "am", "ar", "fr", "zh-CN")},
+        )
 
     for lang in LEARN_TTS_LANGS:
         text = normalize_text(texts.get(lang, "") or "")
@@ -3957,6 +4026,13 @@ def ensure_missing_tts_for_phrases(
                 summary[key] += int(row.get(key, 0) or 0)
             by_lang = (row or {}).get("by_language", {}) or {}
             for lang, state in by_lang.items():
+                app.logger.info(
+                    "%s phrase_tts_lang_status entry_id=%s lang=%s reason=%s",
+                    log_context,
+                    pid,
+                    lang,
+                    state,
+                )
                 if state == "generated":
                     summary["generated_by_language"][lang] = int(summary["generated_by_language"].get(lang, 0) or 0) + 1
         app.logger.info(
@@ -5104,6 +5180,7 @@ def _load_learn_rows():
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
     phrase_rows_with_audio = []
+    phrase_rows_without_audio = []
     word_rows_with_audio = []
     for r in rows:
         audio = (r or {}).get("audio") or {}
@@ -5133,10 +5210,14 @@ def _load_learn_rows():
                 word_rows_with_audio.append(r)
             elif entry_type == "phrase":
                 phrase_rows_with_audio.append(r)
+        elif entry_type == "phrase":
+            # Keep Learn phrase coverage complete even when audio generation lags.
+            phrase_rows_without_audio.append(r)
 
     phrase_rows_with_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
+    phrase_rows_without_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
     word_rows_with_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
-    rows = phrase_rows_with_audio + word_rows_with_audio
+    rows = phrase_rows_with_audio + phrase_rows_without_audio + word_rows_with_audio
 
     phrases_loaded_with_audio = int(len(phrase_rows_with_audio))
     words_loaded_with_audio = int(len(word_rows_with_audio))
@@ -8267,6 +8348,7 @@ def admin_import():
             }
             inserted_word_items = []
             inserted_phrase_items = []
+            phrase_import_log_rows = []
 
             conn = sqlite3.connect(app.DB_NAME)
             app.logger.info(
@@ -8383,6 +8465,11 @@ def admin_import():
                         else:
                             inserted_phrases += 1
                             inserted_phrase_items.append((int(eid), en))
+                            phrase_import_log_rows.append({
+                                "phrase_id": int(eid),
+                                "english": en,
+                                "imported_oromo_present": bool(om_text),
+                            })
                             if not om_text:
                                 app.logger.warning(
                                     "phrase import missing_oromo_marked_incomplete entry_id=%s english=%r status=%s",
@@ -8483,6 +8570,51 @@ def admin_import():
                             unresolved_phrase_oromo_ids[:50],
                             oromo_fill_summary,
                         )
+                    if phrase_import_log_rows:
+                        try:
+                            by_id = {int(x["phrase_id"]): x for x in phrase_import_log_rows if int(x.get("phrase_id") or 0) > 0}
+                            check_conn = sqlite3.connect(app.DB_NAME)
+                            check_cur = check_conn.cursor()
+                            id_list = sorted(by_id.keys())
+                            if id_list:
+                                marks = ",".join("?" for _ in id_list)
+                                check_cur.execute(
+                                    f"""
+                                    SELECT id, english, oromo
+                                    FROM phrases
+                                    WHERE id IN ({marks})
+                                    """,
+                                    tuple(id_list),
+                                )
+                                for row in check_cur.fetchall():
+                                    pid = int((row or [0, "", ""])[0] or 0)
+                                    english = normalize_text((row or [0, "", ""])[1] or "")
+                                    final_oromo = normalize_text((row or [0, "", ""])[2] or "")
+                                    meta = by_id.get(pid, {})
+                                    imported_present = bool(meta.get("imported_oromo_present", False))
+                                    if imported_present and final_oromo:
+                                        reason = "source_input"
+                                        filled_state = "filled"
+                                    elif (not imported_present) and final_oromo:
+                                        reason = "oromo_filled_from_pipeline"
+                                        filled_state = "filled"
+                                    elif imported_present and (not final_oromo):
+                                        reason = "source_input_missing_after_normalization_or_write"
+                                        filled_state = "not_filled"
+                                    else:
+                                        reason = "oromo_fill_failed_or_provider_unavailable"
+                                        filled_state = "not_filled"
+                                    app.logger.info(
+                                        "phrase_import_oromo_status phrase_id=%s english=%r imported_oromo=%s oromo_%s reason=%s",
+                                        pid,
+                                        english,
+                                        ("present" if imported_present else "missing"),
+                                        filled_state,
+                                        reason,
+                                    )
+                            check_conn.close()
+                        except Exception as _phrase_log_err:
+                            app.logger.exception("admin_import phrase Oromo status logging failed: %s", repr(_phrase_log_err))
                 except Exception as phrase_sync_err:
                     app.logger.exception(f"admin_import phrase sync pipeline failed: {repr(phrase_sync_err)}")
 
