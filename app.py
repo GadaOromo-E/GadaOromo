@@ -2276,7 +2276,7 @@ def clear_generated_translations_for_word(word_id: int):
         app.logger.exception(f"generated_translations cache clear failed: {repr(e)}")
 
 
-def _get_cached_generated_phrase_translation(phrase_id: int, lang_code: str):
+def _get_generated_phrase_translation_row_raw(phrase_id: int, lang_code: str):
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -2284,8 +2284,6 @@ def _get_cached_generated_phrase_translation(phrase_id: int, lang_code: str):
             SELECT translated_text, tts_audio_url
             FROM generated_phrase_translations
             WHERE phrase_id=? AND lang_code=?
-              AND translated_text IS NOT NULL
-              AND TRIM(translated_text) != ''
             LIMIT 1
         """, (phrase_id, lang_code))
         row = c.fetchone()
@@ -2298,6 +2296,14 @@ def _get_cached_generated_phrase_translation(phrase_id: int, lang_code: str):
         return None
 
 
+def _get_cached_generated_phrase_translation(phrase_id: int, lang_code: str):
+    row = _get_generated_phrase_translation_row_raw(phrase_id, lang_code)
+    txt = normalize_text((row or [""])[0] or "")
+    if not _is_meaningful_generated_text(txt):
+        return None
+    return row
+
+
 def _save_generated_phrase_translation(
     phrase_id: int,
     lang_code: str,
@@ -2305,8 +2311,16 @@ def _save_generated_phrase_translation(
     provider: str = "google_translate_v2",
     tts_audio_url: str = None
 ):
-    if not _is_meaningful_generated_text(translated_text):
+    txt = normalize_text(translated_text or "")
+    if not _is_meaningful_generated_text(txt):
+        app.logger.warning(
+            "generated_phrase_translations write skipped phrase_id=%s lang=%s reason=empty_text text_len=%s",
+            int(phrase_id or 0),
+            normalize_text(lang_code or ""),
+            len(txt),
+        )
         return False
+    conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
@@ -2319,15 +2333,44 @@ def _save_generated_phrase_translation(
                 provider=excluded.provider,
                 tts_audio_url=excluded.tts_audio_url,
                 updated_at=CURRENT_TIMESTAMP
-        """, (phrase_id, lang_code, translated_text, provider, tts_audio_url))
+        """, (phrase_id, lang_code, txt, provider, tts_audio_url))
         conn.commit()
-        conn.close()
-        return True
+        c.execute(
+            """
+            SELECT translated_text
+            FROM generated_phrase_translations
+            WHERE phrase_id=? AND lang_code=?
+            LIMIT 1
+            """,
+            (int(phrase_id or 0), normalize_text(lang_code or "")),
+        )
+        check_row = c.fetchone()
+        saved_text = normalize_text((check_row or [""])[0] or "")
+        ok = _is_meaningful_generated_text(saved_text)
+        if not ok:
+            app.logger.error(
+                "generated_phrase_translations write verification failed phrase_id=%s lang=%s saved_text_len=%s",
+                int(phrase_id or 0),
+                normalize_text(lang_code or ""),
+                len(saved_text),
+            )
+        return bool(ok)
     except Exception as e:
         if "no such table: generated_phrase_translations" in str(e).lower():
             ensure_generated_phrase_translations_table()
-        app.logger.exception(f"generated_phrase_translations cache write failed: {repr(e)}")
+        app.logger.exception(
+            "generated_phrase_translations cache write failed phrase_id=%s lang=%s error=%s",
+            int(phrase_id or 0),
+            normalize_text(lang_code or ""),
+            repr(e),
+        )
         return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def ensure_missing_generated_translations_for_phrases(
@@ -2397,10 +2440,38 @@ def ensure_missing_generated_translations_for_phrases(
         int(pid): {"attempted": [], "saved": [], "skips": []}
         for pid, _en in unique_items
     }
+    run_summary = {
+        "attempted": int(len(unique_items) * len(langs)),
+        "generated_new": 0,
+        "skipped_existing": 0,
+        "skipped_empty_result": 0,
+        "failed_db_write": 0,
+    }
+
+    def _log_phrase_lang_status(
+        phrase_id: int,
+        lang_code: str,
+        has_existing_translation: bool,
+        cache_hit: bool,
+        result_text: str,
+        skip_reason: str,
+    ):
+        txt = normalize_text(result_text or "")
+        app.logger.info(
+            "%s phrase_translation_status phrase_id=%s lang=%s has_existing_translation=%s cache_hit=%s result_text_len=%s skip_reason=%s",
+            log_context,
+            int(phrase_id or 0),
+            normalize_text(lang_code or ""),
+            bool(has_existing_translation),
+            bool(cache_hit),
+            len(txt),
+            (skip_reason or ""),
+        )
 
     for lang in langs:
         st = {
             "items_seen": len(unique_items),
+            "attempted": len(unique_items),
             "already_cached": 0,
             "invalid_cached_treated_missing": 0,
             "missing_before": 0,
@@ -2411,20 +2482,38 @@ def ensure_missing_generated_translations_for_phrases(
             "missing_api_key": 0,
             "request_failures": 0,
             "fallback_errors": 0,
+            "failed_db_write": 0,
         }
         stats[lang] = st
         missing = []
+        cache_meta = {}
         skipped_existing_log_count = 0
         processed_new_log_count = 0
         for pid, en in unique_items:
             phrase_debug.setdefault(int(pid), {"attempted": [], "saved": [], "skips": []})
             phrase_debug[int(pid)]["attempted"].append(lang)
-            cached = _get_cached_generated_phrase_translation(pid, lang)
-            cached_text = normalize_text((cached or [""])[0] or "")
+            cached_raw = _get_generated_phrase_translation_row_raw(pid, lang)
+            cached_text = normalize_text((cached_raw or [""])[0] or "")
+            has_existing_translation = bool(cached_raw is not None)
+            cache_hit = _is_meaningful_generated_text(cached_text)
+            cache_meta[int(pid)] = {
+                "has_existing_translation": has_existing_translation,
+                "cache_hit": cache_hit,
+                "cached_text": cached_text,
+            }
             if not overwrite_existing:
-                if _is_meaningful_generated_text(cached_text):
+                if cache_hit:
                     st["already_cached"] += 1
+                    run_summary["skipped_existing"] += 1
                     phrase_debug[int(pid)]["skips"].append(f"{lang}:already_cached")
+                    _log_phrase_lang_status(
+                        phrase_id=pid,
+                        lang_code=lang,
+                        has_existing_translation=has_existing_translation,
+                        cache_hit=cache_hit,
+                        result_text=cached_text,
+                        skip_reason="already_cached",
+                    )
                     if skipped_existing_log_count < 5:
                         app.logger.info(
                             "%s skipped_existing type=generated_translation entry_type=phrase entry_id=%s lang=%s value=%r",
@@ -2435,8 +2524,15 @@ def ensure_missing_generated_translations_for_phrases(
                         )
                         skipped_existing_log_count += 1
                     continue
-                if cached:
+                if has_existing_translation:
                     st["invalid_cached_treated_missing"] += 1
+                    app.logger.warning(
+                        "%s phrase_translation_cache_row_empty phrase_id=%s lang=%s result_text_len=%s treating_as_missing=1",
+                        log_context,
+                        pid,
+                        lang,
+                        len(cached_text),
+                    )
             missing.append((pid, en))
         # Missing means either no generated translation for this language OR empty Oromo base text.
         missing_translation_ids = {int(pid or 0) for pid, _en in missing if int(pid or 0) > 0}
@@ -2453,6 +2549,15 @@ def ensure_missing_generated_translations_for_phrases(
                 st["missing_api_key"] += len(pairs)
                 for pid, _en in pairs:
                     phrase_debug[int(pid)]["skips"].append(f"{lang}:missing_api_key")
+                    meta = cache_meta.get(int(pid), {}) or {}
+                    _log_phrase_lang_status(
+                        phrase_id=pid,
+                        lang_code=lang,
+                        has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                        cache_hit=bool(meta.get("cache_hit", False)),
+                        result_text="",
+                        skip_reason="missing_api_key",
+                    )
                 app.logger.error(
                     "phrase translation skipped: missing Google API key context=%s lang=%s missing_pairs=%s",
                     log_context,
@@ -2471,6 +2576,15 @@ def ensure_missing_generated_translations_for_phrases(
                     st["request_failures"] += len(pairs)
                     for pid, _en in pairs:
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_batch_response")
+                        meta = cache_meta.get(int(pid), {}) or {}
+                        _log_phrase_lang_status(
+                            phrase_id=pid,
+                            lang_code=lang,
+                            has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                            cache_hit=bool(meta.get("cache_hit", False)),
+                            result_text="",
+                            skip_reason="empty_batch_response",
+                        )
                     app.logger.error(
                         "phrase batch translate empty response context=%s lang=%s pairs=%s key_source=%s",
                         log_context,
@@ -2483,6 +2597,15 @@ def ensure_missing_generated_translations_for_phrases(
                     st["batch_mismatch_fallback"] += len(pairs)
                     for pid, _en in pairs:
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:batch_mismatch_fallback")
+                        meta = cache_meta.get(int(pid), {}) or {}
+                        _log_phrase_lang_status(
+                            phrase_id=pid,
+                            lang_code=lang,
+                            has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                            cache_hit=bool(meta.get("cache_hit", False)),
+                            result_text="",
+                            skip_reason="batch_mismatch_fallback",
+                        )
                     translated = []
             except Exception:
                 translated = []
@@ -2490,6 +2613,15 @@ def ensure_missing_generated_translations_for_phrases(
                 st["request_failures"] += len(pairs)
                 for pid, _en in pairs:
                     phrase_debug[int(pid)]["skips"].append(f"{lang}:batch_exception")
+                    meta = cache_meta.get(int(pid), {}) or {}
+                    _log_phrase_lang_status(
+                        phrase_id=pid,
+                        lang_code=lang,
+                        has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                        cache_hit=bool(meta.get("cache_hit", False)),
+                        result_text="",
+                        skip_reason="batch_exception",
+                    )
                 app.logger.exception(
                     "phrase batch translate exception context=%s lang=%s pairs=%s",
                     log_context,
@@ -2501,9 +2633,27 @@ def ensure_missing_generated_translations_for_phrases(
             if translated and len(translated) == len(pairs):
                 for (pid, _en), out in zip(pairs, translated):
                     txt = normalize_text(out or "")
+                    meta = cache_meta.get(int(pid), {}) or {}
+                    app.logger.info(
+                        "%s phrase_translation_raw_response phrase_id=%s lang=%s result_text=%r result_text_len=%s",
+                        log_context,
+                        pid,
+                        lang,
+                        txt[:300],
+                        len(txt),
+                    )
                     if not _is_meaningful_generated_text(txt):
                         st["empty_results"] += 1
+                        run_summary["skipped_empty_result"] += 1
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_text")
+                        _log_phrase_lang_status(
+                            phrase_id=pid,
+                            lang_code=lang,
+                            has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                            cache_hit=bool(meta.get("cache_hit", False)),
+                            result_text=txt,
+                            skip_reason="empty_result_batch",
+                        )
                         continue
                     try:
                         write_ok = _save_generated_phrase_translation(
@@ -2512,10 +2662,28 @@ def ensure_missing_generated_translations_for_phrases(
                         if write_ok:
                             st["saved"] += 1
                             total_saved += 1
+                            run_summary["generated_new"] += 1
                             phrase_debug[int(pid)]["saved"].append(lang)
+                            _log_phrase_lang_status(
+                                phrase_id=pid,
+                                lang_code=lang,
+                                has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                                cache_hit=bool(meta.get("cache_hit", False)),
+                                result_text=txt,
+                                skip_reason="generated",
+                            )
                         else:
-                            st["provider_errors"] += 1
+                            st["failed_db_write"] += 1
+                            run_summary["failed_db_write"] += 1
                             phrase_debug[int(pid)]["skips"].append(f"{lang}:write_failed")
+                            _log_phrase_lang_status(
+                                phrase_id=pid,
+                                lang_code=lang,
+                                has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                                cache_hit=bool(meta.get("cache_hit", False)),
+                                result_text=txt,
+                                skip_reason="db_write_failed",
+                            )
                             continue
                         if processed_new_log_count < 5:
                             app.logger.info(
@@ -2528,9 +2696,18 @@ def ensure_missing_generated_translations_for_phrases(
                     except Exception:
                         st["provider_errors"] += 1
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:save_exception")
+                        _log_phrase_lang_status(
+                            phrase_id=pid,
+                            lang_code=lang,
+                            has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                            cache_hit=bool(meta.get("cache_hit", False)),
+                            result_text=txt,
+                            skip_reason="save_exception",
+                        )
             else:
                 for pid, en in pairs:
                     try:
+                        meta = cache_meta.get(int(pid), {}) or {}
                         fallback_conn = None
                         try:
                             fallback_conn = sqlite3.connect(DB_NAME)
@@ -2549,10 +2726,27 @@ def ensure_missing_generated_translations_for_phrases(
                                 except Exception:
                                     pass
                         txt = normalize_text(translated or "")
+                        app.logger.info(
+                            "%s phrase_translation_raw_response phrase_id=%s lang=%s result_text=%r result_text_len=%s source=fallback",
+                            log_context,
+                            pid,
+                            lang,
+                            txt[:300],
+                            len(txt),
+                        )
                         if not _is_meaningful_generated_text(txt):
                             st["request_failures"] += 1
                             st["empty_results"] += 1
+                            run_summary["skipped_empty_result"] += 1
                             phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_empty_text")
+                            _log_phrase_lang_status(
+                                phrase_id=pid,
+                                lang_code=lang,
+                                has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                                cache_hit=bool(meta.get("cache_hit", False)),
+                                result_text=txt,
+                                skip_reason="empty_result_fallback",
+                            )
                             continue
                         write_ok = _save_generated_phrase_translation(
                             pid, lang, txt, provider="google_translate_v2", tts_audio_url=None
@@ -2560,10 +2754,28 @@ def ensure_missing_generated_translations_for_phrases(
                         if write_ok:
                             st["saved"] += 1
                             total_saved += 1
+                            run_summary["generated_new"] += 1
                             phrase_debug[int(pid)]["saved"].append(lang)
+                            _log_phrase_lang_status(
+                                phrase_id=pid,
+                                lang_code=lang,
+                                has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                                cache_hit=bool(meta.get("cache_hit", False)),
+                                result_text=txt,
+                                skip_reason="generated_fallback",
+                            )
                         else:
-                            st["provider_errors"] += 1
+                            st["failed_db_write"] += 1
+                            run_summary["failed_db_write"] += 1
                             phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_write_failed")
+                            _log_phrase_lang_status(
+                                phrase_id=pid,
+                                lang_code=lang,
+                                has_existing_translation=bool(meta.get("has_existing_translation", False)),
+                                cache_hit=bool(meta.get("cache_hit", False)),
+                                result_text=txt,
+                                skip_reason="db_write_failed_fallback",
+                            )
                             continue
                         if processed_new_log_count < 5:
                             app.logger.info(
@@ -2577,6 +2789,14 @@ def ensure_missing_generated_translations_for_phrases(
                         st["provider_errors"] += 1
                         st["fallback_errors"] += 1
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_exception")
+                        _log_phrase_lang_status(
+                            phrase_id=pid,
+                            lang_code=lang,
+                            has_existing_translation=False,
+                            cache_hit=False,
+                            result_text="",
+                            skip_reason="fallback_exception",
+                        )
                         app.logger.exception(
                             "phrase fallback translate failed context=%s phrase_id=%s lang=%s",
                             log_context,
@@ -2587,6 +2807,7 @@ def ensure_missing_generated_translations_for_phrases(
     try:
         compact = {
             lang: {
+                "attempted": st.get("attempted", 0),
                 "missing": st["missing_before"],
                 "saved": st["saved"],
                 "cached": st["already_cached"],
@@ -2594,6 +2815,7 @@ def ensure_missing_generated_translations_for_phrases(
                 "empty": st["empty_results"],
                 "fallback": st["batch_mismatch_fallback"],
                 "errors": st["provider_errors"],
+                "failed_db_write": st.get("failed_db_write", 0),
                 "missing_api_key": st.get("missing_api_key", 0),
                 "request_failures": st.get("request_failures", 0),
                 "fallback_errors": st.get("fallback_errors", 0),
@@ -2605,6 +2827,15 @@ def ensure_missing_generated_translations_for_phrases(
             log_context,
             total_saved,
             compact,
+        )
+        app.logger.info(
+            "%s phrase_generation_run_summary attempted=%s generated_new=%s skipped_existing=%s skipped_empty_result=%s failed_db_write=%s",
+            log_context,
+            int(run_summary.get("attempted", 0) or 0),
+            int(run_summary.get("generated_new", 0) or 0),
+            int(run_summary.get("skipped_existing", 0) or 0),
+            int(run_summary.get("skipped_empty_result", 0) or 0),
+            int(run_summary.get("failed_db_write", 0) or 0),
         )
     except Exception:
         pass
@@ -2683,6 +2914,11 @@ def ensure_missing_oromo_for_entries(
         "already_present": 0,
         "empty_results": 0,
         "provider_errors": 0,
+        # Explicit Oromo-fill counters for phrase pipeline diagnostics.
+        "scanned_missing_oromo": 0,
+        "filled_oromo": 0,
+        "skipped_existing_oromo": 0,
+        "failed_oromo_fill": 0,
     }
     if entry_type not in ("word", "phrase") or not items:
         return summary
@@ -2709,26 +2945,62 @@ def ensure_missing_oromo_for_entries(
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     missing_pairs = []
-    for eid, en in unique_items:
-        c.execute(
-            f"SELECT oromo FROM {table} WHERE id=? AND status='approved' LIMIT 1",
-            (eid,),
+    missing_meta = {}
+    filled_ids = set()
+
+    def _log_phrase_fill_status(phrase_id: int, english_text: str, current_oromo_len: int, filled_oromo: bool, reason: str):
+        if entry_type != "phrase":
+            return
+        app.logger.info(
+            "%s phrase_oromo_fill_status phrase_id=%s english=%r current_oromo_len=%s filled_oromo=%s reason=%s",
+            log_context,
+            int(phrase_id or 0),
+            normalize_text(english_text or ""),
+            int(current_oromo_len or 0),
+            bool(filled_oromo),
+            normalize_text(reason or ""),
         )
+
+    for eid, en in unique_items:
+        if entry_type == "phrase":
+            c.execute(
+                """
+                SELECT oromo
+                FROM phrases
+                WHERE id=?
+                  AND status='approved'
+                LIMIT 1
+                """,
+                (eid,),
+            )
+        else:
+            c.execute(
+                f"SELECT oromo FROM {table} WHERE id=? AND status='approved' LIMIT 1",
+                (eid,),
+            )
         row = c.fetchone()
         existing_om = normalize_text((row or [""])[0] or "")
+        current_oromo_len = len(existing_om)
         if existing_om:
             summary["already_present"] += 1
+            summary["skipped_existing_oromo"] += 1
             if entry_type == "phrase":
-                app.logger.info(
-                    "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=already_present",
-                    log_context,
-                    eid,
-                    en,
+                _log_phrase_fill_status(
+                    phrase_id=eid,
+                    english_text=en,
+                    current_oromo_len=current_oromo_len,
+                    filled_oromo=False,
+                    reason="already_present",
                 )
             continue
         missing_pairs.append((eid, en))
+        missing_meta[int(eid)] = {
+            "english": en,
+            "current_oromo_len": current_oromo_len,
+        }
 
     summary["missing_before"] = len(missing_pairs)
+    summary["scanned_missing_oromo"] = len(missing_pairs)
     if not missing_pairs:
         conn.close()
         return summary
@@ -2739,6 +3011,7 @@ def ensure_missing_oromo_for_entries(
             continue
 
         english_batch = [en for _eid, en in chunk]
+        chunk_by_id = {int(pid): en for pid, en in chunk}
         translated_list = google_translate_batch_v2(
             english_batch,
             target=_google_lang_code("om"),
@@ -2750,6 +3023,16 @@ def ensure_missing_oromo_for_entries(
                 om = normalize_text(om_raw or "")
                 if not om:
                     summary["empty_results"] += 1
+                    summary["failed_oromo_fill"] += 1
+                    if entry_type == "phrase":
+                        meta = missing_meta.get(int(eid), {}) or {}
+                        _log_phrase_fill_status(
+                            phrase_id=eid,
+                            english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
+                            current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                            filled_oromo=False,
+                            reason="google_batch_empty_result",
+                        )
                     continue
                 om_key = make_search_key(_strip_edge_punct(om))
                 c.execute(
@@ -2763,19 +3046,26 @@ def ensure_missing_oromo_for_entries(
                 )
                 if int(c.rowcount or 0) > 0:
                     summary["updated"] += 1
+                    summary["filled_oromo"] += 1
+                    filled_ids.add(int(eid))
                     if entry_type == "phrase":
-                        app.logger.info(
-                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_filled reason=google_batch",
-                            log_context,
-                            eid,
-                            (next((p_en for p_id, p_en in chunk if p_id == eid), "") or ""),
+                        meta = missing_meta.get(int(eid), {}) or {}
+                        _log_phrase_fill_status(
+                            phrase_id=eid,
+                            english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
+                            current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                            filled_oromo=True,
+                            reason="google_batch",
                         )
                 elif entry_type == "phrase":
-                    app.logger.info(
-                        "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=google_batch_update_skipped",
-                        log_context,
-                        eid,
-                        (next((p_en for p_id, p_en in chunk if p_id == eid), "") or ""),
+                    summary["failed_oromo_fill"] += 1
+                    meta = missing_meta.get(int(eid), {}) or {}
+                    _log_phrase_fill_status(
+                        phrase_id=eid,
+                        english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
+                        current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                        filled_oromo=False,
+                        reason="google_batch_update_skipped",
                     )
         else:
             for eid, en in chunk:
@@ -2788,6 +3078,16 @@ def ensure_missing_oromo_for_entries(
                     om = normalize_text(om or "")
                     if not om:
                         summary["empty_results"] += 1
+                        summary["failed_oromo_fill"] += 1
+                        if entry_type == "phrase":
+                            meta = missing_meta.get(int(eid), {}) or {}
+                            _log_phrase_fill_status(
+                                phrase_id=eid,
+                                english_text=meta.get("english", en),
+                                current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                                filled_oromo=False,
+                                reason="google_single_empty_result",
+                            )
                         continue
                     om_key = make_search_key(_strip_edge_punct(om))
                     c.execute(
@@ -2801,35 +3101,49 @@ def ensure_missing_oromo_for_entries(
                     )
                     if int(c.rowcount or 0) > 0:
                         summary["updated"] += 1
+                        summary["filled_oromo"] += 1
+                        filled_ids.add(int(eid))
                         if entry_type == "phrase":
-                            app.logger.info(
-                                "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_filled reason=google_single",
-                                log_context,
-                                eid,
-                                en,
+                            meta = missing_meta.get(int(eid), {}) or {}
+                            _log_phrase_fill_status(
+                                phrase_id=eid,
+                                english_text=meta.get("english", en),
+                                current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                                filled_oromo=True,
+                                reason="google_single",
                             )
                     elif entry_type == "phrase":
-                        app.logger.info(
-                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=google_single_update_skipped",
-                            log_context,
-                            eid,
-                            en,
+                        summary["failed_oromo_fill"] += 1
+                        meta = missing_meta.get(int(eid), {}) or {}
+                        _log_phrase_fill_status(
+                            phrase_id=eid,
+                            english_text=meta.get("english", en),
+                            current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                            filled_oromo=False,
+                            reason="google_single_update_skipped",
                         )
                 except Exception:
                     summary["provider_errors"] += 1
+                    summary["failed_oromo_fill"] += 1
                     if entry_type == "phrase":
-                        app.logger.info(
-                            "%s phrase_oromo_fill phrase_id=%s english=%r imported_oromo=unknown oromo_not_filled reason=provider_exception",
-                            log_context,
-                            eid,
-                            en,
+                        meta = missing_meta.get(int(eid), {}) or {}
+                        _log_phrase_fill_status(
+                            phrase_id=eid,
+                            english_text=meta.get("english", en),
+                            current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                            filled_oromo=False,
+                            reason="provider_exception",
                         )
 
     conn.commit()
     conn.close()
 
+    # Guard against accidental under-counting in race/no-op edge cases.
+    if summary["failed_oromo_fill"] < 0:
+        summary["failed_oromo_fill"] = 0
+
     app.logger.info(
-        "%s Oromo backfill summary entry_type=%s seen=%s missing=%s updated=%s already_present=%s empty=%s errors=%s",
+        "%s Oromo backfill summary entry_type=%s seen=%s missing=%s updated=%s already_present=%s empty=%s errors=%s scanned_missing_oromo=%s filled_oromo=%s skipped_existing_oromo=%s failed_oromo_fill=%s",
         log_context,
         entry_type,
         summary["items_seen"],
@@ -2838,6 +3152,10 @@ def ensure_missing_oromo_for_entries(
         summary["already_present"],
         summary["empty_results"],
         summary["provider_errors"],
+        summary["scanned_missing_oromo"],
+        summary["filled_oromo"],
+        summary["skipped_existing_oromo"],
+        summary["failed_oromo_fill"],
     )
     return summary
 
