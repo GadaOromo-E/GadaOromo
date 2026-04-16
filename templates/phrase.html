@@ -50,7 +50,7 @@
       <section class="phrase-card">
         <h1 class="phrase-title">{{ english_phrase }}</h1>
 
-        {% if oromo_phrase %}
+        {% if oromo_phrase and oromo_phrase.strip() %}
           <p class="main-translation"><strong>Oromo:</strong> {{ oromo_phrase }}</p>
         {% endif %}
 

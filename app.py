@@ -2358,6 +2358,39 @@ def ensure_missing_generated_translations_for_phrases(
     if not unique_items:
         return 0, {}
 
+    # Track base Oromo completeness so empty-string Oromo is treated as missing,
+    # not as valid data.
+    oromo_missing_ids = set()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        id_marks = ",".join("?" for _ in unique_items)
+        c.execute(
+            f"""
+            SELECT id, oromo
+            FROM phrases
+            WHERE id IN ({id_marks})
+            """,
+            tuple(pid for pid, _en in unique_items),
+        )
+        for pid, om in c.fetchall():
+            pid_int = int(pid or 0)
+            om_text = normalize_text(om or "")
+            oromo_len = len(om_text)
+            treated_missing = bool(oromo_len == 0)
+            if treated_missing:
+                oromo_missing_ids.add(pid_int)
+            app.logger.info(
+                "%s phrase_oromo_missing_check phrase_id=%s oromo_len=%s treated_as_missing=%s",
+                log_context,
+                pid_int,
+                oromo_len,
+                treated_missing,
+            )
+        conn.close()
+    except Exception:
+        app.logger.exception("%s phrase_oromo_missing_check failed", log_context)
+
     total_saved = 0
     stats = {}
     phrase_debug = {
@@ -2405,7 +2438,9 @@ def ensure_missing_generated_translations_for_phrases(
                 if cached:
                     st["invalid_cached_treated_missing"] += 1
             missing.append((pid, en))
-        st["missing_before"] = len(missing)
+        # Missing means either no generated translation for this language OR empty Oromo base text.
+        missing_translation_ids = {int(pid or 0) for pid, _en in missing if int(pid or 0) > 0}
+        st["missing_before"] = len(missing_translation_ids.union(oromo_missing_ids))
 
         for i in range(0, len(missing), safe_chunk):
             pairs = missing[i:i + safe_chunk]
@@ -2809,13 +2844,14 @@ def ensure_missing_oromo_for_entries(
 
 def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
     """
-    Return phrase rows with non-empty English source text and at least one missing
-    generated translation among am/ar/fr/zh-CN.
+    Return approved phrase rows with non-empty English source text where either:
+    - Oromo base text is missing (NULL/empty/whitespace), OR
+    - at least one generated translation among am/ar/fr/zh-CN is missing.
     """
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     sql = """
-        SELECT p.id, p.english
+        SELECT p.id, p.english, p.oromo
         FROM phrases p
         LEFT JOIN generated_phrase_translations g_am
           ON g_am.phrase_id = p.id
@@ -2841,6 +2877,7 @@ def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
           AND p.english IS NOT NULL
           AND TRIM(p.english) != ''
           AND (
+            p.oromo IS NULL OR TRIM(p.oromo) = '' OR
             g_am.id IS NULL OR
             g_ar.id IS NULL OR
             g_fr.id IS NULL OR
@@ -2853,9 +2890,24 @@ def _fetch_phrase_items_missing_generated_translations(limit: int = 0):
         c.execute(sql, (int(limit),))
     else:
         c.execute(sql)
-    rows = [(int(r[0]), normalize_text(r[1] or "")) for r in c.fetchall()]
+    rows = c.fetchall()
     conn.close()
-    return [(pid, en) for pid, en in rows if pid and en]
+    out = []
+    for r in (rows or []):
+        pid = int((r or [0, "", ""])[0] or 0)
+        en = normalize_text((r or [0, "", ""])[1] or "")
+        om = normalize_text((r or [0, "", ""])[2] or "")
+        if not pid or not en:
+            continue
+        treated_missing = bool(not om)
+        app.logger.info(
+            "phrase_selector_missing_check phrase_id=%s oromo_len=%s treated_as_missing=%s",
+            pid,
+            len(om),
+            treated_missing,
+        )
+        out.append((pid, en))
+    return out
 
 
 def run_phrase_translation_backfill(limit: int = 0, chunk_size: int = None):
@@ -7855,7 +7907,7 @@ def admin_repair_generated_phrases():
             c = conn.cursor()
             c.execute(
                 """
-                SELECT id, english
+                SELECT id, english, oromo
                 FROM phrases
                 WHERE status='approved'
                 ORDER BY id ASC
@@ -7870,13 +7922,22 @@ def admin_repair_generated_phrases():
             for row in rows:
                 if not row or len(row) < 2:
                     continue
-                pid, en = row
+                pid, en, om = (row[0], row[1], (row[2] if len(row) > 2 else ""))
                 pid_int = int(pid or 0)
                 en_norm = normalize_text(en or "")
+                om_norm = normalize_text(om or "")
                 if not pid_int or not en_norm:
                     continue
-                missing = _count_missing_generated_phrase_langs(conn, pid_int)
-                if missing > 0:
+                missing_translations = _count_missing_generated_phrase_langs(conn, pid_int)
+                oromo_missing = bool(not om_norm)
+                treated_missing = bool(oromo_missing or (missing_translations > 0))
+                app.logger.info(
+                    "admin_repair_generated_phrases phrase_id=%s oromo_len=%s treated_as_missing=%s",
+                    pid_int,
+                    len(om_norm),
+                    treated_missing,
+                )
+                if treated_missing:
                     phrases_needing_repair.append((pid_int, en_norm))
 
             conn.close()
