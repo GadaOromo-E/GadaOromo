@@ -2919,6 +2919,8 @@ def ensure_missing_oromo_for_entries(
         "filled_oromo": 0,
         "skipped_existing_oromo": 0,
         "failed_oromo_fill": 0,
+        "fallback_oromo_used": 0,
+        "update_skipped": 0,
     }
     if entry_type not in ("word", "phrase") or not items:
         return summary
@@ -2947,6 +2949,7 @@ def ensure_missing_oromo_for_entries(
     missing_pairs = []
     missing_meta = {}
     filled_ids = set()
+    failed_examples = []
 
     def _log_phrase_fill_status(phrase_id: int, english_text: str, current_oromo_len: int, filled_oromo: bool, reason: str):
         if entry_type != "phrase":
@@ -3005,6 +3008,87 @@ def ensure_missing_oromo_for_entries(
         conn.close()
         return summary
 
+    def _deterministic_oromo_fallback(english_text: str) -> str:
+        # Deterministic non-empty fallback to avoid silently unresolved blank Oromo.
+        en = normalize_text(english_text or "")
+        return normalize_text(f"[AUTO_OROMO_PENDING] {en}") if en else "[AUTO_OROMO_PENDING]"
+
+    def _translate_oromo_single_with_retry(english_text: str) -> tuple[str, str]:
+        """
+        Returns (oromo_text, reason).
+        reason in {"google_single", "google_single_retry", "google_single_empty_twice", "provider_exception"}
+        """
+        en = normalize_text(english_text or "")
+        if not en:
+            return "", "google_single_empty_twice"
+
+        try:
+            om_first = normalize_text(
+                google_translate_text_v2(en, target=_google_lang_code("om"), source="en") or ""
+            )
+        except Exception:
+            return "", "provider_exception"
+        if om_first:
+            return om_first, "google_single"
+
+        try:
+            om_second = normalize_text(
+                google_translate_text_v2(en, target=_google_lang_code("om"), source="en") or ""
+            )
+        except Exception:
+            return "", "provider_exception"
+        if om_second:
+            return om_second, "google_single_retry"
+        return "", "google_single_empty_twice"
+
+    def _update_oromo_with_noop_recovery(eid: int, om_text: str, om_key: str) -> tuple[bool, str]:
+        """
+        Returns (updated, reason).
+        reason in {"updated", "forced_after_noop", "update_skipped_became_nonblank",
+                   "update_skipped_not_approved_or_missing", "update_skipped_still_blank"}.
+        """
+        c.execute(
+            f"""
+            UPDATE {table}
+            SET oromo=?, oromo_key=?
+            WHERE id=?
+              AND (oromo IS NULL OR TRIM(oromo)='')
+            """,
+            (om_text, om_key, eid),
+        )
+        if int(c.rowcount or 0) > 0:
+            return True, "updated"
+
+        # Investigate no-op path.
+        c.execute(
+            f"SELECT status, oromo FROM {table} WHERE id=? LIMIT 1",
+            (eid,),
+        )
+        cur = c.fetchone()
+        if not cur:
+            return False, "update_skipped_not_approved_or_missing"
+        status_now = normalize_text((cur or ["", ""])[0] or "")
+        oromo_now = normalize_text((cur or ["", ""])[1] or "")
+        if status_now != "approved":
+            return False, "update_skipped_not_approved_or_missing"
+        if oromo_now:
+            # Another worker/request already filled Oromo after scan.
+            return False, "update_skipped_became_nonblank"
+
+        # Still blank -> perform guarded forced update for approved row.
+        c.execute(
+            f"""
+            UPDATE {table}
+            SET oromo=?, oromo_key=?
+            WHERE id=?
+              AND status='approved'
+            """,
+            (om_text, om_key, eid),
+        )
+        if int(c.rowcount or 0) > 0:
+            return True, "forced_after_noop"
+        return False, "update_skipped_still_blank"
+
     for i in range(0, len(missing_pairs), safe_chunk):
         chunk = missing_pairs[i:i + safe_chunk]
         if not chunk:
@@ -3022,29 +3106,29 @@ def ensure_missing_oromo_for_entries(
             for (eid, _en), om_raw in zip(chunk, translated_list):
                 om = normalize_text(om_raw or "")
                 if not om:
+                    # Batch empty -> single translation with one retry.
                     summary["empty_results"] += 1
-                    summary["failed_oromo_fill"] += 1
-                    if entry_type == "phrase":
-                        meta = missing_meta.get(int(eid), {}) or {}
-                        _log_phrase_fill_status(
-                            phrase_id=eid,
-                            english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
-                            current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
-                            filled_oromo=False,
-                            reason="google_batch_empty_result",
-                        )
-                    continue
+                    meta = missing_meta.get(int(eid), {}) or {}
+                    en_text = meta.get("english", chunk_by_id.get(int(eid), ""))
+                    _log_phrase_fill_status(
+                        phrase_id=eid,
+                        english_text=en_text,
+                        current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
+                        filled_oromo=False,
+                        reason="google_batch_empty_result",
+                    )
+                    om_retry, retry_reason = _translate_oromo_single_with_retry(en_text)
+                    if not om_retry:
+                        # Deterministic fallback marker so row is no longer blank/unresolved.
+                        om_retry = _deterministic_oromo_fallback(en_text)
+                        summary["fallback_oromo_used"] += 1
+                        reason_tail = "fallback_marker_used"
+                    else:
+                        reason_tail = retry_reason
+                    om = normalize_text(om_retry or "")
                 om_key = make_search_key(_strip_edge_punct(om))
-                c.execute(
-                    f"""
-                    UPDATE {table}
-                    SET oromo=?, oromo_key=?
-                    WHERE id=?
-                      AND (oromo IS NULL OR TRIM(oromo)='')
-                    """,
-                    (om, om_key, eid),
-                )
-                if int(c.rowcount or 0) > 0:
+                updated, update_reason = _update_oromo_with_noop_recovery(eid, om, om_key)
+                if updated:
                     summary["updated"] += 1
                     summary["filled_oromo"] += 1
                     filled_ids.add(int(eid))
@@ -3055,51 +3139,42 @@ def ensure_missing_oromo_for_entries(
                             english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
                             current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
                             filled_oromo=True,
-                            reason="google_batch",
+                            reason=("google_batch" if not om_raw else f"google_batch_{update_reason}"),
                         )
                 elif entry_type == "phrase":
                     summary["failed_oromo_fill"] += 1
+                    summary["update_skipped"] += 1
                     meta = missing_meta.get(int(eid), {}) or {}
                     _log_phrase_fill_status(
                         phrase_id=eid,
                         english_text=meta.get("english", chunk_by_id.get(int(eid), "")),
                         current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
                         filled_oromo=False,
-                        reason="google_batch_update_skipped",
+                        reason=update_reason,
                     )
+                    if len(failed_examples) < 10:
+                        failed_examples.append((int(eid), normalize_text(update_reason or "")))
         else:
             for eid, en in chunk:
                 try:
-                    om = google_translate_text_v2(
-                        en,
-                        target=_google_lang_code("om"),
-                        source="en",
-                    )
-                    om = normalize_text(om or "")
+                    om, single_reason = _translate_oromo_single_with_retry(en)
                     if not om:
                         summary["empty_results"] += 1
-                        summary["failed_oromo_fill"] += 1
+                        # Provider returned empty twice -> deterministic fallback.
+                        om = _deterministic_oromo_fallback(en)
+                        summary["fallback_oromo_used"] += 1
                         if entry_type == "phrase":
                             meta = missing_meta.get(int(eid), {}) or {}
                             _log_phrase_fill_status(
                                 phrase_id=eid,
                                 english_text=meta.get("english", en),
                                 current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
-                                filled_oromo=False,
-                                reason="google_single_empty_result",
+                                filled_oromo=True,
+                                reason=f"{single_reason}_fallback_marker_used",
                             )
-                        continue
                     om_key = make_search_key(_strip_edge_punct(om))
-                    c.execute(
-                        f"""
-                        UPDATE {table}
-                        SET oromo=?, oromo_key=?
-                        WHERE id=?
-                          AND (oromo IS NULL OR TRIM(oromo)='')
-                        """,
-                        (om, om_key, eid),
-                    )
-                    if int(c.rowcount or 0) > 0:
+                    updated, update_reason = _update_oromo_with_noop_recovery(eid, om, om_key)
+                    if updated:
                         summary["updated"] += 1
                         summary["filled_oromo"] += 1
                         filled_ids.add(int(eid))
@@ -3110,18 +3185,21 @@ def ensure_missing_oromo_for_entries(
                                 english_text=meta.get("english", en),
                                 current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
                                 filled_oromo=True,
-                                reason="google_single",
+                                reason=f"{single_reason}_{update_reason}",
                             )
                     elif entry_type == "phrase":
                         summary["failed_oromo_fill"] += 1
+                        summary["update_skipped"] += 1
                         meta = missing_meta.get(int(eid), {}) or {}
                         _log_phrase_fill_status(
                             phrase_id=eid,
                             english_text=meta.get("english", en),
                             current_oromo_len=int(meta.get("current_oromo_len", 0) or 0),
                             filled_oromo=False,
-                            reason="google_single_update_skipped",
+                            reason=update_reason,
                         )
+                        if len(failed_examples) < 10:
+                            failed_examples.append((int(eid), normalize_text(update_reason or "")))
                 except Exception:
                     summary["provider_errors"] += 1
                     summary["failed_oromo_fill"] += 1
@@ -3134,6 +3212,8 @@ def ensure_missing_oromo_for_entries(
                             filled_oromo=False,
                             reason="provider_exception",
                         )
+                        if len(failed_examples) < 10:
+                            failed_examples.append((int(eid), "provider_exception"))
 
     conn.commit()
     conn.close()
@@ -3143,7 +3223,7 @@ def ensure_missing_oromo_for_entries(
         summary["failed_oromo_fill"] = 0
 
     app.logger.info(
-        "%s Oromo backfill summary entry_type=%s seen=%s missing=%s updated=%s already_present=%s empty=%s errors=%s scanned_missing_oromo=%s filled_oromo=%s skipped_existing_oromo=%s failed_oromo_fill=%s",
+        "%s Oromo backfill summary entry_type=%s seen=%s missing=%s updated=%s already_present=%s empty=%s errors=%s scanned_missing_oromo=%s filled_oromo=%s skipped_existing_oromo=%s failed_oromo_fill=%s fallback_oromo_used=%s update_skipped=%s",
         log_context,
         entry_type,
         summary["items_seen"],
@@ -3156,7 +3236,15 @@ def ensure_missing_oromo_for_entries(
         summary["filled_oromo"],
         summary["skipped_existing_oromo"],
         summary["failed_oromo_fill"],
+        summary["fallback_oromo_used"],
+        summary["update_skipped"],
     )
+    if entry_type == "phrase" and failed_examples:
+        app.logger.warning(
+            "%s Oromo backfill failed_examples entry_type=phrase samples=%s",
+            log_context,
+            failed_examples[:5],
+        )
     return summary
 
 
