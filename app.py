@@ -5551,7 +5551,6 @@ def _load_learn_rows():
         FROM phrases
         WHERE status='approved'
           AND english IS NOT NULL AND TRIM(english) != ''
-          AND oromo IS NOT NULL AND TRIM(oromo) != ''
         ORDER BY english ASC
         """,
     )
@@ -5582,6 +5581,7 @@ def _load_learn_rows():
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
     rows = []
+    phrases_with_missing_oromo_but_shown = 0
     for wid, en, om in word_rows:
         wid_int = int(wid)
         tr = word_translations.get(wid_int, {})
@@ -5607,23 +5607,37 @@ def _load_learn_rows():
     for pid, en, om in phrase_rows:
         pid_int = int(pid)
         tr = phrase_translations.get(pid_int, {})
+        om_text = normalize_text(om or "")
+        audio_map = {
+            "en": phrase_tts.get((pid_int, "en"), ""),
+            "am": phrase_tts.get((pid_int, "am"), ""),
+            "ar": phrase_tts.get((pid_int, "ar"), ""),
+            "fr": phrase_tts.get((pid_int, "fr"), ""),
+            "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
+            "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
+        }
+        has_any_phrase_text = bool(
+            normalize_text(tr.get("am", "") or "")
+            or normalize_text(tr.get("ar", "") or "")
+            or normalize_text(tr.get("fr", "") or "")
+            or normalize_text(tr.get("zh-CN", "") or "")
+            or om_text
+        )
+        has_any_phrase_audio = any(normalize_text(u or "") for u in audio_map.values())
+        if not (has_any_phrase_text or has_any_phrase_audio):
+            continue
+        if not om_text:
+            phrases_with_missing_oromo_but_shown += 1
         rows.append({
             "entry_type": "phrase",
             "entry_id": pid_int,
             "english": normalize_text(en or ""),
-            "oromo": normalize_text(om or ""),
+            "oromo": om_text,
             "am": normalize_text(tr.get("am", "") or ""),
             "ar": normalize_text(tr.get("ar", "") or ""),
             "fr": normalize_text(tr.get("fr", "") or ""),
             "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
-            "audio": {
-                "en": phrase_tts.get((pid_int, "en"), ""),
-                "am": phrase_tts.get((pid_int, "am"), ""),
-                "ar": phrase_tts.get((pid_int, "ar"), ""),
-                "fr": phrase_tts.get((pid_int, "fr"), ""),
-                "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
-                "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
-            },
+            "audio": audio_map,
         })
 
     words_loaded_raw = int(len(word_rows))
@@ -5682,7 +5696,7 @@ def _load_learn_rows():
     total_rows_loaded = int(len(rows))
 
     app.logger.info(
-        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_attached_count=%s",
+        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_attached_count=%s phrases_with_missing_oromo_but_shown=%s",
         total_rows_loaded,
         phrases_loaded_with_audio,
         words_loaded_with_audio,
@@ -5697,6 +5711,7 @@ def _load_learn_rows():
         rows_with_any_audio,
         rows_rendered_with_audio_url,
         audio_attached_count,
+        phrases_with_missing_oromo_but_shown,
     )
     return rows
 
