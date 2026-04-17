@@ -4660,7 +4660,54 @@ def _new_pipeline_summary(entry_type: str):
         "audio_skipped_existing": 0,
         "audio_missing_voice": 0,
         "audio_failed": 0,
+        "learn_ready_phrases_with_audio": 0,
     }
+
+
+def _count_phrases_with_any_audio(phrase_ids):
+    ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
+    if not ids:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    marks = ",".join("?" for _ in ids)
+
+    c.execute(
+        f"""
+        SELECT DISTINCT entry_id, file_path
+        FROM generated_tts_audio
+        WHERE entry_type='phrase'
+          AND entry_id IN ({marks})
+          AND file_path IS NOT NULL
+          AND TRIM(file_path) != ''
+        """,
+        tuple(ids),
+    )
+    generated_rows = c.fetchall()
+
+    c.execute(
+        f"""
+        SELECT DISTINCT entry_id, file_path
+        FROM audio
+        WHERE status='approved'
+          AND entry_type='phrase'
+          AND entry_id IN ({marks})
+          AND file_path IS NOT NULL
+          AND TRIM(file_path) != ''
+        """,
+        tuple(ids),
+    )
+    approved_rows = c.fetchall()
+    conn.close()
+
+    ready_ids = set()
+    for eid, fp in (generated_rows or []):
+        if _has_usable_audio_ref(fp or ""):
+            ready_ids.add(int(eid or 0))
+    for eid, fp in (approved_rows or []):
+        if _has_usable_audio_ref(fp or ""):
+            ready_ids.add(int(eid or 0))
+    return len([x for x in ready_ids if x > 0])
 
 
 def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
@@ -4832,6 +4879,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
             int((phrases_tts or {}).get("skipped_missing_text", 0) or 0) +
             phrases_summary["audio_failed"]
         )
+        phrases_summary["learn_ready_phrases_with_audio"] = _count_phrases_with_any_audio(phrase_ids)
 
         app.logger.info("post_import_pipeline summary words=%s", words_summary)
         app.logger.info("post_import_pipeline summary phrases=%s", phrases_summary)
@@ -5737,36 +5785,6 @@ def _load_learn_rows():
     c.execute(
         """
         SELECT id, english, oromo
-        FROM words
-        WHERE status='approved'
-          AND english IS NOT NULL AND TRIM(english) != ''
-          AND oromo IS NOT NULL AND TRIM(oromo) != ''
-        ORDER BY english ASC
-        """,
-    )
-    word_rows = c.fetchall()
-
-    word_ids = [int(w[0]) for w in word_rows if w and w[0]]
-    word_translations = {}
-    if word_ids:
-        id_marks = ",".join("?" for _ in word_ids)
-        c.execute(
-            f"""
-            SELECT word_id, lang_code, translated_text
-            FROM generated_translations
-            WHERE word_id IN ({id_marks})
-              AND lang_code IN (?, ?, ?, ?)
-              AND translated_text IS NOT NULL
-              AND TRIM(translated_text) != ''
-            """,
-            (*word_ids, "am", "ar", "fr", "zh-CN"),
-        )
-        for wid, lang, txt in c.fetchall():
-            word_translations.setdefault(int(wid), {})[lang] = normalize_text(txt or "")
-
-    c.execute(
-        """
-        SELECT id, english, oromo
         FROM phrases
         WHERE status='approved'
           AND english IS NOT NULL AND TRIM(english) != ''
@@ -5794,34 +5812,11 @@ def _load_learn_rows():
             phrase_translations.setdefault(int(pid), {})[lang] = normalize_text(txt or "")
     conn.close()
 
-    word_tts = _bulk_fetch_saved_tts_by_entry_lang("word", word_ids, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
     phrase_tts = _bulk_fetch_saved_tts_by_entry_lang("phrase", phrase_ids, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
-    word_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("word", word_ids)
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
     rows = []
     phrases_with_missing_oromo_but_shown = 0
-    for wid, en, om in word_rows:
-        wid_int = int(wid)
-        tr = word_translations.get(wid_int, {})
-        rows.append({
-            "entry_type": "word",
-            "entry_id": wid_int,
-            "english": normalize_text(en or ""),
-            "oromo": normalize_text(om or ""),
-            "am": normalize_text(tr.get("am", "") or ""),
-            "ar": normalize_text(tr.get("ar", "") or ""),
-            "fr": normalize_text(tr.get("fr", "") or ""),
-            "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
-            "audio": {
-                "en": word_tts.get((wid_int, "en"), ""),
-                "am": word_tts.get((wid_int, "am"), ""),
-                "ar": word_tts.get((wid_int, "ar"), ""),
-                "fr": word_tts.get((wid_int, "fr"), ""),
-                "zh-CN": word_tts.get((wid_int, "zh-CN"), ""),
-                "oromo": word_oromo_audio.get(wid_int, "") or word_tts.get((wid_int, "om"), ""),
-            },
-        })
 
     for pid, en, om in phrase_rows:
         pid_int = int(pid)
@@ -5835,18 +5830,20 @@ def _load_learn_rows():
             "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
             "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
         }
-        has_any_phrase_text = bool(
-            normalize_text(tr.get("am", "") or "")
-            or normalize_text(tr.get("ar", "") or "")
-            or normalize_text(tr.get("fr", "") or "")
-            or normalize_text(tr.get("zh-CN", "") or "")
-            or om_text
-        )
         has_any_phrase_audio = any(normalize_text(u or "") for u in audio_map.values())
-        if not (has_any_phrase_text or has_any_phrase_audio):
+        if not has_any_phrase_audio:
             continue
         if not om_text:
             phrases_with_missing_oromo_but_shown += 1
+        rich_text_count = int(
+            bool(normalize_text(en or "")) +
+            bool(om_text) +
+            bool(normalize_text(tr.get("am", "") or "")) +
+            bool(normalize_text(tr.get("ar", "") or "")) +
+            bool(normalize_text(tr.get("fr", "") or "")) +
+            bool(normalize_text(tr.get("zh-CN", "") or ""))
+        )
+        audio_count = int(sum(1 for u in audio_map.values() if normalize_text(u or "")))
         rows.append({
             "entry_type": "phrase",
             "entry_id": pid_int,
@@ -5857,11 +5854,13 @@ def _load_learn_rows():
             "fr": normalize_text(tr.get("fr", "") or ""),
             "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
             "audio": audio_map,
+            "_rich_text_count": rich_text_count,
+            "_audio_count": audio_count,
         })
 
-    words_loaded_raw = int(len(word_rows))
+    words_loaded_raw = 0
     phrases_loaded_raw = int(len(phrase_rows))
-    word_audio_rows_found = int(len(word_tts) + len(word_oromo_audio))
+    word_audio_rows_found = 0
     phrase_audio_rows_found = int(len(phrase_tts) + len(phrase_oromo_audio))
     audio_rows_found = int(word_audio_rows_found + phrase_audio_rows_found)
     rows_with_audio_in_db_all = 0
@@ -5871,22 +5870,16 @@ def _load_learn_rows():
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
     phrase_rows_with_audio = []
-    phrase_rows_without_audio = []
-    word_rows_with_audio = []
     for r in rows:
         audio = (r or {}).get("audio") or {}
         entry_type = (r or {}).get("entry_type")
         entry_id = int((r or {}).get("entry_id") or 0)
         has_audio_db = False
-        if entry_type == "word":
-            has_audio_db = any((entry_id, lc) in word_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om")) or (entry_id in word_oromo_audio)
-        elif entry_type == "phrase":
+        if entry_type == "phrase":
             has_audio_db = any((entry_id, lc) in phrase_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om")) or (entry_id in phrase_oromo_audio)
         if has_audio_db:
             rows_with_audio_in_db_all += 1
-            if entry_type == "word":
-                rows_with_audio_in_db_words_all += 1
-            elif entry_type == "phrase":
+            if entry_type == "phrase":
                 rows_with_audio_in_db_phrases_all += 1
 
         row_has_audio = False
@@ -5897,21 +5890,26 @@ def _load_learn_rows():
         if row_has_audio:
             rows_with_any_audio += 1
             rows_rendered_with_audio_url += 1
-            if entry_type == "word":
-                word_rows_with_audio.append(r)
-            elif entry_type == "phrase":
+            if entry_type == "phrase":
                 phrase_rows_with_audio.append(r)
-        elif entry_type == "phrase":
-            # Keep Learn phrase coverage complete even when audio generation lags.
-            phrase_rows_without_audio.append(r)
-
-    phrase_rows_with_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
-    phrase_rows_without_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
-    word_rows_with_audio.sort(key=lambda r: (r.get("english", "").casefold(), int(r.get("entry_id", 0))))
-    rows = phrase_rows_with_audio + phrase_rows_without_audio + word_rows_with_audio
+    # Phrase-focused ordering: richer multilingual rows first, then by audio density.
+    phrase_rows_with_audio.sort(
+        key=lambda r: (
+            -int((r or {}).get("_rich_text_count", 0) or 0),
+            -int((r or {}).get("_audio_count", 0) or 0),
+            normalize_text((r or {}).get("english", "") or "").casefold(),
+            int((r or {}).get("entry_id", 0) or 0),
+        )
+    )
+    for r in phrase_rows_with_audio:
+        if "_rich_text_count" in r:
+            del r["_rich_text_count"]
+        if "_audio_count" in r:
+            del r["_audio_count"]
+    rows = phrase_rows_with_audio
 
     phrases_loaded_with_audio = int(len(phrase_rows_with_audio))
-    words_loaded_with_audio = int(len(word_rows_with_audio))
+    words_loaded_with_audio = 0
     total_rows_loaded = int(len(rows))
 
     app.logger.info(
