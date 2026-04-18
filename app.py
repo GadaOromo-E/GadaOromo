@@ -77,14 +77,12 @@ except Exception:
 import os
 import shutil
 
-LOCAL_DB = os.path.join(os.path.dirname(__file__), "gadaoromo.db")
-TARGET_DB = "/data/gadaoromo.db"
+SRC_DB = "/app/gadaoromo.db"
+DST_DB = "/data/gadaoromo.db"
 
-# Kjør kun hvis Railway volume er tom
-if os.path.exists(LOCAL_DB) and not os.path.exists(TARGET_DB):
-    os.makedirs("/data", exist_ok=True)
-    shutil.copy2(LOCAL_DB, TARGET_DB)
-    print("✅ Database copied to /data")
+if os.path.exists(SRC_DB) and not os.path.exists(DST_DB):
+    print("Copying DB to /data...")
+    shutil.copy2(SRC_DB, DST_DB)
 
 
 # ------------------ APP SETUP ------------------
