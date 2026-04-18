@@ -77,12 +77,71 @@ except Exception:
 import os
 import shutil
 
-SRC_DB = "/app/gadaoromo.db"
-DST_DB = "/data/gadaoromo.db"
+APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+BOOTSTRAP_DB_SOURCE = os.path.join(APP_ROOT, "gadaoromo.db")
+RAILWAY_DB_PATH = "/data/gadaoromo.db"
 
-if os.path.exists(SRC_DB) and not os.path.exists(DST_DB):
-    print("Copying DB to /data...")
-    shutil.copy2(SRC_DB, DST_DB)
+
+def _is_prod_runtime() -> bool:
+    return (
+        (os.environ.get("FLASK_ENV") == "production")
+        or bool(os.environ.get("RENDER"))
+        or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+        or bool(os.environ.get("RAILWAY_PROJECT_ID"))
+    )
+
+
+def _safe_file_size(path: str):
+    try:
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+    except Exception:
+        pass
+    return None
+
+
+def _bootstrap_railway_db():
+    src = BOOTSTRAP_DB_SOURCE
+    dst = RAILWAY_DB_PATH
+
+    src_exists = os.path.isfile(src)
+    dst_exists_before = os.path.isfile(dst)
+    print(
+        f"[startup-db] source={src} source_exists={src_exists} "
+        f"source_size={_safe_file_size(src)}"
+    )
+    print(
+        f"[startup-db] destination={dst} dest_exists_before={dst_exists_before} "
+        f"dest_size_before={_safe_file_size(dst)}"
+    )
+
+    copy_ran = False
+    copy_error = None
+    if not dst_exists_before:
+        if src_exists:
+            try:
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                copy_ran = True
+            except Exception as e:
+                copy_error = repr(e)
+        else:
+            copy_error = "bootstrap source DB missing"
+
+    dst_exists_after = os.path.isfile(dst)
+    print(
+        f"[startup-db] copy_ran={copy_ran} copy_error={copy_error} "
+        f"dest_exists_after={dst_exists_after} dest_size_after={_safe_file_size(dst)}"
+    )
+
+    if _is_prod_runtime() and not dst_exists_after:
+        raise RuntimeError(
+            f"Production DB bootstrap failed: {dst} is missing after startup bootstrap. "
+            f"source={src} source_exists={src_exists} copy_error={copy_error}"
+        )
+
+
+_bootstrap_railway_db()
 
 
 # ------------------ APP SETUP ------------------
@@ -99,6 +158,7 @@ IS_PROD = (
     or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
     or bool(os.environ.get("RAILWAY_PROJECT_ID"))
 )
+IS_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT")) or bool(os.environ.get("RAILWAY_PROJECT_ID"))
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -150,6 +210,28 @@ DB_DIR = os.path.dirname(DB_NAME)
 if DB_DIR:
     os.makedirs(DB_DIR, exist_ok=True)
 app.DB_NAME = DB_NAME
+app.logger.info(
+    "Startup DB resolved: db_name=%s abs=%s exists=%s size=%s bootstrap_source=%s bootstrap_source_exists=%s bootstrap_source_size=%s",
+    DB_NAME,
+    os.path.abspath(DB_NAME),
+    os.path.isfile(DB_NAME),
+    _safe_file_size(DB_NAME),
+    BOOTSTRAP_DB_SOURCE,
+    os.path.isfile(BOOTSTRAP_DB_SOURCE),
+    _safe_file_size(BOOTSTRAP_DB_SOURCE),
+)
+
+if IS_RAILWAY and os.path.abspath(DB_NAME) != os.path.abspath(RAILWAY_DB_PATH):
+    raise RuntimeError(
+        f"Railway must use DB_PATH={RAILWAY_DB_PATH}, but resolved DB_NAME={DB_NAME}. "
+        "Set DB_PATH=/data/gadaoromo.db or remove DB_PATH to use the default."
+    )
+
+if IS_RAILWAY and not os.path.isfile(DB_NAME):
+    raise RuntimeError(
+        f"Railway DB missing at startup: {DB_NAME}. "
+        f"bootstrap_source={BOOTSTRAP_DB_SOURCE} source_exists={os.path.isfile(BOOTSTRAP_DB_SOURCE)}"
+    )
 app.logger.info(f"âœ… Using DB_NAME={DB_NAME}")
 
 DEFAULT_REQUIRE_EXPLICIT_DB_PATH = (
