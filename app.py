@@ -81,6 +81,36 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 BOOTSTRAP_DB_SOURCE = os.path.join(APP_ROOT, "gadaoromo.db")
 RAILWAY_DB_PATH = "/data/gadaoromo.db"
 
+import os
+import shutil
+
+BOOTSTRAP_DB_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gadaoromo.db")
+DB_NAME = "/data/gadaoromo.db"
+
+source_exists = os.path.exists(BOOTSTRAP_DB_SOURCE)
+source_size = os.path.getsize(BOOTSTRAP_DB_SOURCE) if source_exists else -1
+
+dest_exists = os.path.exists(DB_NAME)
+dest_size = os.path.getsize(DB_NAME) if dest_exists else -1
+
+print(f"[startup-db] source={BOOTSTRAP_DB_SOURCE} source_exists={source_exists} source_size={source_size}")
+print(f"[startup-db] destination={DB_NAME} dest_exists_before={dest_exists} dest_size_before={dest_size}")
+
+os.makedirs(os.path.dirname(DB_NAME), exist_ok=True)
+
+# Kopier hvis destination mangler ELLER er mistenkelig tom/liten
+if source_exists and (not dest_exists or dest_size < 1024):
+    shutil.copy2(BOOTSTRAP_DB_SOURCE, DB_NAME)
+    print("[startup-db] copy_ran=True")
+else:
+    print("[startup-db] copy_ran=False")
+
+dest_exists_after = os.path.exists(DB_NAME)
+dest_size_after = os.path.getsize(DB_NAME) if dest_exists_after else -1
+
+print(f"[startup-db] dest_exists_after={dest_exists_after} dest_size_after={dest_size_after}")
+
+
 
 def _is_prod_runtime() -> bool:
     return (
