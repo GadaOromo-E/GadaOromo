@@ -74,6 +74,17 @@ except Exception:
     ContentSettings = None
     ResourceExistsError = Exception
 
+import os
+import shutil
+
+SRC_DB = "/app/gadaoromo.db"
+DST_DB = "/data/gadaoromo.db"
+
+if os.path.exists(SRC_DB) and not os.path.exists(DST_DB):
+    print("Copying DB to /data...")
+    shutil.copy2(SRC_DB, DST_DB)
+
+
 # ------------------ APP SETUP ------------------
 
 app = Flask(__name__)
@@ -82,7 +93,12 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev")
 from datetime import timedelta
 
 # True i produksjon/https (Render + Cloudflare). False lokalt pÃ¥ http.
-IS_PROD = (os.environ.get("FLASK_ENV") == "production") or bool(os.environ.get("RENDER"))
+IS_PROD = (
+    (os.environ.get("FLASK_ENV") == "production")
+    or bool(os.environ.get("RENDER"))
+    or bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+    or bool(os.environ.get("RAILWAY_PROJECT_ID"))
+)
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -101,8 +117,26 @@ app.logger.setLevel(logging.INFO)
 def health():
     return "ok", 200
 
+def _pick_base_dir() -> str:
+    """
+    Pick persistent data root.
+    Railway volume mount should be /data. Keep env override for portability.
+    """
+    explicit = (
+        os.environ.get("PERSISTENT_DATA_DIR", "").strip()
+        or os.environ.get("DATA_DIR", "").strip()
+    )
+    if explicit:
+        return explicit
+    if os.path.isdir("/data"):
+        return "/data"
+    if os.path.isdir("/var/data"):
+        return "/var/data"
+    return os.path.abspath(os.path.dirname(__file__))
+
+
 # Base directory for uploads/db
-BASE_DIR = "/var/data" if os.path.exists("/var/data") else os.path.abspath(os.path.dirname(__file__))
+BASE_DIR = _pick_base_dir()
 
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -112,10 +146,18 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 
 DEFAULT_DB = os.path.join(BASE_DIR, "gadaoromo.db")
 DB_NAME = (os.environ.get("DB_PATH", "").strip() or DEFAULT_DB)
+DB_DIR = os.path.dirname(DB_NAME)
+if DB_DIR:
+    os.makedirs(DB_DIR, exist_ok=True)
 app.DB_NAME = DB_NAME
 app.logger.info(f"âœ… Using DB_NAME={DB_NAME}")
 
-REQUIRE_EXPLICIT_DB_PATH = (os.environ.get("REQUIRE_EXPLICIT_DB_PATH", "1" if IS_PROD else "0").strip() == "1")
+DEFAULT_REQUIRE_EXPLICIT_DB_PATH = (
+    "0" if BASE_DIR in {"/data", "/var/data"} else ("1" if IS_PROD else "0")
+)
+REQUIRE_EXPLICIT_DB_PATH = (
+    os.environ.get("REQUIRE_EXPLICIT_DB_PATH", DEFAULT_REQUIRE_EXPLICIT_DB_PATH).strip() == "1"
+)
 if IS_PROD and REQUIRE_EXPLICIT_DB_PATH and (not os.environ.get("DB_PATH", "").strip()):
     raise RuntimeError(
         "Production requires explicit DB_PATH to avoid source-of-truth drift. "
@@ -126,6 +168,8 @@ APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
 APP_BUILD_TOKEN = (
     (os.environ.get("APP_BUILD_TOKEN") or "").strip()
     or (os.environ.get("RENDER_GIT_COMMIT") or "").strip()
+    or (os.environ.get("RAILWAY_GIT_COMMIT_SHA") or "").strip()
+    or (os.environ.get("RAILWAY_GIT_COMMIT") or "").strip()
     or "dev-local"
 )
 APP_BUILD_TOKEN = APP_BUILD_TOKEN[:16]
@@ -159,8 +203,18 @@ DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
 def force_primary_domain():
     if request.path.startswith("/.well-known/"):
         return None
-    if request.host == "gadaoromo.onrender.com":
-        return redirect("https://gadaadictionary.com" + request.full_path, code=301)
+    redirect_hosts = {
+        h.strip().lower()
+        for h in (os.environ.get("PRIMARY_REDIRECT_HOSTS", "gadaoromo.onrender.com") or "").split(",")
+        if h.strip()
+    }
+    host = ((request.host or "").split(":")[0] or "").strip().lower()
+    if host and (host in redirect_hosts):
+        primary_base = (WEBSITE_URL or "https://gadaadictionary.com").rstrip("/")
+        dest = request.full_path or request.path or "/"
+        if dest.endswith("?"):
+            dest = dest[:-1]
+        return redirect(primary_base + dest, code=301)
 
     return None
 
@@ -417,16 +471,13 @@ def assetlinks():
 
 # ------------------ UPLOAD CONFIG (AUDIO) ------------------
 
-IS_RENDER_DISK = os.path.isdir("/var/data")
-
-if IS_RENDER_DISK:
-    UPLOAD_FOLDER = "/var/data/uploads"
-else:
-    UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+# Backward-compatible flag name: true when using a mounted persistent disk path.
+IS_RENDER_DISK = BASE_DIR in {"/var/data", "/data"}
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
-# Do not derive from BASE_DIR (which may be /var/data on Render).
+# Do not derive from BASE_DIR; app static is code assets, not persistent storage.
 STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
 app.logger.info(
@@ -446,7 +497,7 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_MB * 1024 * 1024
 @app.route("/manifest.webmanifest")
 def manifest():
     resp = make_response(
-        send_from_directory(os.path.join(BASE_DIR, "static"), "manifest.webmanifest")
+        send_from_directory(app.static_folder, "manifest.webmanifest")
     )
     resp.headers["Content-Type"] = "application/manifest+json"
     resp.headers["Cache-Control"] = "public, max-age=3600"
@@ -456,7 +507,7 @@ def manifest():
 @app.route("/service-worker.js")
 def service_worker():
     resp = make_response(
-        send_from_directory(os.path.join(BASE_DIR, "static"), "service-worker.js")
+        send_from_directory(app.static_folder, "service-worker.js")
     )
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
@@ -6424,7 +6475,7 @@ def phrase_detail(slug):
         f"{en} means {om or 'this Oromo translation'}. "
         f"Find phrase translations in Oromo, Amharic, Arabic, French, and Chinese on {APP_NAME}."
     )[:160]
-    canonical_url = f"https://gadaadictionary.com/phrase/{canonical_slug}"
+    canonical_url = f"{_site_base_url()}/phrase/{canonical_slug}"
 
     return render_template(
         "phrase.html",
@@ -6531,7 +6582,7 @@ def word_detail(term):
         f"Find translations in Oromo, Amharic, Arabic, French, and Chinese on {APP_NAME}."
     )[:160]
 
-    canonical_url = f"https://gadaadictionary.com/word/{quote(english_word, safe='')}"
+    canonical_url = f"{_site_base_url()}/word/{quote(english_word, safe='')}"
 
     return render_template(
         "words.html",
@@ -11062,6 +11113,8 @@ def no_cache_html(resp):
         resp.headers["Cache-Control"] = "no-store, max-age=0"
         resp.headers["Pragma"] = "no-cache"
     return resp
+
+
 
 # ------------------ RUN / MIGRATE ------------------
 
