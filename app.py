@@ -277,6 +277,27 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
+@app.route("/admin/import-audio")
+def run_import_audio():
+    from flask import request
+
+    key = request.args.get("key")
+    if key != "123":
+        return {"error": "unauthorized"}, 403
+
+    offset = int(request.args.get("offset", 0))
+    limit = int(request.args.get("limit", 100))
+
+    result = import_audio_from_render(
+        offset=offset,
+        limit=limit,
+        dry_run=False
+    )
+
+    return {"status": "done", "result": result}
+
+
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -10189,6 +10210,160 @@ def run_restore_audio_files_from_export(from_dir: str, limit: int = 0, dry_run: 
     return counters, missing_files
 
 
+def import_audio_from_render(offset: int = 0, limit: int = 100, dry_run: bool = False):
+    """
+    Import missing local audio files from Render domain using generated_tts_audio.file_path.
+    Does not regenerate audio and does not modify DB schema.
+    """
+    base_url = "https://gadaadictionary.com"
+    target_upload_folder = os.path.abspath(
+        (os.environ.get("AUDIO_UPLOAD_DIR", "").strip() or os.environ.get("UPLOAD_FOLDER", "").strip() or UPLOAD_FOLDER or "/data/uploads")
+    )
+    os.makedirs(target_upload_folder, exist_ok=True)
+
+    out = {
+        "offset": int(max(0, int(offset or 0))),
+        "limit": int(max(0, int(limit or 0))),
+        "dry_run": bool(dry_run),
+        "target_upload_folder": target_upload_folder,
+        "base_url": base_url,
+        "total_rows_checked": 0,
+        "skipped_existing": 0,
+        "downloaded": 0,
+        "failed": 0,
+        "sample_failures": [],
+    }
+    would_download = 0
+
+    conn = None
+    rows = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id, file_path
+            FROM generated_tts_audio
+            WHERE file_path IS NOT NULL
+              AND TRIM(file_path) != ''
+            ORDER BY id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (int(max(0, int(limit or 0))), int(max(0, int(offset or 0)))),
+        )
+        rows = c.fetchall() or []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    app.logger.info(
+        "import_audio_from_render start db_path=%s upload_folder=%s base_url=%s offset=%s limit=%s dry_run=%s rows=%s",
+        DB_NAME,
+        target_upload_folder,
+        base_url,
+        int(offset or 0),
+        int(limit or 0),
+        bool(dry_run),
+        len(rows),
+    )
+
+    session_http = requests.Session()
+    session_http.trust_env = False
+
+    def _remember_failure(row_id: int, file_path: str, reason: str):
+        out["failed"] += 1
+        if len(out["sample_failures"]) < 8:
+            out["sample_failures"].append(
+                {
+                    "id": int(row_id or 0),
+                    "file_path": normalize_text(file_path or ""),
+                    "reason": normalize_text(reason or ""),
+                }
+            )
+
+    for row_id, file_path in rows:
+        out["total_rows_checked"] += 1
+        fp = normalize_text((file_path or "").replace("\\", "/"))
+        if not fp:
+            _remember_failure(int(row_id or 0), file_path, "empty_file_path")
+            continue
+
+        name = os.path.basename(fp)
+        if not name:
+            _remember_failure(int(row_id or 0), file_path, "missing_basename")
+            continue
+
+        dst_abs = os.path.join(target_upload_folder, name)
+        if os.path.isfile(dst_abs):
+            out["skipped_existing"] += 1
+            continue
+
+        if fp.lower().startswith("http://") or fp.lower().startswith("https://"):
+            try:
+                parsed = requests.utils.urlparse(fp)
+                fp_path = normalize_text(parsed.path or "")
+            except Exception:
+                fp_path = ""
+        else:
+            fp_path = fp
+
+        fp_path = (fp_path or "").strip()
+        if not fp_path:
+            _remember_failure(int(row_id or 0), file_path, "invalid_source_path")
+            continue
+
+        source_url = f"{base_url.rstrip('/')}/{fp_path.lstrip('/')}"
+
+        if dry_run:
+            would_download += 1
+            continue
+
+        tmp_abs = dst_abs + ".part"
+        try:
+            resp = session_http.get(source_url, stream=True, timeout=(10, 60))
+            if resp.status_code != 200:
+                _remember_failure(int(row_id or 0), file_path, f"http_{resp.status_code}")
+                resp.close()
+                continue
+            with open(tmp_abs, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+            resp.close()
+            if (not os.path.isfile(tmp_abs)) or os.path.getsize(tmp_abs) <= 0:
+                _remember_failure(int(row_id or 0), file_path, "empty_download")
+                try:
+                    if os.path.isfile(tmp_abs):
+                        os.remove(tmp_abs)
+                except Exception:
+                    pass
+                continue
+            os.replace(tmp_abs, dst_abs)
+            out["downloaded"] += 1
+        except Exception as e:
+            _remember_failure(int(row_id or 0), file_path, f"download_exception:{type(e).__name__}")
+            try:
+                if os.path.isfile(tmp_abs):
+                    os.remove(tmp_abs)
+            except Exception:
+                pass
+
+    out["would_download"] = int(would_download)
+    app.logger.info(
+        "import_audio_from_render summary checked=%s skipped_existing=%s downloaded=%s failed=%s would_download=%s sample_failures=%s",
+        out.get("total_rows_checked", 0),
+        out.get("skipped_existing", 0),
+        out.get("downloaded", 0),
+        out.get("failed", 0),
+        out.get("would_download", 0),
+        out.get("sample_failures", [])[:5],
+    )
+    return out
+
+
 @app.route("/admin/repair-missing-audio", methods=["GET", "POST"])
 def admin_repair_missing_audio():
     if not require_admin():
@@ -11843,6 +12018,42 @@ def cli_validate_audio_resolver():
             f"requested={ex.get('requested', '')} expected={ex.get('expected', '')} "
             f"actual={ex.get('actual', '')} ok={bool(ex.get('ok', False))} reason={ex.get('reason', '')}"
         )
+
+
+@app.cli.command("import-audio-from-render")
+@click.option("--offset", type=int, default=0, show_default=True, help="Start offset in generated_tts_audio.")
+@click.option("--limit", type=int, default=100, show_default=True, help="Number of rows to scan in this batch.")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not download/copy files.")
+def cli_import_audio_from_render(offset, limit, dry_run):
+    """
+    Import missing uploads audio from https://gadaadictionary.com using generated_tts_audio.file_path.
+    """
+    _log_db_context("cli:import-audio-from-render")
+    summary = import_audio_from_render(
+        offset=int(offset or 0),
+        limit=int(limit or 0),
+        dry_run=bool(dry_run),
+    )
+    click.echo("Import audio from Render completed.")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"UPLOAD_FOLDER={summary.get('target_upload_folder', UPLOAD_FOLDER)}")
+    click.echo(
+        f"offset={summary.get('offset', 0)} "
+        f"limit={summary.get('limit', 0)} "
+        f"dry_run={summary.get('dry_run', False)} "
+        f"total_rows_checked={summary.get('total_rows_checked', 0)} "
+        f"skipped_existing={summary.get('skipped_existing', 0)} "
+        f"downloaded={summary.get('downloaded', 0)} "
+        f"failed={summary.get('failed', 0)} "
+        f"would_download={summary.get('would_download', 0)}"
+    )
+    failures = summary.get("sample_failures", []) or []
+    if failures:
+        click.echo("sample_failures:")
+        for item in failures:
+            click.echo(
+                f"- id={item.get('id', 0)} file_path={item.get('file_path', '')} reason={item.get('reason', '')}"
+            )
 
 
 @app.cli.command("backfill-phrase-translations")
