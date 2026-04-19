@@ -1784,16 +1784,21 @@ def _normalized_audio_basename(ref: str) -> str:
     fp = (ref or "").replace("\\", "/").strip()
     if not fp:
         return ""
+
     while fp.startswith("./"):
         fp = fp[2:]
     while fp.startswith("/"):
         fp = fp[1:]
+
     if fp.startswith("uploads/uploads/"):
-        fp = fp[len("uploads/"):]
+        fp = fp[len("uploads/uploads/"):]
+
     if fp.startswith("static/uploads/"):
-        fp = "uploads/" + fp.split("/")[-1]
+        fp = fp[len("static/uploads/"):]
+
     if fp.startswith("uploads/"):
         fp = fp[len("uploads/"):]
+
     return os.path.basename(fp)
 
 
