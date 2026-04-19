@@ -694,11 +694,6 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
 
-@app.route("/download-audio")
-def download_audio():
-    from flask import send_file
-    return send_file("/tmp/render_full_audio.tar.gz", as_attachment=True)
-
 
 def _copy_static_uploads_to_persistent_startup():
     """
