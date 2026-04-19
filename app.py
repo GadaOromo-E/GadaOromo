@@ -44,6 +44,8 @@ import hashlib
 import shutil
 import time
 import threading
+import tempfile
+import zipfile
 import click
 from uuid import uuid4
 from difflib import get_close_matches
@@ -901,6 +903,97 @@ def google_verification():
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Cache-Control"] = "public, max-age=3600"
     return resp
+
+
+@app.route("/admin/upload-audio-zip", methods=["POST"])
+def admin_upload_audio_zip():
+    """
+    Temporary migration route:
+    Upload ZIP with existing audio files and extract into persistent upload dir.
+    - Query param protection: ?key=<secret>
+    - No overwrite of existing files
+    - Flattens paths by basename
+    """
+    required_key = (
+        os.environ.get("AUDIO_ZIP_UPLOAD_KEY", "").strip()
+        or os.environ.get("ADMIN_UPLOAD_AUDIO_ZIP_KEY", "").strip()
+        or "123"
+    )
+    provided_key = (request.args.get("key", "") or "").strip()
+    if (not provided_key) or (provided_key != required_key):
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "missing_file_field"}), 400
+
+    upload = request.files.get("file")
+    if (not upload) or (not (upload.filename or "").strip()):
+        return jsonify({"ok": False, "error": "empty_filename"}), 400
+
+    target_dir = os.path.abspath((UPLOAD_FOLDER or "").strip() or "/data/uploads")
+    os.makedirs(target_dir, exist_ok=True)
+
+    summary = {
+        "ok": True,
+        "extracted": 0,
+        "skipped_existing": 0,
+        "failed": 0,
+        "sample_failures": [],
+        "target_dir": target_dir,
+    }
+
+    tmp_zip_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmpf:
+            tmp_zip_path = tmpf.name
+            upload.save(tmpf)
+
+        with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                src_name = (info.filename or "").replace("\\", "/")
+                base_name = os.path.basename(src_name)
+                if not base_name:
+                    continue
+                if not allowed_audio(base_name):
+                    continue
+
+                dst_abs = os.path.join(target_dir, base_name)
+                if os.path.isfile(dst_abs):
+                    summary["skipped_existing"] += 1
+                    continue
+
+                try:
+                    with zf.open(info, "r") as src, open(dst_abs, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    if os.path.isfile(dst_abs):
+                        summary["extracted"] += 1
+                    else:
+                        summary["failed"] += 1
+                        if len(summary["sample_failures"]) < 10:
+                            summary["sample_failures"].append(
+                                {"file": base_name, "reason": "not_written"}
+                            )
+                except Exception as e:
+                    summary["failed"] += 1
+                    if len(summary["sample_failures"]) < 10:
+                        summary["sample_failures"].append(
+                            {"file": base_name, "reason": f"extract_error:{type(e).__name__}"}
+                        )
+    except zipfile.BadZipFile:
+        return jsonify({"ok": False, "error": "invalid_zip"}), 400
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"upload_failed:{type(e).__name__}"}), 500
+    finally:
+        if tmp_zip_path:
+            try:
+                if os.path.isfile(tmp_zip_path):
+                    os.remove(tmp_zip_path)
+            except Exception:
+                pass
+
+    return jsonify(summary), 200
 
 
 # ------------------ PUBLIC UPLOADS ROUTE (AUDIO) ------------------
