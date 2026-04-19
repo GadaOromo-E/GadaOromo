@@ -945,39 +945,49 @@ def uploads(filename):
         static_path,
     )
 
-    if os.path.isfile(full_path):
-        return _serve_audio_abs(full_path, "upload_folder")
-
-    # Backward compatibility: legacy jobs/uploads may have written files to static/uploads.
-    # This applies to both generated TTS (tts_*) and community Oromo recordings (word_*/phrase_*).
-    if os.path.isfile(static_path):
+    resolved = resolve_existing_audio_file(filename, return_meta=True)
+    resolved_path = normalize_text((resolved or {}).get("path", "") or "")
+    if resolved_path and os.path.isfile(resolved_path):
+        app.logger.info(
+            "uploads_resolve requested=%s strategy=%s reason=%s resolved=%s candidates=%s",
+            filename,
+            resolved.get("strategy", ""),
+            resolved.get("reason", ""),
+            resolved_path,
+            resolved.get("candidate_count", 0),
+        )
+        resolved_name = os.path.basename(resolved_path)
         try:
-            if IS_RENDER_DISK:
-                # Promote legacy files into persistent disk when possible.
-                shutil.copy2(static_path, full_path)
-                if os.path.isfile(full_path):
-                    return _serve_audio_abs(full_path, "promoted_to_upload_folder")
+            if IS_RENDER_DISK and os.path.abspath(os.path.dirname(resolved_path)) == os.path.abspath(STATIC_UPLOADS_FOLDER):
+                promoted_abs = os.path.join(UPLOAD_FOLDER, resolved_name)
+                if not os.path.isfile(promoted_abs):
+                    shutil.copy2(resolved_path, promoted_abs)
+                if os.path.isfile(promoted_abs):
+                    return _serve_audio_abs(promoted_abs, f"{resolved.get('strategy', 'resolved')}:promoted_to_upload_folder")
         except Exception:
-            app.logger.exception("Failed to promote legacy audio file to upload folder: %s", safe_name)
-        return _serve_audio_abs(static_path, "static_uploads_fallback")
+            app.logger.exception("Failed to promote resolved audio file to upload folder: %s", resolved_name)
+        return _serve_audio_abs(resolved_path, resolved.get("strategy", "resolved_existing"))
 
     app.logger.warning(
-        "uploads_file_missing file=%s upload_path=%s static_path=%s",
-        safe_name,
+        "uploads_file_missing requested=%s normalized_name=%s strategy=%s reason=%s upload_path=%s static_path=%s",
+        filename,
+        (resolved or {}).get("normalized_name", ""),
+        (resolved or {}).get("strategy", ""),
+        (resolved or {}).get("reason", ""),
         full_path,
         static_path,
     )
 
     # Lazy self-heal for generated TTS assets only.
     if _try_regenerate_missing_tts_file(safe_name):
-        if os.path.isfile(full_path):
-            return _serve_audio_abs(full_path, "lazy_regenerated_upload_folder")
-        if os.path.isfile(static_path):
-            return _serve_audio_abs(static_path, "lazy_regenerated_static_fallback")
+        regenerated = resolve_existing_audio_file(filename, return_meta=True)
+        regenerated_path = normalize_text((regenerated or {}).get("path", "") or "")
+        if regenerated_path and os.path.isfile(regenerated_path):
+            return _serve_audio_abs(regenerated_path, f"lazy_regenerated:{regenerated.get('strategy', 'resolved')}")
 
     app.logger.warning(
-        "uploads_file_404 file=%s reason=not_found_after_fallback_and_regen",
-        safe_name,
+        "uploads_file_404 requested=%s reason=not_found_after_resolve_and_regen",
+        filename,
     )
     return jsonify({"ok": False, "error": "Audio file not found", "file": safe_name}), 404
 
@@ -1417,6 +1427,10 @@ REQUIRE_BLOB_FOR_GENERATED_TTS = (os.environ.get("REQUIRE_BLOB_FOR_GENERATED_TTS
 GENERATED_TTS_FILENAME_RE = re.compile(
     r"^tts_(word|phrase)_(\d+)_([A-Za-z0-9-]+)_([0-9a-f]{12})_(.+)\.mp3$"
 )
+RELAXED_TTS_FILENAME_RE = re.compile(
+    r"^tts_(word|phrase)_(\d+)_([A-Za-z0-9-]+)_(.+)\.(mp3|wav|ogg|webm|m4a)$",
+    re.IGNORECASE,
+)
 
 _blob_client_cache = None
 _blob_client_error_logged = False
@@ -1760,6 +1774,248 @@ def _canonical_tts_lang_code(lang_code: str) -> str:
     return raw
 
 
+def _normalized_audio_basename(ref: str) -> str:
+    fp = (ref or "").replace("\\", "/").strip()
+    if not fp:
+        return ""
+    while fp.startswith("./"):
+        fp = fp[2:]
+    while fp.startswith("/"):
+        fp = fp[1:]
+    if fp.startswith("uploads/uploads/"):
+        fp = fp[len("uploads/"):]
+    if fp.startswith("static/uploads/"):
+        fp = "uploads/" + fp.split("/")[-1]
+    if fp.startswith("uploads/"):
+        fp = fp[len("uploads/"):]
+    return os.path.basename(fp)
+
+
+def _parse_tts_semantic_parts(file_name: str):
+    name = os.path.basename((file_name or "").replace("\\", "/").strip())
+    if not name:
+        return None
+    m = RELAXED_TTS_FILENAME_RE.match(name)
+    if not m:
+        return None
+    kind, entry_id_raw, lang_raw, _tail, _ext = m.groups()
+    try:
+        entry_id = int(entry_id_raw)
+    except Exception:
+        return None
+    lang = _canonical_tts_lang_code(lang_raw or "")
+    if not lang:
+        return None
+    return {
+        "kind": normalize_text(kind or ""),
+        "entry_id": entry_id,
+        "lang": lang,
+    }
+
+
+def _collect_semantic_tts_candidates(requested_parts: dict):
+    candidates = []
+    if not requested_parts:
+        return candidates
+    dirs = [("upload", UPLOAD_FOLDER), ("static", STATIC_UPLOADS_FOLDER)]
+    for source, folder in dirs:
+        try:
+            names = os.listdir(folder)
+        except Exception:
+            continue
+        for name in names:
+            abs_path = os.path.join(folder, name)
+            if not os.path.isfile(abs_path):
+                continue
+            parts = _parse_tts_semantic_parts(name)
+            if not parts:
+                continue
+            if parts.get("kind") != requested_parts.get("kind"):
+                continue
+            if int(parts.get("entry_id") or 0) != int(requested_parts.get("entry_id") or 0):
+                continue
+            if _canonical_tts_lang_code(parts.get("lang") or "") != _canonical_tts_lang_code(requested_parts.get("lang") or ""):
+                continue
+            ext = (os.path.splitext(name)[1] or "").lower().strip(".")
+            try:
+                mtime = float(os.path.getmtime(abs_path) or 0.0)
+            except Exception:
+                mtime = 0.0
+            candidates.append(
+                {
+                    "source": source,
+                    "folder": folder,
+                    "name": name,
+                    "path": abs_path,
+                    "parts": parts,
+                    "ext": ext,
+                    "mtime": mtime,
+                }
+            )
+    return candidates
+
+
+def _rank_semantic_tts_candidates(candidates, requested_name: str):
+    if not candidates:
+        return None, "no_semantic_candidates"
+    req_ext = (os.path.splitext(requested_name or "")[1] or "").lower().strip(".")
+
+    def _score(c):
+        source_score = 0 if c.get("source") == "upload" else 1
+        ext_score = 0 if (req_ext and (c.get("ext") == req_ext)) else 1
+        mtime_score = -float(c.get("mtime") or 0.0)
+        name_score = normalize_text(c.get("name") or "")
+        return (source_score, ext_score, mtime_score, name_score)
+
+    ranked = sorted(candidates, key=_score)
+    return ranked[0], (
+        f"ranked_semantic_match source={ranked[0].get('source')} "
+        f"req_ext={req_ext or 'none'} candidates={len(candidates)} "
+        "rank=[source(upload-first),ext(match-first),mtime(desc),name(asc)]"
+    )
+
+
+def resolve_existing_audio_file(requested_ref: str, return_meta: bool = False):
+    """
+    Resolve local audio safely:
+    A) exact basename in uploads/static
+    B) normalized exact basename in uploads/static
+    C) semantic TTS match by kind+entry_id+lang
+    D) deterministic ranking when multiple semantic candidates exist
+    """
+    req_raw = normalize_text(requested_ref or "")
+    req_name = os.path.basename((req_raw or "").replace("\\", "/"))
+    normalized_name = _normalized_audio_basename(req_raw)
+    out = {
+        "requested_ref": req_raw,
+        "requested_name": req_name,
+        "normalized_name": normalized_name,
+        "path": "",
+        "strategy": "",
+        "reason": "",
+        "candidate_count": 0,
+    }
+
+    def _try_exact(name: str, strategy_label: str):
+        if not name:
+            return ""
+        upload_abs = os.path.join(UPLOAD_FOLDER, name)
+        if os.path.isfile(upload_abs):
+            out["path"] = upload_abs
+            out["strategy"] = strategy_label
+            out["reason"] = "found_in_upload_folder"
+            return upload_abs
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        if os.path.isfile(static_abs):
+            out["path"] = static_abs
+            out["strategy"] = strategy_label
+            out["reason"] = "found_in_static_uploads"
+            return static_abs
+        return ""
+
+    # Step A: exact basename match.
+    if _try_exact(req_name, "exact_basename"):
+        if return_meta:
+            return out
+        return out.get("path", "")
+
+    # Step B: normalized exact basename.
+    if normalized_name and normalized_name != req_name:
+        if _try_exact(normalized_name, "normalized_basename"):
+            if return_meta:
+                return out
+            return out.get("path", "")
+
+    # Step C/D: semantic TTS match + deterministic ranking.
+    requested_parts = _parse_tts_semantic_parts(req_name) or _parse_tts_semantic_parts(normalized_name)
+    if requested_parts:
+        candidates = _collect_semantic_tts_candidates(requested_parts)
+        out["candidate_count"] = len(candidates)
+        best, reason = _rank_semantic_tts_candidates(candidates, req_name or normalized_name)
+        if best and best.get("path"):
+            out["path"] = best.get("path", "")
+            out["strategy"] = "semantic_ranked_tts"
+            out["reason"] = reason
+            if return_meta:
+                return out
+            return out.get("path", "")
+        out["strategy"] = "semantic_ranked_tts"
+        out["reason"] = reason
+    else:
+        out["strategy"] = "semantic_ranked_tts"
+        out["reason"] = "requested_name_not_semantic_tts"
+
+    if return_meta:
+        return out
+    return ""
+
+
+def _audio_resolver_internal_validation_examples():
+    """
+    Lightweight deterministic checks for semantic candidate ranking.
+    """
+    examples = []
+
+    req1 = "tts_phrase_3452_zh-CN_097504caea4_zh-CN-XiaoxiaoNeural.mp3"
+    candidates1 = [
+        {
+            "source": "upload",
+            "name": "tts_phrase_3452_zh-CN_7e9260e925f1_zh-CN-XiaoxiaoNeural.mp3",
+            "path": "/data/uploads/tts_phrase_3452_zh-CN_7e9260e925f1_zh-CN-XiaoxiaoNeural.mp3",
+            "ext": "mp3",
+            "mtime": 200.0,
+        },
+        {
+            "source": "static",
+            "name": "tts_phrase_3452_zh-CN_111111111111_zh-CN-XiaoxiaoNeural.mp3",
+            "path": "/app/static/uploads/tts_phrase_3452_zh-CN_111111111111_zh-CN-XiaoxiaoNeural.mp3",
+            "ext": "mp3",
+            "mtime": 900.0,
+        },
+    ]
+    best1, reason1 = _rank_semantic_tts_candidates(candidates1, req1)
+    examples.append(
+        {
+            "requested": req1,
+            "expected": candidates1[0]["name"],
+            "actual": (best1 or {}).get("name", ""),
+            "ok": ((best1 or {}).get("name", "") == candidates1[0]["name"]),
+            "reason": reason1,
+        }
+    )
+
+    req2 = "tts_word_3452_en_something.mp3"
+    candidates2 = [
+        {
+            "source": "upload",
+            "name": "tts_word_3452_en_otherhash_en-US-JennyNeural.mp3",
+            "path": "/data/uploads/tts_word_3452_en_otherhash_en-US-JennyNeural.mp3",
+            "ext": "mp3",
+            "mtime": 100.0,
+        },
+        {
+            "source": "upload",
+            "name": "tts_word_3452_en_olderhash_en-US-JennyNeural.mp3",
+            "path": "/data/uploads/tts_word_3452_en_olderhash_en-US-JennyNeural.mp3",
+            "ext": "mp3",
+            "mtime": 10.0,
+        },
+    ]
+    best2, reason2 = _rank_semantic_tts_candidates(candidates2, req2)
+    examples.append(
+        {
+            "requested": req2,
+            "expected": candidates2[0]["name"],
+            "actual": (best2 or {}).get("name", ""),
+            "ok": ((best2 or {}).get("name", "") == candidates2[0]["name"]),
+            "reason": reason2,
+        }
+    )
+
+    ok_all = all(bool(x.get("ok")) for x in examples)
+    return {"ok": ok_all, "examples": examples}
+
+
 def _has_usable_audio_ref(file_path: str) -> bool:
     if _is_remote_audio_ref(file_path):
         return True
@@ -1854,7 +2110,7 @@ def _public_audio_url(file_path: str) -> str:
         return ""
     if _is_remote_audio_ref(fp):
         return fp
-    name = os.path.basename(fp)
+    name = _normalized_audio_basename(fp) or os.path.basename(fp)
 
     # Generated Azure TTS assets may exist in either uploads root or static/uploads,
     # depending on where the job ran. Resolve to whichever real file exists.
@@ -1869,10 +2125,8 @@ def _public_audio_url(file_path: str) -> str:
         # already falls back to static/uploads and works consistently on Render.
         return "/uploads/" + name
 
-    if fp.startswith("uploads/"):
-        return "/" + fp
-    if fp.startswith("/uploads/"):
-        return fp
+    if fp.startswith("uploads/") or fp.startswith("/uploads/") or fp.startswith("static/uploads/") or fp.startswith("/static/uploads/"):
+        return "/uploads/" + name
     return "/uploads/" + name
 
 
@@ -1905,21 +2159,24 @@ def _audio_abs_path(file_path: str) -> str:
         return ""
     if _is_remote_audio_ref(fp):
         return ""
-    name = fp.split("/")[-1]
-    if name.startswith("tts_"):
-        # generated_tts_audio may point to files created under static/uploads
-        # or uploads root depending on runtime context.
-        uploads_abs = os.path.join(UPLOAD_FOLDER, name)
-        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
-        candidates = [uploads_abs, static_abs]
-        for c in candidates:
-            if os.path.isfile(c):
-                if c == static_abs:
-                    _maybe_promote_tts_to_persistent(name, static_abs)
-                    if os.path.isfile(uploads_abs):
-                        return uploads_abs
-                return c
-        return uploads_abs
+    resolved = resolve_existing_audio_file(fp, return_meta=True)
+    resolved_path = normalize_text((resolved or {}).get("path", "") or "")
+    if resolved_path and os.path.isfile(resolved_path):
+        if (resolved.get("strategy") == "semantic_ranked_tts") and resolved.get("candidate_count", 0) > 1:
+            app.logger.info(
+                "audio_abs_semantic_resolution requested=%s resolved=%s reason=%s candidates=%s",
+                fp,
+                resolved_path,
+                resolved.get("reason", ""),
+                resolved.get("candidate_count", 0),
+            )
+        if os.path.abspath(os.path.dirname(resolved_path)) == os.path.abspath(STATIC_UPLOADS_FOLDER):
+            _maybe_promote_audio_to_persistent(os.path.basename(resolved_path), resolved_path)
+            promoted = os.path.join(UPLOAD_FOLDER, os.path.basename(resolved_path))
+            if os.path.isfile(promoted):
+                return promoted
+        return resolved_path
+    name = _normalized_audio_basename(fp)
     uploads_abs = os.path.join(UPLOAD_FOLDER, name)
     static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
     if os.path.isfile(static_abs):
@@ -11573,6 +11830,20 @@ def cli_restore_audio_files(from_dir, dry_run, limit, entry_type, output_format)
         f"skipped_non_local_refs={int(counters.get('skipped_non_local_refs', 0) or 0)} "
         f"copy_failed={int(counters.get('copy_failed', 0) or 0)}"
     )
+
+
+@app.cli.command("validate-audio-resolver")
+def cli_validate_audio_resolver():
+    """
+    Internal sanity checks for deterministic semantic audio resolver ranking.
+    """
+    result = _audio_resolver_internal_validation_examples()
+    click.echo(f"ok={bool(result.get('ok', False))}")
+    for ex in (result.get("examples", []) or []):
+        click.echo(
+            f"requested={ex.get('requested', '')} expected={ex.get('expected', '')} "
+            f"actual={ex.get('actual', '')} ok={bool(ex.get('ok', False))} reason={ex.get('reason', '')}"
+        )
 
 
 @app.cli.command("backfill-phrase-translations")
