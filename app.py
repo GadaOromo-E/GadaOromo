@@ -277,19 +277,6 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
-@app.route("/admin/run-audio-batch")
-def run_audio_batch():
-    result = run_regenerate_missing_audio_references(
-        table="generated_tts_audio",
-        entry_type="all",
-        offset=int(request.args.get("offset", 0)),
-        limit=int(request.args.get("limit", 100)),
-        batch_size=25,
-        dry_run=False,
-    )
-    return {"status": "done", "result": result}
-
-
 @app.route("/health")
 def health():
     return "ok", 200
