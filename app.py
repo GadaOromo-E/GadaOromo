@@ -930,8 +930,13 @@ def admin_upload_audio_zip():
     if (not upload) or (not (upload.filename or "").strip()):
         return jsonify({"ok": False, "error": "empty_filename"}), 400
 
-    target_dir = os.path.abspath((UPLOAD_FOLDER or "").strip() or "/data/uploads")
-    os.makedirs(target_dir, exist_ok=True)
+    upload_dir = os.path.abspath((UPLOAD_FOLDER or "").strip() or "/data/uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    app.logger.info(
+        "admin_upload_audio_zip resolved_upload_dir=%s upload_folder_config=%s",
+        upload_dir,
+        UPLOAD_FOLDER,
+    )
 
     summary = {
         "ok": True,
@@ -939,16 +944,21 @@ def admin_upload_audio_zip():
         "skipped_existing": 0,
         "failed": 0,
         "sample_failures": [],
-        "target_dir": target_dir,
+        "target_dir": upload_dir,
     }
 
+    original_name = (upload.filename or "").strip()
+    _, ext = os.path.splitext(original_name)
+    tmp_suffix = ext if ext else ".zip"
     tmp_zip_path = ""
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmpf:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=tmp_suffix) as tmpf:
             tmp_zip_path = tmpf.name
             upload.save(tmpf)
 
-        with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+        # Each uploaded split part is treated as a standalone archive.
+        # No server-side merge across .001/.002 parts.
+        with zipfile.ZipFile(tmp_zip_path, "r", allowZip64=True) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
@@ -959,12 +969,17 @@ def admin_upload_audio_zip():
                 if not allowed_audio(base_name):
                     continue
 
-                dst_abs = os.path.join(target_dir, base_name)
+                dst_abs = os.path.join(upload_dir, base_name)
                 if os.path.isfile(dst_abs):
                     summary["skipped_existing"] += 1
                     continue
 
                 try:
+                    app.logger.info(
+                        "admin_upload_audio_zip extracting file=%s dst_abs=%s",
+                        base_name,
+                        dst_abs,
+                    )
                     with zf.open(info, "r") as src, open(dst_abs, "wb") as dst:
                         shutil.copyfileobj(src, dst)
                     if os.path.isfile(dst_abs):
@@ -982,7 +997,13 @@ def admin_upload_audio_zip():
                             {"file": base_name, "reason": f"extract_error:{type(e).__name__}"}
                         )
     except zipfile.BadZipFile:
-        return jsonify({"ok": False, "error": "invalid_zip"}), 400
+        summary["ok"] = False
+        summary["failed"] += 1
+        if len(summary["sample_failures"]) < 10:
+            summary["sample_failures"].append(
+                {"file": original_name or "uploaded_part", "reason": "invalid_zip_part"}
+            )
+        return jsonify(summary), 400
     except Exception as e:
         return jsonify({"ok": False, "error": f"upload_failed:{type(e).__name__}"}), 500
     finally:
