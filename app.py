@@ -2092,9 +2092,11 @@ def _normalize_cached_tts_url(tts_url: str) -> str:
         return u
     name = os.path.basename(u.replace("\\", "/"))
     if name.startswith("tts_"):
-        # Ensure stale /static/uploads URLs and relative paths converge.
-        if _has_usable_audio_ref(f"uploads/{name}"):
-            return "/uploads/" + name
+        # Normalize to the actually resolvable on-disk file basename.
+        resolved = resolve_existing_audio_file(u, return_meta=True)
+        resolved_path = normalize_text((resolved or {}).get("path", "") or "")
+        if resolved_path and os.path.isfile(resolved_path):
+            return "/uploads/" + os.path.basename(resolved_path)
         return ""
     if u.startswith("/uploads/"):
         return u
@@ -4352,6 +4354,61 @@ def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code
     return bool(normalize_text((row or [""])[0] or ""))
 
 
+def _get_tts_url_from_generated_audio_db(entry_type: str, entry_id: int, lang_code: str, text: str = "") -> str:
+    """
+    Return playback URL directly from generated_tts_audio.file_path.
+    Never constructs filename manually.
+    """
+    if entry_type not in ("word", "phrase"):
+        return ""
+    eid = int(entry_id or 0)
+    lang = _canonical_tts_lang_code(lang_code or "")
+    if (not eid) or (not lang):
+        return ""
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    rows = []
+    try:
+        txt = normalize_text(text or "")
+        if txt:
+            th = _text_hash(txt)
+            c.execute(
+                """
+                SELECT file_path
+                FROM generated_tts_audio
+                WHERE entry_type=? AND entry_id=? AND lang_code=? AND text_hash=?
+                ORDER BY id DESC
+                """,
+                (entry_type, eid, lang, th),
+            )
+            rows = c.fetchall() or []
+        if not rows:
+            c.execute(
+                """
+                SELECT file_path
+                FROM generated_tts_audio
+                WHERE entry_type=? AND entry_id=? AND lang_code=?
+                ORDER BY id DESC
+                """,
+                (entry_type, eid, lang),
+            )
+            rows = c.fetchall() or []
+    finally:
+        conn.close()
+
+    for (file_path,) in rows:
+        fp = normalize_text(file_path or "")
+        if not fp:
+            continue
+        if not _has_usable_audio_ref(fp):
+            continue
+        url = _public_audio_url(fp)
+        if url:
+            return url
+    return ""
+
+
 def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     """
     Persist generated TTS bytes and return (stored_ref, public_url).
@@ -6098,7 +6155,12 @@ def _get_or_generate_word_translation(
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
         app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
         translated_cached = normalize_text(cached[0] or "")
-        tts_cached = _normalize_cached_tts_url((cached or [None, ""])[1] or "")
+        tts_cached = _get_tts_url_from_generated_audio_db(
+            "word",
+            int(word_id),
+            target_lang,
+            translated_cached,
+        )
         if not tts_cached:
             tts_cached = _resolve_or_generate_tts_for_text(
                 "word",
