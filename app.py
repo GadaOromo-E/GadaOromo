@@ -277,6 +277,13 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
+from flask import send_from_directory
+
+@app.route('/uploads/<path:filename>')
+def uploaded_file(filename):
+    return send_from_directory('static/uploads', filename)
+
+
 @app.route("/health")
 def health():
     return "ok", 200
