@@ -29,14 +29,20 @@
     .phrase-title { margin: 0 0 8px 0; font-size: 2rem; line-height: 1.2; }
     .main-translation { font-size: 1.1rem; margin: 8px 0 16px 0; }
     .section-title { margin-top: 22px; margin-bottom: 10px; font-size: 1.15rem; }
-    .translation-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    .translation-table th, .translation-table td { border: 1px solid #ddd; padding: 10px 12px; text-align: left; vertical-align: top; }
-    .translation-table th { background: #f7f7f7; font-weight: 700; }
-    .translation-table td:first-child { font-weight: 700; width: 180px; white-space: nowrap; }
+    .translation-table { width: 100%; border-collapse: collapse; margin-top: 14px; border: 1px solid #cfcfcf; border-radius: 12px; overflow: hidden; box-shadow: 0 8px 22px rgba(0,0,0,0.06); }
+    .translation-table th, .translation-table td { border: 1px solid #d7d7d7; padding: 12px 14px; text-align: left; vertical-align: top; }
+    .translation-table th { background: #111; color: #fff; font-weight: 700; letter-spacing: .01em; }
+    .translation-table td:first-child { font-weight: 700; width: 160px; white-space: nowrap; background: #f9f9f9; }
     .quick-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 18px; }
     .btn-link { display: inline-block; text-decoration: none; padding: 10px 16px; border-radius: 10px; border: 1px solid #d8d8d8; background: #fff; color: #111; font-weight: 600; }
     .btn-link.primary { background: #c40000; color: #fff; border-color: #c40000; }
     .muted { color: #666; }
+    @media (max-width: 640px) {
+      .phrase-card { padding: 18px; }
+      .phrase-title { font-size: 1.6rem; }
+      .translation-table th, .translation-table td { padding: 10px 10px; font-size: .94rem; }
+      .translation-table td:first-child { width: 116px; }
+    }
   </style>
 </head>
 <body>
@@ -54,23 +60,34 @@
           <p class="main-translation"><strong>Oromo:</strong> {{ oromo_phrase }}</p>
         {% endif %}
 
-        {% if am or ar or zh or fr %}
-          <h2 class="section-title">Available translations</h2>
-          <table class="translation-table">
-            <thead>
-              <tr>
-                <th>Language</th>
-                <th>Translation</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% if am %}<tr><td>Amharic</td><td>{{ am }}</td></tr>{% endif %}
-              {% if ar %}<tr><td>Arabic</td><td dir="rtl">{{ ar }}</td></tr>{% endif %}
-              {% if fr %}<tr><td>French</td><td>{{ fr }}</td></tr>{% endif %}
-              {% if zh %}<tr><td>Chinese</td><td>{{ zh }}</td></tr>{% endif %}
-            </tbody>
-          </table>
-        {% endif %}
+        <h2 class="section-title">Meanings</h2>
+        <table class="translation-table">
+          <thead>
+            <tr>
+              <th>Language</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Oromo</td><td>{{ oromo_phrase or "-" }}</td></tr>
+            <tr><td>English</td><td>{{ english_phrase or "-" }}</td></tr>
+            {% if am %}<tr><td>Amharic</td><td>{{ am }}</td></tr>{% endif %}
+            {% if ar %}<tr><td>Arabic</td><td dir="rtl">{{ ar }}</td></tr>{% endif %}
+            {% if zh %}<tr><td>Chinese</td><td>{{ zh }}</td></tr>{% endif %}
+            {% if fr %}<tr><td>French</td><td>{{ fr }}</td></tr>{% endif %}
+            {% if other_translations %}
+              {% for lang_code, lang_payload in other_translations.items() %}
+                {% set lang_text = ((lang_payload.get("text") if lang_payload is mapping else lang_payload) or "") %}
+                {% if lang_text and lang_code not in ["om", "en", "am", "ar", "zh-CN", "fr"] %}
+                  <tr>
+                    <td>{{ lang_code }}</td>
+                    <td>{{ lang_text }}</td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
 
         {% set paudio = phrase.audio if phrase and phrase.audio is defined and phrase.audio else {} %}
         {% set audio_oromo = paudio.get("oromo", "") %}

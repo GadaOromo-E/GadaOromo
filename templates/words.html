@@ -70,35 +70,36 @@
       margin: 8px 0 18px 0;
     }
 
-    .seo-copy {
-      margin-top: 18px;
-      line-height: 1.7;
-      color: #222;
-    }
-
     .translation-table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 12px;
+      margin-top: 14px;
+      border: 1px solid #cfcfcf;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.06);
     }
 
     .translation-table th,
     .translation-table td {
-      border: 1px solid #ddd;
-      padding: 10px 12px;
+      border: 1px solid #d7d7d7;
+      padding: 12px 14px;
       text-align: left;
       vertical-align: top;
     }
 
     .translation-table th {
-      background: #f7f7f7;
+      background: #111;
+      color: #fff;
+      letter-spacing: 0.01em;
       font-weight: 700;
     }
 
     .translation-table td:first-child {
       font-weight: 700;
       white-space: nowrap;
-      width: 180px;
+      width: 160px;
+      background: #f9f9f9;
     }
 
     .section-title {
@@ -143,6 +144,23 @@
       text-align: center;
       padding: 48px 20px;
     }
+
+    @media (max-width: 640px) {
+      .word-card {
+        padding: 18px;
+      }
+      .word-title {
+        font-size: 1.6rem;
+      }
+      .translation-table th,
+      .translation-table td {
+        padding: 10px 10px;
+        font-size: 0.94rem;
+      }
+      .translation-table td:first-child {
+        width: 116px;
+      }
+    }
   </style>
 
   {% if english_word %}
@@ -186,72 +204,60 @@
           </p>
         {% endif %}
 
-        {% if am or ar or zh or fr %}
-          <h3 class="section-title">Available meanings</h3>
-          <table class="translation-table">
-            <thead>
-              <tr>
-                <th>Language</th>
-                <th>Meaning</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% if am %}
-                <tr>
-                  <td>Amharic</td>
-                  <td>{{ am }}</td>
-                </tr>
-              {% endif %}
-              {% if ar %}
-                <tr>
-                  <td>Arabic</td>
-                  <td dir="rtl">{{ ar }}</td>
-                </tr>
-              {% endif %}
-              {% if zh %}
-                <tr>
-                  <td>Chinese</td>
-                  <td>{{ zh }}</td>
-                </tr>
-              {% endif %}
-              {% if fr %}
-                <tr>
-                  <td>French</td>
-                  <td>{{ fr }}</td>
-                </tr>
-              {% endif %}
-            </tbody>
-          </table>
-        {% endif %}
-
-        <div class="seo-copy">
-          <h3 class="section-title">Meaning of {{ english_word }}</h3>
-          <p>
-            <strong>{{ english_word }}</strong>
-            {% if oromo_word %}
-              means <strong>{{ oromo_word }}</strong> in Oromo.
-            {% else %}
-              is available in this multilingual dictionary.
-            {% endif %}
+        <h3 class="section-title">Meanings</h3>
+        <table class="translation-table">
+          <thead>
+            <tr>
+              <th>Language</th>
+              <th>Meaning</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Oromo</td>
+              <td>{{ oromo_word or "-" }}</td>
+            </tr>
+            <tr>
+              <td>English</td>
+              <td>{{ english_word or "-" }}</td>
+            </tr>
             {% if am %}
-              In Amharic, it can be translated as <strong>{{ am }}</strong>.
+              <tr>
+                <td>Amharic</td>
+                <td>{{ am }}</td>
+              </tr>
             {% endif %}
             {% if ar %}
-              In Arabic, it can be translated as <strong>{{ ar }}</strong>.
+              <tr>
+                <td>Arabic</td>
+                <td dir="rtl">{{ ar }}</td>
+              </tr>
             {% endif %}
             {% if zh %}
-              In Chinese, it can be translated as <strong>{{ zh }}</strong>.
+              <tr>
+                <td>Chinese</td>
+                <td>{{ zh }}</td>
+              </tr>
             {% endif %}
             {% if fr %}
-              In French, it can be translated as <strong>{{ fr }}</strong>.
+              <tr>
+                <td>French</td>
+                <td>{{ fr }}</td>
+              </tr>
             {% endif %}
-          </p>
-
-          <p>
-            This page helps users understand the meaning of <strong>{{ english_word }}</strong>
-            in Oromo and other languages through the {{ APP_NAME }} dictionary.
-          </p>
-        </div>
+            {% if other_translations %}
+              {% for lang_code, lang_payload in other_translations.items() %}
+                {% set lang_text = ((lang_payload.get("text") if lang_payload is mapping else lang_payload) or "") %}
+                {% if lang_text and lang_code not in ["om", "en", "am", "ar", "zh-CN", "fr"] %}
+                  <tr>
+                    <td>{{ lang_code }}</td>
+                    <td>{{ lang_text }}</td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
 
         {% if word.explanation is defined and word.explanation %}
           <div style="margin-top: 14px;">
