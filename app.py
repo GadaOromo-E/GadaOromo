@@ -12718,23 +12718,5 @@ if __name__ == "__main__":
     app.run(host="0.0.0.0", port=port)
 
 
-from flask import send_file, abort
-import os
-
-@app.route("/test")
-def test():
-    return "WORKING"
-
-@app.route("/download-backup")
-def download_backup():
-    path = "/tmp/render_var_data_uploads_backup.tar.gz"
-    if not os.path.exists(path):
-        abort(404)
-
-    return send_file(
-        path,
-        as_attachment=True,
-        download_name="uploads_backup.tar.gz"
-    )
 
 
