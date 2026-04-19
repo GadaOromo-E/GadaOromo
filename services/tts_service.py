@@ -100,7 +100,12 @@ def generate_and_store_tts(
         return ""
 
     safe_name = (output_filename or "").strip() or f"tts_{entry_type}_{entry_id}_{lang_code}_{text_hash[:12]}.mp3"
-    target_dir = (upload_dir or "").strip() or os.path.join("static", "uploads")
+    target_dir = (
+        (upload_dir or "").strip()
+        or (os.environ.get("AUDIO_UPLOAD_DIR", "").strip())
+        or (os.environ.get("UPLOAD_FOLDER", "").strip())
+        or "/data/uploads"
+    )
     os.makedirs(target_dir, exist_ok=True)
     abs_path = os.path.join(target_dir, safe_name)
     with open(abs_path, "wb") as fh:

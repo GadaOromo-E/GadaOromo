@@ -277,13 +277,6 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 logging.basicConfig(level=logging.INFO)
 app.logger.setLevel(logging.INFO)
 
-from flask import send_from_directory
-
-@app.route('/uploads/<path:filename>')
-def uploaded_file(filename):
-    return send_from_directory('static/uploads', filename)
-
-
 @app.route("/health")
 def health():
     return "ok", 200
@@ -1800,6 +1793,18 @@ def _normalized_audio_basename(ref: str) -> str:
         fp = fp[len("uploads/"):]
 
     return os.path.basename(fp)
+
+
+def _canonical_local_audio_ref(file_path: str) -> str:
+    fp = normalize_text((file_path or "").replace("\\", "/"))
+    if not fp:
+        return ""
+    if _is_remote_audio_ref(fp):
+        return fp
+    name = _normalized_audio_basename(fp)
+    if not name:
+        return ""
+    return f"uploads/{name}"
 
 
 def _parse_tts_semantic_parts(file_name: str):
@@ -4312,10 +4317,24 @@ def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, t
 
 def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text: str, voice_name: str, file_path: str):
     txt = normalize_text(text or "")
-    fp = normalize_text(file_path or "")
+    fp_raw = normalize_text(file_path or "")
+    fp = _canonical_local_audio_ref(fp_raw)
     if (not txt) or (not fp):
         return False
     th = _text_hash(txt)
+    if _is_remote_audio_ref(fp):
+        expected_fp = fp
+    else:
+        expected_fp = _canonical_local_audio_ref(fp)
+        if not _has_usable_audio_ref(expected_fp):
+            app.logger.warning(
+                "save_generated_tts_row skipped_missing_file entry_type=%s entry_id=%s lang=%s expected_fp=%s",
+                entry_type,
+                entry_id,
+                lang_code,
+                expected_fp,
+            )
+            return False
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
@@ -4324,7 +4343,7 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(entry_type, entry_id, lang_code, text_hash, voice_provider, voice_name) DO UPDATE SET
             file_path=excluded.file_path
-    """, (entry_type, int(entry_id), lang_code, txt, th, AZURE_TTS_PROVIDER, voice_name, fp))
+    """, (entry_type, int(entry_id), lang_code, txt, th, AZURE_TTS_PROVIDER, voice_name, expected_fp))
     conn.commit()
     c.execute(
         """
@@ -4338,8 +4357,23 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
     )
     row = c.fetchone()
     conn.close()
-    saved_fp = normalize_text((row or [""])[0] or "")
-    return bool(saved_fp)
+    saved_fp_raw = normalize_text((row or [""])[0] or "")
+    saved_fp = _canonical_local_audio_ref(saved_fp_raw)
+    same_ref = bool(saved_fp and saved_fp == expected_fp)
+    exists_ok = True if _is_remote_audio_ref(saved_fp) else bool(_has_usable_audio_ref(saved_fp))
+    playback_url = _public_audio_url(saved_fp) if saved_fp else ""
+    app.logger.info(
+        "save_generated_tts_row verify entry_type=%s entry_id=%s lang=%s expected_fp=%s saved_fp=%s same_ref=%s exists_ok=%s playback_url=%s",
+        entry_type,
+        entry_id,
+        lang_code,
+        expected_fp,
+        saved_fp,
+        same_ref,
+        exists_ok,
+        playback_url,
+    )
+    return bool(same_ref and exists_ok)
 
 
 def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code: str, tts_url: str):
@@ -4391,9 +4425,23 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     """
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
     rel_path = f"uploads/{file_name}"
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     with open(abs_path, "wb") as f:
         f.write(audio_bytes)
-    return rel_path, _public_audio_url(rel_path)
+    exists_after_write = bool(os.path.isfile(abs_path) and (os.path.getsize(abs_path) > 0))
+    playback_url = _public_audio_url(rel_path)
+    app.logger.info(
+        "persist_generated_tts_audio file_name=%s abs_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+        file_name,
+        abs_path,
+        exists_after_write,
+        _safe_file_size(abs_path),
+        rel_path,
+        playback_url,
+    )
+    if not exists_after_write:
+        return "", ""
+    return rel_path, playback_url
 
 
 def _resolve_or_generate_tts_for_text(
@@ -4428,7 +4476,7 @@ def _resolve_or_generate_tts_for_text(
     service_conn = None
     try:
         service_conn = sqlite3.connect(DB_NAME)
-        stored = normalize_text(
+        stored_raw = normalize_text(
             service_generate_and_store_tts(
                 db=service_conn,
                 entry_type=entry_type,
@@ -4445,8 +4493,27 @@ def _resolve_or_generate_tts_for_text(
             )
             or ""
         )
+        stored = _canonical_local_audio_ref(stored_raw)
         if stored:
+            if not _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored):
+                app.logger.warning(
+                    "tts service save verification failed entry_type=%s entry_id=%s lang=%s stored_raw=%s stored=%s",
+                    entry_type,
+                    entry_id,
+                    lang_code,
+                    stored_raw,
+                    stored,
+                )
+                return ""
             public_url = _public_audio_url(stored)
+            app.logger.info(
+                "tts service persisted entry_type=%s entry_id=%s lang=%s db_file_path=%s playback_url=%s",
+                entry_type,
+                entry_id,
+                lang_code,
+                stored,
+                public_url,
+            )
             if lang_code in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
             return public_url
@@ -4491,6 +4558,16 @@ def _resolve_or_generate_tts_for_text(
             return ""
         if not _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored_ref):
             return ""
+        app.logger.info(
+            "tts fallback persisted entry_type=%s entry_id=%s lang=%s generated_filename=%s abs_save_path=%s db_file_path=%s playback_url=%s",
+            entry_type,
+            entry_id,
+            lang_code,
+            file_name,
+            os.path.join(UPLOAD_FOLDER, file_name),
+            stored_ref,
+            public_url,
+        )
         if lang_code in EXTRA_GENERATED_LANGS:
             _save_tts_url_to_translation_cache(entry_type, int(entry_id), lang_code, public_url)
         return public_url
@@ -4696,7 +4773,7 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         service_conn = None
         try:
             service_conn = sqlite3.connect(DB_NAME)
-            stored = normalize_text(
+            stored_raw = normalize_text(
                 service_generate_and_store_tts(
                     db=service_conn,
                     entry_type=entry_type,
@@ -4713,8 +4790,21 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                 )
                 or ""
             )
+            stored = _canonical_local_audio_ref(stored_raw)
             if stored:
                 public_url = _public_audio_url(stored)
+                if not _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, stored):
+                    app.logger.warning(
+                        "tts service save verification failed entry_type=%s entry_id=%s lang=%s stored_raw=%s stored=%s",
+                        entry_type,
+                        entry_id,
+                        lang,
+                        stored_raw,
+                        stored,
+                    )
+                    result["failed"] += 1
+                    result["by_language"][lang] = "failed_persistence_check"
+                    continue
                 verified = _resolve_generated_tts_row(entry_type, entry_id, lang, text, voice_name)
                 if not (verified and verified.get("url")):
                     app.logger.warning(
@@ -4732,10 +4822,14 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                 result["generated"] += 1
                 result["by_language"][lang] = "generated"
                 app.logger.info(
-                    "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated",
+                    "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated generated_filename=%s abs_save_path=%s db_file_path=%s playback_url=%s",
                     entry_type,
                     entry_id,
                     lang,
+                    os.path.basename(stored),
+                    os.path.join(UPLOAD_FOLDER, os.path.basename(stored)),
+                    stored,
+                    public_url,
                 )
                 continue
             app.logger.error(
@@ -4799,10 +4893,14 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             result["generated"] += 1
             result["by_language"][lang] = "generated"
             app.logger.info(
-                "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated",
+                "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated generated_filename=%s abs_save_path=%s db_file_path=%s playback_url=%s",
                 entry_type,
                 entry_id,
                 lang,
+                file_name,
+                os.path.join(UPLOAD_FOLDER, file_name),
+                stored_ref,
+                public_url,
             )
         except Exception as e:
             result["failed"] += 1

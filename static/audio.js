@@ -52,9 +52,6 @@
     if (audioUrl.startsWith("uploads/")) {
       audioUrl = "/" + audioUrl;
     }
-    if (audioUrl.startsWith("/static/uploads/")) {
-      audioUrl = "/uploads/" + audioUrl.split("/").pop();
-    }
     if (!audioUrl) return;
     if (audioUrl !== rawAudioUrl) {
       console.info("Normalized audio URL:", rawAudioUrl, "->", audioUrl);
