@@ -56,6 +56,7 @@
     if (audioUrl !== rawAudioUrl) {
       console.info("Normalized audio URL:", rawAudioUrl, "->", audioUrl);
     }
+    console.info("playButtonAudio final URL:", audioUrl);
 
     stopCurrentAudio();
 
