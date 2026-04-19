@@ -39,6 +39,7 @@ import re
 import sqlite3
 import logging
 import csv
+import json
 import hashlib
 import shutil
 import time
@@ -299,6 +300,7 @@ def _pick_base_dir() -> str:
 
 # Base directory for uploads/db
 BASE_DIR = _pick_base_dir()
+BASE_DIR = os.path.abspath(BASE_DIR)
 
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -382,6 +384,17 @@ SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
 DONATE_URLS = {
     "custom": os.environ.get("STRIPE_DONATE_CUSTOM_URL", "").strip(),
 }
+
+APP_ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+APP_RUNTIME = (
+    "railway" if IS_RAILWAY
+    else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
+)
+PERSISTENT_DATA_CONFIGURED = bool(
+    os.environ.get("PERSISTENT_DATA_DIR", "").strip()
+    or os.environ.get("DATA_DIR", "").strip()
+    or BASE_DIR in {"/data", "/var/data"}
+)
 
 def _safe_url(u: str) -> str:
     u = (u or "").strip()
@@ -665,7 +678,13 @@ def assetlinks():
 
 # Backward-compatible flag name: true when using a mounted persistent disk path.
 IS_RENDER_DISK = BASE_DIR in {"/var/data", "/data"}
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+IS_PERSISTENT_STORAGE = bool(PERSISTENT_DATA_CONFIGURED)
+UPLOAD_FOLDER = (
+    os.environ.get("AUDIO_UPLOAD_DIR", "").strip()
+    or os.environ.get("UPLOAD_FOLDER", "").strip()
+    or os.path.join(BASE_DIR, "uploads")
+)
+UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
@@ -673,10 +692,24 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
 app.logger.info(
-    "Audio storage configured is_render_disk=%s upload_folder=%s static_uploads=%s",
+    "Audio storage configured runtime=%s persistent_data_configured=%s is_render_disk=%s is_persistent_storage=%s upload_folder=%s static_uploads=%s",
+    APP_RUNTIME,
+    PERSISTENT_DATA_CONFIGURED,
     IS_RENDER_DISK,
+    IS_PERSISTENT_STORAGE,
     UPLOAD_FOLDER,
     STATIC_UPLOADS_FOLDER,
+)
+app.logger.info(
+    "Startup runtime context runtime=%s is_prod=%s is_railway=%s base_dir=%s app_root=%s db_path=%s db_exists=%s upload_exists=%s",
+    APP_RUNTIME,
+    IS_PROD,
+    IS_RAILWAY,
+    BASE_DIR,
+    APP_ROOT_DIR,
+    DB_NAME,
+    os.path.isfile(DB_NAME),
+    os.path.isdir(UPLOAD_FOLDER),
 )
 
 ALLOWED_AUDIO = {"mp3", "wav", "m4a", "webm", "ogg"}
@@ -1176,6 +1209,13 @@ DEFAULT_AZURE_VOICES = {
     "om": (os.environ.get("AZURE_VOICE_OM", "").strip() or os.environ.get("AZURE_VOICE_OROMO", "").strip()),
 }
 _phrase_tts_voice_map_logged = False
+app.logger.info(
+    "Startup Azure voice map provider=%s voices=%s azure_speech_key_set=%s azure_speech_region_set=%s",
+    AZURE_TTS_PROVIDER,
+    {lc: (DEFAULT_AZURE_VOICES.get(lc) or "") for lc in ("en", "om", "am", "ar", "fr", "zh-CN")},
+    bool((os.environ.get("AZURE_SPEECH_KEY") or "").strip()),
+    bool((os.environ.get("AZURE_SPEECH_REGION") or "").strip()),
+)
 if not (DEFAULT_AZURE_VOICES.get("om") or "").strip():
     app.logger.warning(
         "Azure Oromo TTS voice is not configured (AZURE_VOICE_OM/AZURE_VOICE_OROMO). "
@@ -1734,11 +1774,16 @@ def _collect_db_diagnostics():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     out = {
+        "runtime": APP_RUNTIME,
+        "base_dir": BASE_DIR,
+        "persistent_data_configured": bool(PERSISTENT_DATA_CONFIGURED),
+        "is_persistent_storage": bool(IS_PERSISTENT_STORAGE),
         "db_path": DB_NAME,
         "db_abs": os.path.abspath(DB_NAME),
         "db_exists": os.path.isfile(DB_NAME),
         "upload_folder": UPLOAD_FOLDER,
         "is_render_disk": bool(IS_RENDER_DISK),
+        "voice_map": {lc: (DEFAULT_AZURE_VOICES.get(lc) or "") for lc in ("en", "om", "am", "ar", "fr", "zh-CN")},
         "require_explicit_db_path": bool(REQUIRE_EXPLICIT_DB_PATH),
         "require_blob_for_generated_tts": bool(REQUIRE_BLOB_FOR_GENERATED_TTS),
         "azure_blob_enabled": bool(_azure_blob_enabled()),
@@ -1753,6 +1798,7 @@ def _collect_db_diagnostics():
         "generated_phrase_translations": "SELECT COUNT(*) FROM generated_phrase_translations",
         "generated_tts_audio": "SELECT COUNT(*) FROM generated_tts_audio",
         "audio": "SELECT COUNT(*) FROM audio",
+        "post_import_jobs": "SELECT COUNT(*) FROM post_import_jobs",
     }
     for table_name, sql in table_counts.items():
         try:
@@ -2156,6 +2202,37 @@ def ensure_generated_translation_hash_columns():
         return False
 
 
+def ensure_post_import_jobs_table():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            CREATE TABLE IF NOT EXISTS post_import_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                word_ids_json TEXT NOT NULL DEFAULT '[]',
+                phrase_ids_json TEXT NOT NULL DEFAULT '[]',
+                chunk_size INTEGER,
+                import_summary_json TEXT NOT NULL DEFAULT '{}',
+                attempts INTEGER NOT NULL DEFAULT 0,
+                runtime TEXT NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                started_at DATETIME,
+                finished_at DATETIME,
+                last_error TEXT
+            )
+            """
+        )
+        c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_id ON post_import_jobs(status, id)")
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        app.logger.exception(f"Failed to ensure post_import_jobs table: {repr(e)}")
+        return False
+
+
 # Run DB init + migrations at startup
 init_db()
 ensure_key_columns()
@@ -2165,6 +2242,7 @@ _generated_table_ready = ensure_generated_translations_table()
 _generated_phrase_table_ready = ensure_generated_phrase_translations_table()
 _generated_tts_table_ready = ensure_generated_tts_audio_table()
 _generated_translation_hash_columns_ready = ensure_generated_translation_hash_columns()
+_post_import_jobs_table_ready = ensure_post_import_jobs_table()
 
 
 def record_search(raw_query: str, direction: str, is_phrase: int, is_exact: int):
@@ -3333,11 +3411,11 @@ def ensure_missing_oromo_for_entries(
     def _translate_oromo_single_with_retry(english_text: str) -> tuple[str, str]:
         """
         Returns (oromo_text, reason).
-        reason in {"google_single", "google_single_retry", "google_single_empty_twice", "provider_exception"}
+        reason in {"google_single", "google_single_retry", "google_single_empty_result", "provider_exception"}
         """
         en = normalize_text(english_text or "")
         if not en:
-            return "", "google_single_empty_twice"
+            return "", "google_single_empty_result"
 
         try:
             om_first = normalize_text(
@@ -3356,7 +3434,7 @@ def ensure_missing_oromo_for_entries(
             return "", "provider_exception"
         if om_second:
             return om_second, "google_single_retry"
-        return "", "google_single_empty_twice"
+        return "", "google_single_empty_result"
 
     def _update_oromo_with_noop_recovery(eid: int, om_text: str, om_key: str) -> tuple[bool, str]:
         """
@@ -4969,12 +5047,16 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         words_summary[k] = int(word_import_summary.get(k, 0) or 0)
         phrases_summary[k] = int(phrase_import_summary.get(k, 0) or 0)
     app.logger.info(
-        "post_import_pipeline started word_ids=%s phrase_ids=%s import_summary=%s",
+        "post_import_pipeline started runtime=%s db_path=%s upload_folder=%s word_ids=%s phrase_ids=%s import_summary=%s",
+        APP_RUNTIME,
+        DB_NAME,
+        UPLOAD_FOLDER,
         len(word_ids),
         len(phrase_ids),
         {"word": words_summary, "phrase": phrases_summary},
     )
 
+    pipeline_ok = True
     conn = None
     cursor = None
     try:
@@ -5128,6 +5210,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         app.logger.info("post_import_pipeline summary phrases=%s", phrases_summary)
         conn.commit()
     except Exception:
+        pipeline_ok = False
         app.logger.exception("Post-import pipeline failed with unhandled exception")
         if conn is not None:
             try:
@@ -5145,26 +5228,271 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                 conn.close()
             except Exception:
                 pass
+    return bool(pipeline_ok)
 
 
-def trigger_post_import_pipeline_async(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
+POST_IMPORT_QUEUE_POLL_SECONDS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_POLL_SECONDS") or "2").strip() or 2))
+POST_IMPORT_QUEUE_MAX_IDLE_POLLS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_MAX_IDLE_POLLS") or "3").strip() or 3))
+POST_IMPORT_WORKER_START_ON_BOOT = ((os.environ.get("POST_IMPORT_WORKER_START_ON_BOOT") or "1").strip() == "1")
+POST_IMPORT_REQUEUE_STALE_MINUTES = max(1, int((os.environ.get("POST_IMPORT_REQUEUE_STALE_MINUTES") or "30").strip() or 30))
+_post_import_worker_lock = threading.Lock()
+_post_import_worker_started = False
+
+
+def _enqueue_post_import_job(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
     word_ids = [int(x) for x in (word_ids or []) if int(x or 0) > 0]
     phrase_ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
     if not word_ids and not phrase_ids:
-        return False
+        return 0
 
+    conn = None
     try:
-        worker = threading.Thread(
-            target=_run_post_import_pipeline,
-            args=(word_ids, phrase_ids, chunk_size, import_summary),
-            daemon=True,
-            name="post_import_pipeline",
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO post_import_jobs
+            (status, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, runtime)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "pending",
+                json.dumps(word_ids, separators=(",", ":")),
+                json.dumps(phrase_ids, separators=(",", ":")),
+                int(chunk_size or 0) if chunk_size else None,
+                json.dumps(import_summary or {}, separators=(",", ":")),
+                APP_RUNTIME,
+            ),
         )
-        worker.start()
-        return True
-    except Exception as e:
-        app.logger.exception("Failed to start post-import pipeline thread: %s", repr(e))
+        conn.commit()
+        job_id = int(c.lastrowid or 0)
+        app.logger.info(
+            "post_import_pipeline_job_enqueued job_id=%s word_ids=%s phrase_ids=%s chunk_size=%s runtime=%s",
+            job_id,
+            len(word_ids),
+            len(phrase_ids),
+            int(chunk_size or 0),
+            APP_RUNTIME,
+        )
+        return job_id
+    except Exception:
+        app.logger.exception("Failed to enqueue post-import pipeline job")
+        return 0
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _claim_next_post_import_job():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME, timeout=30)
+        c = conn.cursor()
+        c.execute("BEGIN IMMEDIATE")
+        c.execute(
+            """
+            SELECT id, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, attempts
+            FROM post_import_jobs
+            WHERE status='pending'
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        )
+        row = c.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        job_id = int((row or [0])[0] or 0)
+        c.execute(
+            """
+            UPDATE post_import_jobs
+            SET status='running', started_at=CURRENT_TIMESTAMP, attempts=attempts + 1, last_error=NULL
+            WHERE id=? AND status='pending'
+            """,
+            (job_id,),
+        )
+        if int(c.rowcount or 0) <= 0:
+            conn.commit()
+            return None
+        conn.commit()
+        return {
+            "id": job_id,
+            "word_ids_json": row[1] or "[]",
+            "phrase_ids_json": row[2] or "[]",
+            "chunk_size": row[3],
+            "import_summary_json": row[4] or "{}",
+            "attempts_before": int((row[5] or 0)),
+        }
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        app.logger.exception("Failed to claim post-import pipeline job")
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _complete_post_import_job(job_id: int, ok: bool, error_text: str = ""):
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            UPDATE post_import_jobs
+            SET status=?, finished_at=CURRENT_TIMESTAMP, last_error=?
+            WHERE id=?
+            """,
+            ("done" if ok else "failed", normalize_text(error_text or "")[:2000], int(job_id or 0)),
+        )
+        conn.commit()
+    except Exception:
+        app.logger.exception("Failed to finalize post-import job id=%s", int(job_id or 0))
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _requeue_stale_post_import_jobs():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            f"""
+            UPDATE post_import_jobs
+            SET status='pending',
+                started_at=NULL,
+                finished_at=NULL,
+                last_error=COALESCE(last_error, '') || CASE WHEN COALESCE(last_error, '')='' THEN '' ELSE ' | ' END || 'requeued_stale_running_job'
+            WHERE status='running'
+              AND (
+                    started_at IS NULL
+                    OR started_at < datetime('now', '-{int(POST_IMPORT_REQUEUE_STALE_MINUTES)} minutes')
+              )
+            """
+        )
+        moved = int(c.rowcount or 0)
+        conn.commit()
+        if moved > 0:
+            app.logger.warning(
+                "post_import_worker requeued_stale_running_jobs count=%s stale_minutes=%s",
+                moved,
+                int(POST_IMPORT_REQUEUE_STALE_MINUTES),
+            )
+    except Exception:
+        app.logger.exception("Failed to requeue stale post-import jobs")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _post_import_worker_loop():
+    global _post_import_worker_started
+    idle_polls = 0
+    app.logger.info(
+        "post_import_worker started runtime=%s poll_seconds=%s max_idle_polls=%s db_path=%s",
+        APP_RUNTIME,
+        POST_IMPORT_QUEUE_POLL_SECONDS,
+        POST_IMPORT_QUEUE_MAX_IDLE_POLLS,
+        DB_NAME,
+    )
+    try:
+        _requeue_stale_post_import_jobs()
+        while True:
+            job = _claim_next_post_import_job()
+            if not job:
+                idle_polls += 1
+                if idle_polls >= POST_IMPORT_QUEUE_MAX_IDLE_POLLS:
+                    break
+                time.sleep(POST_IMPORT_QUEUE_POLL_SECONDS)
+                continue
+            idle_polls = 0
+            job_id = int((job or {}).get("id") or 0)
+            try:
+                word_ids = json.loads((job or {}).get("word_ids_json") or "[]")
+                phrase_ids = json.loads((job or {}).get("phrase_ids_json") or "[]")
+                import_summary = json.loads((job or {}).get("import_summary_json") or "{}")
+                chunk_size = int((job or {}).get("chunk_size") or 0) or None
+            except Exception:
+                app.logger.exception("Invalid post-import job payload job_id=%s", job_id)
+                _complete_post_import_job(job_id, ok=False, error_text="invalid_job_payload")
+                continue
+
+            app.logger.info(
+                "post_import_worker processing job_id=%s attempts_before=%s word_ids=%s phrase_ids=%s",
+                job_id,
+                int((job or {}).get("attempts_before") or 0),
+                len(word_ids or []),
+                len(phrase_ids or []),
+            )
+            try:
+                run_ok = _run_post_import_pipeline(
+                    word_ids,
+                    phrase_ids,
+                    chunk_size=chunk_size,
+                    import_summary=import_summary,
+                )
+                if run_ok:
+                    _complete_post_import_job(job_id, ok=True, error_text="")
+                else:
+                    _complete_post_import_job(job_id, ok=False, error_text="pipeline_returned_failure")
+            except Exception as e:
+                app.logger.exception("post_import_worker job failed job_id=%s", job_id)
+                _complete_post_import_job(job_id, ok=False, error_text=repr(e))
+    finally:
+        with _post_import_worker_lock:
+            _post_import_worker_started = False
+        app.logger.info("post_import_worker stopped runtime=%s db_path=%s", APP_RUNTIME, DB_NAME)
+
+
+def _start_post_import_worker_if_needed():
+    global _post_import_worker_started
+    with _post_import_worker_lock:
+        if _post_import_worker_started:
+            return True
+        try:
+            worker = threading.Thread(
+                target=_post_import_worker_loop,
+                daemon=True,
+                name="post_import_worker",
+            )
+            worker.start()
+            _post_import_worker_started = True
+            return True
+        except Exception:
+            app.logger.exception("Failed to start post-import worker thread")
+            _post_import_worker_started = False
+            return False
+
+
+def trigger_post_import_pipeline_async(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
+    job_id = _enqueue_post_import_job(word_ids, phrase_ids, chunk_size=chunk_size, import_summary=import_summary)
+    if not int(job_id or 0):
         return False
+    if not _start_post_import_worker_if_needed():
+        app.logger.warning("post_import_worker_not_started job_id=%s", int(job_id or 0))
+    return True
+
+
+if POST_IMPORT_WORKER_START_ON_BOOT:
+    _start_post_import_worker_if_needed()
 
 
 def run_word_audio_backfill(limit: int = 0, chunk_size: int = None, force_regenerate: bool = False):
@@ -9131,7 +9459,15 @@ def admin_import():
                 app.logger.info("admin_import perf: %s", payload)
                 print(f"admin_import perf: {payload}")
 
-            _perf_log("request_start", started_at=req_started_at_iso, is_json=bool(request.is_json))
+            _perf_log(
+                "request_start",
+                started_at=req_started_at_iso,
+                is_json=bool(request.is_json),
+                runtime=APP_RUNTIME,
+                db_path=app.DB_NAME,
+                upload_folder=UPLOAD_FOLDER,
+                persistent_storage=bool(IS_PERSISTENT_STORAGE),
+            )
             raw_items = []
 
             if request.is_json:
@@ -10233,9 +10569,15 @@ def cli_diagnose_data_model():
     _log_db_context("cli:diagnose-data-model")
     d = _collect_db_diagnostics()
     click.echo("Data-model diagnostics:")
+    click.echo(f"RUNTIME={d.get('runtime', '')}")
+    click.echo(f"BASE_DIR={d.get('base_dir', '')}")
+    click.echo(f"PERSISTENT_DATA_CONFIGURED={d.get('persistent_data_configured', False)}")
+    click.echo(f"PERSISTENT_STORAGE_ACTIVE={d.get('is_persistent_storage', False)}")
     click.echo(f"DB_PATH={d.get('db_path', '')}")
     click.echo(f"DB_ABS={d.get('db_abs', '')}")
     click.echo(f"DB_EXISTS={d.get('db_exists', False)}")
+    click.echo(f"UPLOAD_FOLDER={d.get('upload_folder', '')}")
+    click.echo(f"VOICE_MAP={d.get('voice_map', {})}")
     click.echo(f"REQUIRE_EXPLICIT_DB_PATH={d.get('require_explicit_db_path', False)}")
     click.echo(f"REQUIRE_BLOB_FOR_GENERATED_TTS={d.get('require_blob_for_generated_tts', False)}")
     click.echo(f"AZURE_BLOB_ENABLED={d.get('azure_blob_enabled', False)}")
@@ -10246,7 +10588,8 @@ def cli_diagnose_data_model():
         f"generated_translations={d.get('tables', {}).get('generated_translations', -1)} "
         f"generated_phrase_translations={d.get('tables', {}).get('generated_phrase_translations', -1)} "
         f"generated_tts_audio={d.get('tables', {}).get('generated_tts_audio', -1)} "
-        f"audio={d.get('tables', {}).get('audio', -1)}"
+        f"audio={d.get('tables', {}).get('audio', -1)} "
+        f"post_import_jobs={d.get('tables', {}).get('post_import_jobs', -1)}"
     )
     click.echo(
         "TTS_STORAGE "
@@ -10267,6 +10610,9 @@ def cli_db_diagnostics():
     click.echo(f"DB_PATH={d.get('db_path', '')}")
     click.echo(f"DB_ABS={d.get('db_abs', '')}")
     click.echo(f"UPLOAD_FOLDER={d.get('upload_folder', '')}")
+    click.echo(f"RUNTIME={d.get('runtime', '')}")
+    click.echo(f"PERSISTENT_STORAGE_ACTIVE={d.get('is_persistent_storage', False)}")
+    click.echo(f"VOICE_MAP={d.get('voice_map', {})}")
     click.echo(f"RENDER_DISK_ACTIVE={d.get('is_render_disk', False)}")
     click.echo(
         f"words_total={d.get('tables', {}).get('words', -1)} "
@@ -10274,7 +10620,8 @@ def cli_db_diagnostics():
         f"phrases_total={d.get('tables', {}).get('phrases', -1)} "
         f"generated_translations_total={d.get('tables', {}).get('generated_translations', -1)} "
         f"generated_tts_audio_total={d.get('tables', {}).get('generated_tts_audio', -1)} "
-        f"audio_total={d.get('tables', {}).get('audio', -1)}"
+        f"audio_total={d.get('tables', {}).get('audio', -1)} "
+        f"post_import_jobs_total={d.get('tables', {}).get('post_import_jobs', -1)}"
     )
 
 
