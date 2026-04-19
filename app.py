@@ -2080,54 +2080,6 @@ def _public_audio_url(file_path: str) -> str:
     return "/uploads/" + name
 
 
-def _playable_audio_url_from_db_ref(file_path: str, _cache: dict = None) -> str:
-    """
-    Canonical playback URL resolver for DB-backed local refs.
-    - Remote refs pass through unchanged.
-    - Local refs are validated against disk (UPLOAD_FOLDER first, then static fallback).
-    - If basename is stale, semantic resolver can map to an existing file.
-    Returns empty string when no playable file can be resolved.
-    """
-    fp = normalize_text((file_path or "").replace("\\", "/"))
-    if not fp:
-        return ""
-    if _is_remote_audio_ref(fp):
-        return fp
-
-    cache = _cache if isinstance(_cache, dict) else None
-    if cache is not None and fp in cache:
-        return cache.get(fp, "")
-
-    name = _normalized_audio_basename(fp)
-    if not name:
-        if cache is not None:
-            cache[fp] = ""
-        return ""
-
-    upload_abs = os.path.join(UPLOAD_FOLDER, name)
-    static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
-    if os.path.isfile(static_abs):
-        _maybe_promote_audio_to_persistent(name, static_abs)
-    if os.path.isfile(upload_abs) or os.path.isfile(static_abs):
-        url = "/uploads/" + name
-        if cache is not None:
-            cache[fp] = url
-        return url
-
-    resolved = resolve_existing_audio_file(fp, return_meta=True)
-    resolved_path = normalize_text((resolved or {}).get("path", "") or "")
-    if resolved_path and os.path.isfile(resolved_path):
-        resolved_name = os.path.basename(resolved_path)
-        url = "/uploads/" + resolved_name
-        if cache is not None:
-            cache[fp] = url
-        return url
-
-    if cache is not None:
-        cache[fp] = ""
-    return ""
-
-
 def _normalize_cached_tts_url(tts_url: str) -> str:
     """
     Canonicalize local TTS paths to /uploads/<name> so serving goes through one
@@ -2140,11 +2092,9 @@ def _normalize_cached_tts_url(tts_url: str) -> str:
         return u
     name = os.path.basename(u.replace("\\", "/"))
     if name.startswith("tts_"):
-        # Normalize to the actually resolvable on-disk file basename.
-        resolved = resolve_existing_audio_file(u, return_meta=True)
-        resolved_path = normalize_text((resolved or {}).get("path", "") or "")
-        if resolved_path and os.path.isfile(resolved_path):
-            return "/uploads/" + os.path.basename(resolved_path)
+        # Ensure stale /static/uploads URLs and relative paths converge.
+        if _has_usable_audio_ref(f"uploads/{name}"):
+            return "/uploads/" + name
         return ""
     if u.startswith("/uploads/"):
         return u
@@ -4284,13 +4234,10 @@ def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, t
         file_path = (row[1] or "").strip()
         if not file_path or (not _has_usable_audio_ref(file_path)):
             return None
-        url = _playable_audio_url_from_db_ref(file_path)
-        if not url:
-            return None
         return {
             "id": int(row[0]),
             "file_path": file_path,
-            "url": url,
+            "url": _public_audio_url(file_path),
             "text_hash": (row[2] or ""),
         }
     conn.close()
@@ -4299,10 +4246,7 @@ def _resolve_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, t
         return None
     if not _has_usable_audio_ref(file_path):
         return None
-    url = _playable_audio_url_from_db_ref(file_path)
-    if not url:
-        return None
-    return {"id": int(row[0]), "file_path": file_path, "url": url, "text_hash": th}
+    return {"id": int(row[0]), "file_path": file_path, "url": _public_audio_url(file_path), "text_hash": th}
 
 
 def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text: str, voice_name: str, file_path: str):
@@ -4406,56 +4350,6 @@ def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code
     conn.commit()
     conn.close()
     return bool(normalize_text((row or [""])[0] or ""))
-
-
-def _get_tts_url_from_generated_audio_db(entry_type: str, entry_id: int, lang_code: str, text: str = "") -> str:
-    """
-    Return playback URL directly from generated_tts_audio.file_path.
-    Never constructs filename manually.
-    """
-    if entry_type not in ("word", "phrase"):
-        return ""
-    eid = int(entry_id or 0)
-    lang = _canonical_tts_lang_code(lang_code or "")
-    if (not eid) or (not lang):
-        return ""
-
-    conn = sqlite3.connect(DB_NAME)
-    c = conn.cursor()
-    rows = []
-    try:
-        txt = normalize_text(text or "")
-        if txt:
-            th = _text_hash(txt)
-            c.execute(
-                """
-                SELECT file_path
-                FROM generated_tts_audio
-                WHERE entry_type=? AND entry_id=? AND lang_code=? AND text_hash=?
-                ORDER BY id DESC
-                """,
-                (entry_type, eid, lang, th),
-            )
-            rows = c.fetchall() or []
-        if not rows:
-            c.execute(
-                """
-                SELECT file_path
-                FROM generated_tts_audio
-                WHERE entry_type=? AND entry_id=? AND lang_code=?
-                ORDER BY id DESC
-                """,
-                (entry_type, eid, lang),
-            )
-            rows = c.fetchall() or []
-    finally:
-        conn.close()
-
-    for (file_path,) in rows:
-        url = _playable_audio_url_from_db_ref(file_path or "")
-        if url:
-            return url
-    return ""
 
 
 def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
@@ -4647,10 +4541,9 @@ def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
         key = "english" if lang == "en" else ("oromo" if lang == "om" else lang)
         if key in out:
             continue
-        url = _playable_audio_url_from_db_ref(file_path or "")
-        if not url:
+        if not _has_usable_audio_ref(file_path or ""):
             continue
-        out[key] = url
+        out[key] = _public_audio_url(file_path or "")
 
     return out, {"audio_rows_found": found_rows, "audio_urls_attached": len(out)}
 
@@ -6205,12 +6098,7 @@ def _get_or_generate_word_translation(
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
         app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
         translated_cached = normalize_text(cached[0] or "")
-        tts_cached = _get_tts_url_from_generated_audio_db(
-            "word",
-            int(word_id),
-            target_lang,
-            translated_cached,
-        )
+        tts_cached = _normalize_cached_tts_url((cached or [None, ""])[1] or "")
         if not tts_cached:
             tts_cached = _resolve_or_generate_tts_for_text(
                 "word",
@@ -6782,13 +6670,12 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
 
     out = {}
     fallback = {}
-    url_cache = {}
     for eid, lang_code, text_hash, file_path in rows:
         key = (int(eid or 0), lang_code)
         expected_hash = text_by_key.get(key)
-        url = _playable_audio_url_from_db_ref(file_path or "", _cache=url_cache)
-        if not url:
+        if not _has_usable_audio_ref(file_path or ""):
             continue
+        url = _public_audio_url(file_path)
         # Prefer exact text-hash matches when available.
         if expected_hash and expected_hash == (text_hash or ""):
             if key not in out:
@@ -6833,7 +6720,6 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
     conn.close()
 
     out = {}
-    url_cache = {}
     for entry_id, lang_code, file_path in rows:
         canonical_lang = _canonical_tts_lang_code(lang_code or "")
         if canonical_lang not in requested:
@@ -6841,7 +6727,9 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
         key = (int(entry_id or 0), canonical_lang)
         if key in out:
             continue
-        url = _playable_audio_url_from_db_ref(file_path or "", _cache=url_cache)
+        if not normalize_text(file_path or ""):
+            continue
+        url = _public_audio_url(file_path or "")
         if not url:
             continue
         out[key] = url
@@ -6930,15 +6818,13 @@ def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
     conn.close()
 
     out = {}
-    url_cache = {}
     for entry_id, file_path in rows:
         eid = int(entry_id or 0)
         if eid in out:
             continue
-        url = _playable_audio_url_from_db_ref(file_path or "", _cache=url_cache)
-        if not url:
+        if not _has_usable_audio_ref(file_path or ""):
             continue
-        out[eid] = url
+        out[eid] = _public_audio_url(file_path)
     return out
 
 
