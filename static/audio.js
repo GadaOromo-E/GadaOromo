@@ -44,8 +44,21 @@
   }
 
   function playButtonAudio(button) {
-    const audioUrl = (button?.getAttribute("data-audio") || "").trim();
+    const rawAudioUrl = (button?.getAttribute("data-audio") || "").trim();
+    let audioUrl = rawAudioUrl.replace(/\\/g, "/").trim();
+    if (audioUrl.startsWith("/uploads/uploads/")) {
+      audioUrl = audioUrl.replace("/uploads/uploads/", "/uploads/");
+    }
+    if (audioUrl.startsWith("uploads/")) {
+      audioUrl = "/" + audioUrl;
+    }
+    if (audioUrl.startsWith("/static/uploads/")) {
+      audioUrl = "/uploads/" + audioUrl.split("/").pop();
+    }
     if (!audioUrl) return;
+    if (audioUrl !== rawAudioUrl) {
+      console.info("Normalized audio URL:", rawAudioUrl, "->", audioUrl);
+    }
 
     stopCurrentAudio();
 

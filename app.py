@@ -55,7 +55,7 @@ import unicodedata
 import requests
 from flask import (
     Flask, render_template, request, redirect, session,
-    jsonify, send_from_directory, abort, make_response, Response
+    jsonify, send_from_directory, send_file, abort, make_response, Response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -910,22 +910,56 @@ def google_verification():
 def uploads(filename):
     safe_name = os.path.basename(filename)
     full_path = os.path.join(UPLOAD_FOLDER, safe_name)
+    static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
+
+    def _audio_mimetype_for_name(name: str) -> str:
+        ext = (os.path.splitext(name or "")[1] or "").lower().strip(".")
+        if ext == "mp3":
+            return "audio/mpeg"
+        if ext == "wav":
+            return "audio/wav"
+        if ext == "ogg":
+            return "audio/ogg"
+        if ext == "webm":
+            return "audio/webm"
+        if ext == "m4a":
+            return "audio/mp4"
+        return "application/octet-stream"
+
+    def _serve_audio_abs(abs_path: str, source: str):
+        mime = _audio_mimetype_for_name(safe_name)
+        app.logger.info(
+            "uploads_serve file=%s source=%s abs_path=%s mime=%s size=%s",
+            safe_name,
+            source,
+            abs_path,
+            mime,
+            _safe_file_size(abs_path),
+        )
+        return send_file(abs_path, mimetype=mime, conditional=True)
+
+    app.logger.info(
+        "uploads_request file=%s upload_path=%s static_path=%s",
+        safe_name,
+        full_path,
+        static_path,
+    )
+
     if os.path.isfile(full_path):
-        return send_from_directory(UPLOAD_FOLDER, safe_name)
+        return _serve_audio_abs(full_path, "upload_folder")
 
     # Backward compatibility: legacy jobs/uploads may have written files to static/uploads.
     # This applies to both generated TTS (tts_*) and community Oromo recordings (word_*/phrase_*).
-    static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
     if os.path.isfile(static_path):
         try:
             if IS_RENDER_DISK:
                 # Promote legacy files into persistent disk when possible.
                 shutil.copy2(static_path, full_path)
                 if os.path.isfile(full_path):
-                    return send_from_directory(UPLOAD_FOLDER, safe_name)
+                    return _serve_audio_abs(full_path, "promoted_to_upload_folder")
         except Exception:
             app.logger.exception("Failed to promote legacy audio file to upload folder: %s", safe_name)
-        return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
+        return _serve_audio_abs(static_path, "static_uploads_fallback")
 
     app.logger.warning(
         "uploads_file_missing file=%s upload_path=%s static_path=%s",
@@ -937,15 +971,15 @@ def uploads(filename):
     # Lazy self-heal for generated TTS assets only.
     if _try_regenerate_missing_tts_file(safe_name):
         if os.path.isfile(full_path):
-            return send_from_directory(UPLOAD_FOLDER, safe_name)
+            return _serve_audio_abs(full_path, "lazy_regenerated_upload_folder")
         if os.path.isfile(static_path):
-            return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
+            return _serve_audio_abs(static_path, "lazy_regenerated_static_fallback")
 
     app.logger.warning(
         "uploads_file_404 file=%s reason=not_found_after_fallback_and_regen",
         safe_name,
     )
-    abort(404)
+    return jsonify({"ok": False, "error": "Audio file not found", "file": safe_name}), 404
 
 
 # ------------------ ADMIN IMPORT CONFIG ------------------
@@ -9729,6 +9763,176 @@ def run_regenerate_missing_audio_references(
     return summary
 
 
+def _iter_generated_tts_local_upload_rows(entry_type: str = "all", limit: int = 0):
+    """
+    Iterate generated_tts_audio rows and return local uploads-backed references.
+    """
+    et = normalize_text(entry_type or "all")
+    if et not in {"all", "word", "phrase"}:
+        et = "all"
+
+    where = ["file_path IS NOT NULL", "TRIM(file_path) != ''"]
+    params = []
+    if et in {"word", "phrase"}:
+        where.append("entry_type=?")
+        params.append(et)
+
+    where_sql = " AND ".join(where)
+    sql = f"""
+        SELECT id, entry_type, entry_id, lang_code, file_path
+        FROM generated_tts_audio
+        WHERE {where_sql}
+        ORDER BY id ASC
+    """
+    if int(limit or 0) > 0:
+        sql += " LIMIT ?"
+        params.append(int(limit or 0))
+
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(sql, tuple(params))
+        for row in (c.fetchall() or []):
+            yield row
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _scan_missing_local_audio_files(entry_type: str = "all", limit: int = 0):
+    """
+    Scan generated_tts_audio and return missing local uploads file names.
+    """
+    counters = {
+        "total_audio_rows_scanned": 0,
+        "already_present": 0,
+        "restored_from_render_export": 0,
+        "missing_in_render_export": 0,
+        "skipped_non_local_refs": 0,
+        "copy_failed": 0,
+    }
+    missing_files = []
+    missing_set = set()
+
+    for row in _iter_generated_tts_local_upload_rows(entry_type=entry_type, limit=limit):
+        _id, _etype, _eid, _lang, file_path = row
+        counters["total_audio_rows_scanned"] += 1
+        fp = normalize_text(file_path or "")
+        if not fp:
+            counters["skipped_non_local_refs"] += 1
+            continue
+        if _is_remote_audio_ref(fp):
+            counters["skipped_non_local_refs"] += 1
+            continue
+
+        fp_norm = fp.replace("\\", "/")
+        is_upload_style = fp_norm.startswith("uploads/") or fp_norm.startswith("/uploads/")
+        if not is_upload_style:
+            counters["skipped_non_local_refs"] += 1
+            continue
+
+        file_name = os.path.basename(fp_norm)
+        upload_abs = os.path.join(UPLOAD_FOLDER, file_name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, file_name)
+        if os.path.isfile(upload_abs) or os.path.isfile(static_abs):
+            counters["already_present"] += 1
+            continue
+
+        if file_name not in missing_set:
+            missing_set.add(file_name)
+            missing_files.append(file_name)
+
+    return counters, missing_files
+
+
+def run_restore_audio_files_from_export(from_dir: str, limit: int = 0, dry_run: bool = False, entry_type: str = "all"):
+    """
+    Restore missing uploads/<file> references from an exported Render uploads directory.
+    DB rows are not modified.
+    """
+    source_dir = os.path.abspath(normalize_text(from_dir or ""))
+    counters, missing_files = _scan_missing_local_audio_files(entry_type=entry_type, limit=limit)
+    counters["restored_from_render_export"] = 0
+    counters["missing_in_render_export"] = 0
+    counters["copy_failed"] = 0
+
+    sample_missing = missing_files[:10]
+    app.logger.info(
+        "restore_audio_files start db_path=%s upload_folder=%s source_dir=%s dry_run=%s entry_type=%s limit=%s missing_unique=%s sample_missing=%s",
+        DB_NAME,
+        UPLOAD_FOLDER,
+        source_dir,
+        bool(dry_run),
+        entry_type,
+        int(limit or 0),
+        len(missing_files),
+        sample_missing,
+    )
+
+    if (not source_dir) or (not os.path.isdir(source_dir)):
+        app.logger.error("restore_audio_files invalid_source_dir source_dir=%s", source_dir)
+        for _ in missing_files:
+            counters["missing_in_render_export"] += 1
+        return counters, missing_files
+
+    restored_names = []
+    unresolved_names = []
+    for file_name in missing_files:
+        src_abs = os.path.join(source_dir, file_name)
+        dst_abs = os.path.join(UPLOAD_FOLDER, file_name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, file_name)
+
+        # Idempotent safety: skip copy if file already present by the time we process it.
+        if os.path.isfile(dst_abs) or os.path.isfile(static_abs):
+            counters["already_present"] += 1
+            continue
+
+        if not os.path.isfile(src_abs):
+            counters["missing_in_render_export"] += 1
+            unresolved_names.append(file_name)
+            continue
+
+        if dry_run:
+            counters["restored_from_render_export"] += 1
+            restored_names.append(file_name)
+            continue
+
+        try:
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            shutil.copy2(src_abs, dst_abs)
+            if os.path.isfile(dst_abs):
+                counters["restored_from_render_export"] += 1
+                restored_names.append(file_name)
+            else:
+                counters["copy_failed"] += 1
+                unresolved_names.append(file_name)
+        except Exception:
+            counters["copy_failed"] += 1
+            unresolved_names.append(file_name)
+            app.logger.exception(
+                "restore_audio_files copy_failed file=%s src=%s dst=%s",
+                file_name,
+                src_abs,
+                dst_abs,
+            )
+
+    app.logger.info(
+        "restore_audio_files summary scanned=%s already_present=%s restored_from_render_export=%s missing_in_render_export=%s skipped_non_local_refs=%s copy_failed=%s sample_unresolved=%s",
+        counters.get("total_audio_rows_scanned", 0),
+        counters.get("already_present", 0),
+        counters.get("restored_from_render_export", 0),
+        counters.get("missing_in_render_export", 0),
+        counters.get("skipped_non_local_refs", 0),
+        counters.get("copy_failed", 0),
+        unresolved_names[:10],
+    )
+    return counters, missing_files
+
+
 @app.route("/admin/repair-missing-audio", methods=["GET", "POST"])
 def admin_repair_missing_audio():
     if not require_admin():
@@ -11238,6 +11442,137 @@ def cli_regen_missing_audio_refs(source_table, entry_type, offset, limit, batch_
                 f"entry={item.get('entry_type', '')}:{item.get('entry_id', 0)} "
                 f"lang={item.get('lang', '')} file={item.get('file', '')}"
             )
+
+
+@app.cli.command("list-missing-audio-files")
+@click.option(
+    "--entry-type",
+    type=click.Choice(["all", "word", "phrase"]),
+    default="all",
+    show_default=True,
+    help="Filter generated_tts_audio rows by entry_type.",
+)
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit rows scanned from generated_tts_audio (0 = all).")
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output format for missing filenames.",
+)
+def cli_list_missing_audio_files(entry_type, limit, output_format):
+    """
+    List missing local uploads/<file> names referenced by generated_tts_audio.
+    """
+    _log_db_context("cli:list-missing-audio-files")
+    counters, missing_files = _scan_missing_local_audio_files(entry_type=entry_type, limit=int(limit or 0))
+    sample = missing_files[:10]
+    app.logger.info(
+        "list_missing_audio_files db_path=%s upload_folder=%s entry_type=%s limit=%s missing=%s sample=%s",
+        DB_NAME,
+        UPLOAD_FOLDER,
+        entry_type,
+        int(limit or 0),
+        len(missing_files),
+        sample,
+    )
+
+    if output_format == "json":
+        payload = {
+            "db_path": DB_NAME,
+            "upload_folder": UPLOAD_FOLDER,
+            "entry_type": entry_type,
+            "limit": int(limit or 0),
+            "counters": counters,
+            "missing_files": missing_files,
+            "sample_missing_files": sample,
+        }
+        click.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    for name in missing_files:
+        click.echo(name)
+    click.echo(
+        f"SUMMARY total_audio_rows_scanned={counters.get('total_audio_rows_scanned', 0)} "
+        f"already_present={counters.get('already_present', 0)} "
+        f"missing_count={len(missing_files)} "
+        f"skipped_non_local_refs={counters.get('skipped_non_local_refs', 0)}"
+    )
+
+
+@app.cli.command("restore-audio-files")
+@click.option("--from-dir", "from_dir", required=True, help="Path to exported Render uploads directory.")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview restores without copying files.")
+@click.option("--limit", type=int, default=0, show_default=True, help="Limit rows scanned from generated_tts_audio (0 = all).")
+@click.option(
+    "--entry-type",
+    type=click.Choice(["all", "word", "phrase"]),
+    default="all",
+    show_default=True,
+    help="Filter generated_tts_audio rows by entry_type.",
+)
+@click.option(
+    "--output",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="Output summary format.",
+)
+def cli_restore_audio_files(from_dir, dry_run, limit, entry_type, output_format):
+    """
+    Restore missing uploads/<file> audio files from a Render export directory.
+    """
+    _log_db_context("cli:restore-audio-files")
+    source_dir = os.path.abspath(normalize_text(from_dir or ""))
+    counters, missing_files = run_restore_audio_files_from_export(
+        from_dir=source_dir,
+        limit=int(limit or 0),
+        dry_run=bool(dry_run),
+        entry_type=entry_type,
+    )
+    sample_missing = missing_files[:10]
+
+    if output_format == "json":
+        payload = {
+            "db_path": DB_NAME,
+            "upload_folder": UPLOAD_FOLDER,
+            "restore_source_directory": source_dir,
+            "entry_type": entry_type,
+            "limit": int(limit or 0),
+            "dry_run": bool(dry_run),
+            "sample_missing_filenames": sample_missing,
+            "summary_counters": {
+                "total_audio_rows_scanned": int(counters.get("total_audio_rows_scanned", 0) or 0),
+                "already_present": int(counters.get("already_present", 0) or 0),
+                "restored_from_render_export": int(counters.get("restored_from_render_export", 0) or 0),
+                "missing_in_render_export": int(counters.get("missing_in_render_export", 0) or 0),
+                "skipped_non_local_refs": int(counters.get("skipped_non_local_refs", 0) or 0),
+                "copy_failed": int(counters.get("copy_failed", 0) or 0),
+            },
+        }
+        click.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"UPLOAD_FOLDER={UPLOAD_FOLDER}")
+    click.echo(f"RESTORE_SOURCE_DIR={source_dir}")
+    click.echo(f"ENTRY_TYPE={entry_type}")
+    click.echo(f"LIMIT={int(limit or 0)}")
+    click.echo(f"DRY_RUN={bool(dry_run)}")
+    if sample_missing:
+        click.echo("SAMPLE_MISSING_FILENAMES=" + " | ".join(sample_missing))
+    else:
+        click.echo("SAMPLE_MISSING_FILENAMES=")
+    click.echo(
+        f"total_audio_rows_scanned={int(counters.get('total_audio_rows_scanned', 0) or 0)} "
+        f"already_present={int(counters.get('already_present', 0) or 0)} "
+        f"restored_from_render_export={int(counters.get('restored_from_render_export', 0) or 0)} "
+        f"missing_in_render_export={int(counters.get('missing_in_render_export', 0) or 0)} "
+        f"skipped_non_local_refs={int(counters.get('skipped_non_local_refs', 0) or 0)} "
+        f"copy_failed={int(counters.get('copy_failed', 0) or 0)}"
+    )
 
 
 @app.cli.command("backfill-phrase-translations")
