@@ -820,3 +820,111 @@ header.topbar .copy-name{
     white-space: nowrap;
   }
 }
+
+/* =======================================================
+   PREMIUM SIDEBAR OVERRIDE (shared, high-priority)
+======================================================= */
+.side-menu{
+  background: #fff;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 18px;
+  padding: 12px;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.08);
+}
+
+.side-link{
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  width: 100%;
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: linear-gradient(180deg, #ffffff 0%, #fcfcfc 100%);
+  color: #101010;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.06);
+  transition:
+    transform .14s ease,
+    box-shadow .18s ease,
+    border-color .18s ease,
+    color .18s ease,
+    background-color .18s ease;
+  overflow: hidden;
+}
+
+.side-link::after{
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, #0b0b0b 0 50%, #b30000 50% 100%);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform .18s ease;
+}
+
+.side-link:hover{
+  color: #8f0000;
+  border-color: rgba(179,0,0,0.34);
+  box-shadow: 0 12px 22px rgba(0,0,0,0.10);
+  transform: translateY(-1px);
+}
+
+.side-link:hover::after,
+.side-link:focus-visible::after,
+.side-link:active::after,
+.side-link.current::after{
+  transform: scaleX(1);
+}
+
+.side-link:active{
+  transform: translateY(2px);
+  box-shadow: 0 3px 7px rgba(0,0,0,0.10);
+}
+
+.side-link:focus-visible{
+  outline: 2px solid rgba(179,0,0,0.60);
+  outline-offset: 2px;
+  border-color: rgba(179,0,0,0.55);
+}
+
+.side-link.current,
+.side-link.active{
+  color: #0b0b0b;
+  border-color: rgba(179,0,0,0.55);
+  background: linear-gradient(180deg, #fffafa 0%, #fff4f4 100%);
+  box-shadow:
+    0 14px 24px rgba(0,0,0,0.10),
+    inset 0 0 0 1px rgba(179,0,0,0.18);
+}
+
+/* Mobile sidebar keeps chip layout but premium interactions */
+@media (max-width: 900px){
+  .side-menu{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 16px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.06);
+  }
+
+  .side-menu .side-link{
+    width: auto;
+    margin: 0;
+    min-height: 40px;
+    padding: 10px 12px;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+    box-shadow: 0 5px 12px rgba(0,0,0,0.07);
+  }
+}
