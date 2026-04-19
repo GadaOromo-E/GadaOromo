@@ -679,10 +679,11 @@ def assetlinks():
 # Backward-compatible flag name: true when using a mounted persistent disk path.
 IS_RENDER_DISK = BASE_DIR in {"/var/data", "/data"}
 IS_PERSISTENT_STORAGE = bool(PERSISTENT_DATA_CONFIGURED)
+DEFAULT_UPLOAD_FOLDER = "/data/uploads" if IS_RAILWAY else os.path.join(BASE_DIR, "uploads")
 UPLOAD_FOLDER = (
     os.environ.get("AUDIO_UPLOAD_DIR", "").strip()
     or os.environ.get("UPLOAD_FOLDER", "").strip()
-    or os.path.join(BASE_DIR, "uploads")
+    or DEFAULT_UPLOAD_FOLDER
 )
 UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
 
@@ -691,6 +692,131 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Do not derive from BASE_DIR; app static is code assets, not persistent storage.
 STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
+
+
+def _copy_static_uploads_to_persistent_startup():
+    """
+    Startup repair: copy any bundled audio files into persistent storage.
+    Railway-safe behavior: skip existing files and never overwrite.
+    """
+    copied = 0
+    scanned = 0
+    skipped_existing = 0
+    if not os.path.isdir(STATIC_UPLOADS_FOLDER):
+        app.logger.info(
+            "startup_audio_copy status=skipped reason=static_uploads_missing static_uploads=%s upload_folder=%s",
+            STATIC_UPLOADS_FOLDER,
+            UPLOAD_FOLDER,
+        )
+        return
+    try:
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        for name in os.listdir(STATIC_UPLOADS_FOLDER):
+            src_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+            if not os.path.isfile(src_abs):
+                continue
+            scanned += 1
+            dst_abs = os.path.join(UPLOAD_FOLDER, os.path.basename(name))
+            if os.path.isfile(dst_abs):
+                skipped_existing += 1
+                continue
+            try:
+                shutil.copy2(src_abs, dst_abs)
+                copied += 1
+            except Exception:
+                app.logger.exception(
+                    "startup_audio_copy file_copy_failed file=%s src=%s dst=%s",
+                    name,
+                    src_abs,
+                    dst_abs,
+                )
+        app.logger.info(
+            "startup_audio_copy status=done scanned=%s copied=%s skipped_existing=%s static_uploads=%s upload_folder=%s",
+            scanned,
+            copied,
+            skipped_existing,
+            STATIC_UPLOADS_FOLDER,
+            UPLOAD_FOLDER,
+        )
+    except Exception:
+        app.logger.exception(
+            "startup_audio_copy status=failed static_uploads=%s upload_folder=%s",
+            STATIC_UPLOADS_FOLDER,
+            UPLOAD_FOLDER,
+        )
+
+
+def _try_regenerate_missing_tts_file(name: str) -> bool:
+    """
+    Attempt lazy regeneration for missing generated TTS assets using filename metadata.
+    Returns True only when the expected file exists in UPLOAD_FOLDER after generation.
+    """
+    clean_name = os.path.basename(name or "")
+    m = GENERATED_TTS_FILENAME_RE.match(clean_name)
+    if not m:
+        return False
+
+    entry_type, entry_id_raw, lang_code, _, _ = m.groups()
+    try:
+        entry_id = int(entry_id_raw)
+    except Exception:
+        return False
+
+    texts = _get_entry_texts_for_tts(entry_type, entry_id)
+    text_value = normalize_text((texts or {}).get(lang_code, "") or "")
+    if not text_value:
+        app.logger.warning(
+            "uploads_missing_tts_regen_skipped reason=missing_text file=%s entry_type=%s entry_id=%s lang=%s",
+            clean_name,
+            entry_type,
+            entry_id,
+            lang_code,
+        )
+        return False
+
+    regen_url = normalize_text(
+        _resolve_or_generate_tts_for_text(
+            entry_type,
+            entry_id,
+            lang_code,
+            text_value,
+            allow_generate=True,
+        )
+        or ""
+    )
+    if not regen_url:
+        app.logger.warning(
+            "uploads_missing_tts_regen_failed reason=generator_returned_empty file=%s entry_type=%s entry_id=%s lang=%s",
+            clean_name,
+            entry_type,
+            entry_id,
+            lang_code,
+        )
+        return False
+
+    regenerated_abs = os.path.join(UPLOAD_FOLDER, clean_name)
+    if os.path.isfile(regenerated_abs):
+        app.logger.info(
+            "uploads_missing_tts_regen_done file=%s entry_type=%s entry_id=%s lang=%s url=%s",
+            clean_name,
+            entry_type,
+            entry_id,
+            lang_code,
+            regen_url,
+        )
+        return True
+    app.logger.warning(
+        "uploads_missing_tts_regen_failed reason=file_not_materialized file=%s entry_type=%s entry_id=%s lang=%s url=%s",
+        clean_name,
+        entry_type,
+        entry_id,
+        lang_code,
+        regen_url,
+    )
+    return False
+
+
+_copy_static_uploads_to_persistent_startup()
 app.logger.info(
     "Audio storage configured runtime=%s persistent_data_configured=%s is_render_disk=%s is_persistent_storage=%s upload_folder=%s static_uploads=%s",
     APP_RUNTIME,
@@ -800,6 +926,24 @@ def uploads(filename):
             app.logger.exception("Failed to promote legacy audio file to upload folder: %s", safe_name)
         return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
 
+    app.logger.warning(
+        "uploads_file_missing file=%s upload_path=%s static_path=%s",
+        safe_name,
+        full_path,
+        static_path,
+    )
+
+    # Lazy self-heal for generated TTS assets only.
+    if _try_regenerate_missing_tts_file(safe_name):
+        if os.path.isfile(full_path):
+            return send_from_directory(UPLOAD_FOLDER, safe_name)
+        if os.path.isfile(static_path):
+            return send_from_directory(STATIC_UPLOADS_FOLDER, safe_name)
+
+    app.logger.warning(
+        "uploads_file_404 file=%s reason=not_found_after_fallback_and_regen",
+        safe_name,
+    )
     abort(404)
 
 
@@ -9358,6 +9502,232 @@ def run_repair_missing_audio(
     return out
 
 
+def run_regenerate_missing_audio_references(
+    limit: int = 0,
+    offset: int = 0,
+    batch_size: int = 100,
+    dry_run: bool = False,
+    source_table: str = "generated_tts_audio",
+    entry_type_filter: str = "all",
+):
+    """
+    Scan DB audio references and regenerate only missing generated TTS files.
+    Existing files are never overwritten.
+    """
+    source_table = normalize_text(source_table or "generated_tts_audio")
+    if source_table not in {"generated_tts_audio", "audio"}:
+        source_table = "generated_tts_audio"
+    entry_type_filter = normalize_text(entry_type_filter or "all")
+    if entry_type_filter not in {"all", "word", "phrase"}:
+        entry_type_filter = "all"
+
+    summary = {
+        "source_table": source_table,
+        "entry_type_filter": entry_type_filter,
+        "offset": int(max(0, int(offset or 0))),
+        "limit": int(max(0, int(limit or 0))),
+        "batch_size": int(max(1, int(batch_size or 1))),
+        "dry_run": bool(dry_run),
+        "refs_checked": 0,
+        "refs_existing_local": 0,
+        "refs_existing_remote": 0,
+        "refs_missing": 0,
+        "refs_skipped_unregenerable": 0,
+        "would_regenerate": 0,
+        "regenerated_success": 0,
+        "regenerated_failed": 0,
+        "failed_missing_text": 0,
+        "sample_failures": [],
+    }
+
+    cond = "WHERE file_path IS NOT NULL AND TRIM(file_path) != ''"
+    params = []
+    if entry_type_filter in {"word", "phrase"}:
+        cond += " AND entry_type=?"
+        params.append(entry_type_filter)
+
+    if source_table == "generated_tts_audio":
+        base_sql = f"""
+            SELECT id, entry_type, entry_id, lang_code, text_value, file_path
+            FROM generated_tts_audio
+            {cond}
+            ORDER BY id ASC
+        """
+    else:
+        base_sql = f"""
+            SELECT id, entry_type, entry_id, lang AS lang_code, '' AS text_value, file_path
+            FROM audio
+            {cond}
+            ORDER BY id ASC
+        """
+
+    if int(limit or 0) > 0:
+        sql = f"{base_sql} LIMIT ? OFFSET ?"
+        params = params + [int(limit), int(offset or 0)]
+    else:
+        sql = f"{base_sql} LIMIT -1 OFFSET ?"
+        params = params + [int(offset or 0)]
+
+    conn = None
+    rows = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(sql, tuple(params))
+        rows = c.fetchall() or []
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    total_rows = len(rows)
+    app.logger.info(
+        "regen_missing_audio_refs start table=%s entry_type=%s rows=%s dry_run=%s offset=%s limit=%s batch_size=%s",
+        source_table,
+        entry_type_filter,
+        total_rows,
+        bool(dry_run),
+        int(offset or 0),
+        int(limit or 0),
+        int(batch_size or 0),
+    )
+
+    def _remember_failure(ref_id, reason, file_name="", entry_type="", entry_id=0, lang_code=""):
+        if len(summary["sample_failures"]) >= 8:
+            return
+        summary["sample_failures"].append(
+            {
+                "id": int(ref_id or 0),
+                "reason": normalize_text(reason or ""),
+                "file": normalize_text(file_name or ""),
+                "entry_type": normalize_text(entry_type or ""),
+                "entry_id": int(entry_id or 0),
+                "lang": normalize_text(lang_code or ""),
+            }
+        )
+
+    processed = 0
+    for row in rows:
+        ref_id, entry_type, entry_id, lang_code, text_value, file_path = row
+        entry_type = normalize_text(entry_type or "")
+        lang_code = _canonical_tts_lang_code(lang_code or "")
+        fp = normalize_text(file_path or "")
+        name = os.path.basename((fp or "").replace("\\", "/"))
+
+        summary["refs_checked"] += 1
+        processed += 1
+
+        if _is_remote_audio_ref(fp):
+            summary["refs_existing_remote"] += 1
+            continue
+
+        if _has_usable_audio_ref(fp):
+            summary["refs_existing_local"] += 1
+            continue
+
+        summary["refs_missing"] += 1
+
+        if bool(dry_run):
+            if source_table == "generated_tts_audio":
+                summary["would_regenerate"] += 1
+            else:
+                summary["refs_skipped_unregenerable"] += 1
+            continue
+
+        if source_table != "generated_tts_audio":
+            summary["refs_skipped_unregenerable"] += 1
+            _remember_failure(
+                ref_id=ref_id,
+                reason="non_tts_audio_row",
+                file_name=name,
+                entry_type=entry_type,
+                entry_id=entry_id,
+                lang_code=lang_code,
+            )
+            continue
+
+        text_norm = normalize_text(text_value or "")
+        if not text_norm:
+            try:
+                text_norm = normalize_text(
+                    (_get_entry_texts_for_tts(entry_type, int(entry_id or 0)) or {}).get(lang_code, "") or ""
+                )
+            except Exception:
+                text_norm = ""
+
+        if not text_norm:
+            summary["failed_missing_text"] += 1
+            summary["regenerated_failed"] += 1
+            _remember_failure(
+                ref_id=ref_id,
+                reason="missing_text_for_regeneration",
+                file_name=name,
+                entry_type=entry_type,
+                entry_id=entry_id,
+                lang_code=lang_code,
+            )
+            continue
+
+        try:
+            url = normalize_text(
+                _resolve_or_generate_tts_for_text(
+                    entry_type=entry_type,
+                    entry_id=int(entry_id or 0),
+                    lang_code=lang_code,
+                    text=text_norm,
+                    allow_generate=True,
+                )
+                or ""
+            )
+            if url:
+                summary["regenerated_success"] += 1
+            else:
+                summary["regenerated_failed"] += 1
+                _remember_failure(
+                    ref_id=ref_id,
+                    reason="generation_returned_empty",
+                    file_name=name,
+                    entry_type=entry_type,
+                    entry_id=entry_id,
+                    lang_code=lang_code,
+                )
+        except Exception as e:
+            summary["regenerated_failed"] += 1
+            _remember_failure(
+                ref_id=ref_id,
+                reason=f"exception:{type(e).__name__}",
+                file_name=name,
+                entry_type=entry_type,
+                entry_id=entry_id,
+                lang_code=lang_code,
+            )
+            app.logger.exception(
+                "regen_missing_audio_refs item_failed table=%s id=%s entry_type=%s entry_id=%s lang=%s",
+                source_table,
+                ref_id,
+                entry_type,
+                entry_id,
+                lang_code,
+            )
+
+        if (processed % int(batch_size or 1)) == 0:
+            app.logger.info(
+                "regen_missing_audio_refs progress table=%s processed=%s/%s checked=%s missing=%s regenerated=%s failed=%s",
+                source_table,
+                processed,
+                total_rows,
+                summary["refs_checked"],
+                summary["refs_missing"],
+                summary["regenerated_success"],
+                summary["regenerated_failed"],
+            )
+
+    app.logger.info("regen_missing_audio_refs summary: %s", summary)
+    return summary
+
+
 @app.route("/admin/repair-missing-audio", methods=["GET", "POST"])
 def admin_repair_missing_audio():
     if not require_admin():
@@ -10796,6 +11166,77 @@ def cli_repair_missing_audio(limit):
         f"linkage_rows_linked={linkage.get('rows_linked', 0)} "
         f"linkage_rows_already_present={linkage.get('rows_already_present', 0)}"
     )
+
+
+@app.cli.command("regen-missing-audio-refs")
+@click.option(
+    "--table",
+    "source_table",
+    type=click.Choice(["generated_tts_audio", "audio"]),
+    default="generated_tts_audio",
+    show_default=True,
+    help="Which DB audio reference table to scan.",
+)
+@click.option(
+    "--entry-type",
+    type=click.Choice(["all", "word", "phrase"]),
+    default="all",
+    show_default=True,
+    help="Filter rows by entry_type.",
+)
+@click.option("--offset", type=int, default=0, show_default=True, help="Start offset for resumable runs.")
+@click.option("--limit", type=int, default=0, show_default=True, help="Max rows to scan (0 = all from offset).")
+@click.option("--batch-size", type=int, default=100, show_default=True, help="Progress logging interval.")
+@click.option("--dry-run", is_flag=True, default=False, help="Preview only; do not generate files.")
+def cli_regen_missing_audio_refs(source_table, entry_type, offset, limit, batch_size, dry_run):
+    """
+    One-time batch regeneration for missing audio references.
+    - Scans DB references directly
+    - Skips existing files/URLs
+    - Regenerates only missing generated_tts_audio rows
+    - Never overwrites existing files
+    """
+    _log_db_context("cli:regen-missing-audio-refs")
+    click.echo(f"DB_PATH={DB_NAME}")
+    click.echo(f"DB_ABS={os.path.abspath(DB_NAME)}")
+    click.echo(f"UPLOAD_FOLDER={UPLOAD_FOLDER}")
+    click.echo(f"STATIC_UPLOADS_FOLDER={STATIC_UPLOADS_FOLDER}")
+    click.echo(
+        f"TABLE={source_table} ENTRY_TYPE={entry_type} OFFSET={int(offset or 0)} "
+        f"LIMIT={int(limit or 0)} BATCH_SIZE={int(batch_size or 0)} DRY_RUN={bool(dry_run)}"
+    )
+
+    summary = run_regenerate_missing_audio_references(
+        limit=int(limit or 0),
+        offset=int(offset or 0),
+        batch_size=max(1, int(batch_size or 1)),
+        dry_run=bool(dry_run),
+        source_table=source_table,
+        entry_type_filter=entry_type,
+    )
+
+    click.echo("Missing audio reference scan completed.")
+    click.echo(
+        f"refs_checked={summary.get('refs_checked', 0)} "
+        f"refs_existing_local={summary.get('refs_existing_local', 0)} "
+        f"refs_existing_remote={summary.get('refs_existing_remote', 0)} "
+        f"refs_missing={summary.get('refs_missing', 0)} "
+        f"would_regenerate={summary.get('would_regenerate', 0)} "
+        f"regenerated_success={summary.get('regenerated_success', 0)} "
+        f"regenerated_failed={summary.get('regenerated_failed', 0)} "
+        f"failed_missing_text={summary.get('failed_missing_text', 0)} "
+        f"refs_skipped_unregenerable={summary.get('refs_skipped_unregenerable', 0)} "
+        f"dry_run={summary.get('dry_run', False)}"
+    )
+    failures = summary.get("sample_failures", []) or []
+    if failures:
+        click.echo("sample_failures:")
+        for item in failures:
+            click.echo(
+                f"- id={item.get('id', 0)} reason={item.get('reason', '')} "
+                f"entry={item.get('entry_type', '')}:{item.get('entry_id', 0)} "
+                f"lang={item.get('lang', '')} file={item.get('file', '')}"
+            )
 
 
 @app.cli.command("backfill-phrase-translations")
