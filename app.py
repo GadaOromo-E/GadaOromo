@@ -100,44 +100,146 @@ def _safe_file_size(path: str):
     return None
 
 
+def _inspect_sqlite_db(path: str):
+    """
+    Inspect a SQLite DB file for bootstrap decisions.
+    Returns structured diagnostics and a conservative keep/reseed decision.
+    """
+    diag = {
+        "path": path,
+        "exists": os.path.isfile(path),
+        "size": _safe_file_size(path),
+        "valid_sqlite": False,
+        "tables": [],
+        "words_count": None,
+        "phrases_count": None,
+        "approved_words_count": None,
+        "approved_phrases_count": None,
+        "keep": False,
+        "reseed": True,
+        "reason": "",
+        "error": None,
+    }
+
+    if not diag["exists"]:
+        diag["reason"] = "missing_file"
+        return diag
+
+    conn = None
+    try:
+        conn = sqlite3.connect(path)
+        c = conn.cursor()
+        c.execute("PRAGMA quick_check;")
+        quick = str((c.fetchone() or [""])[0] or "").strip().lower()
+        if quick != "ok":
+            diag["reason"] = f"quick_check_failed:{quick or 'unknown'}"
+            return diag
+        diag["valid_sqlite"] = True
+
+        c.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = sorted(
+            str(r[0]).strip()
+            for r in (c.fetchall() or [])
+            if r and str(r[0] or "").strip()
+        )
+        diag["tables"] = tables
+
+        required = {"words", "phrases"}
+        if not required.issubset(set(tables)):
+            diag["reason"] = "missing_required_tables"
+            return diag
+
+        c.execute("SELECT COUNT(*) FROM words")
+        words_count = int((c.fetchone() or [0])[0] or 0)
+        c.execute("SELECT COUNT(*) FROM phrases")
+        phrases_count = int((c.fetchone() or [0])[0] or 0)
+        diag["words_count"] = words_count
+        diag["phrases_count"] = phrases_count
+
+        try:
+            c.execute("SELECT COUNT(*) FROM words WHERE status='approved'")
+            diag["approved_words_count"] = int((c.fetchone() or [0])[0] or 0)
+        except Exception:
+            diag["approved_words_count"] = None
+        try:
+            c.execute("SELECT COUNT(*) FROM phrases WHERE status='approved'")
+            diag["approved_phrases_count"] = int((c.fetchone() or [0])[0] or 0)
+        except Exception:
+            diag["approved_phrases_count"] = None
+
+        # Conservative overwrite rule:
+        # auto-reseed only when DB is clearly empty bootstrap state.
+        if words_count <= 0 and phrases_count <= 0:
+            diag["reason"] = "empty_base_tables"
+            return diag
+
+        # Keep if base tables contain data (even if approved counts are low/missing),
+        # to avoid destructive overwrite of legitimate user data.
+        diag["keep"] = True
+        diag["reseed"] = False
+        if (
+            diag["approved_words_count"] is not None
+            and diag["approved_phrases_count"] is not None
+            and diag["approved_words_count"] <= 0
+            and diag["approved_phrases_count"] <= 0
+        ):
+            diag["reason"] = "base_data_present_but_no_approved_rows"
+        else:
+            diag["reason"] = "base_data_present"
+        return diag
+    except Exception as e:
+        diag["error"] = repr(e)
+        diag["reason"] = "sqlite_open_or_query_failed"
+        return diag
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def _bootstrap_railway_db():
     src = BOOTSTRAP_DB_SOURCE
     dst = RAILWAY_DB_PATH
 
-    src_exists = os.path.isfile(src)
-    dst_exists_before = os.path.isfile(dst)
-    print(
-        f"[startup-db] source={src} source_exists={src_exists} "
-        f"source_size={_safe_file_size(src)}"
-    )
-    print(
-        f"[startup-db] destination={dst} dest_exists_before={dst_exists_before} "
-        f"dest_size_before={_safe_file_size(dst)}"
-    )
+    src_diag = _inspect_sqlite_db(src)
+    dst_diag_before = _inspect_sqlite_db(dst)
+    print(f"[startup-db] source_diag={src_diag}")
+    print(f"[startup-db] dest_diag_before={dst_diag_before}")
 
     copy_ran = False
     copy_error = None
-    if not dst_exists_before:
-        if src_exists:
+    copy_reason = "kept_existing_destination_db"
+    if dst_diag_before.get("reseed", True):
+        copy_reason = f"reseed_destination_db reason={dst_diag_before.get('reason', 'unknown')}"
+        if not src_diag.get("valid_sqlite", False):
+            copy_error = f"source_not_usable reason={src_diag.get('reason', '')} error={src_diag.get('error', '')}"
+        elif (int(src_diag.get("words_count") or 0) <= 0 and int(src_diag.get("phrases_count") or 0) <= 0):
+            copy_error = "source_missing_base_content"
+        else:
             try:
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(src, dst)
                 copy_ran = True
             except Exception as e:
                 copy_error = repr(e)
-        else:
-            copy_error = "bootstrap source DB missing"
 
-    dst_exists_after = os.path.isfile(dst)
+    dst_diag_after = _inspect_sqlite_db(dst)
     print(
-        f"[startup-db] copy_ran={copy_ran} copy_error={copy_error} "
-        f"dest_exists_after={dst_exists_after} dest_size_after={_safe_file_size(dst)}"
+        f"[startup-db] copy_ran={copy_ran} copy_reason={copy_reason} copy_error={copy_error} "
+        f"dest_diag_after={dst_diag_after}"
     )
 
-    if _is_prod_runtime() and not dst_exists_after:
+    if _is_prod_runtime() and not dst_diag_after.get("exists", False):
         raise RuntimeError(
             f"Production DB bootstrap failed: {dst} is missing after startup bootstrap. "
-            f"source={src} source_exists={src_exists} copy_error={copy_error}"
+            f"source_diag={src_diag} dest_diag_after={dst_diag_after} copy_error={copy_error}"
+        )
+    if _is_prod_runtime() and dst_diag_after.get("reseed", True):
+        raise RuntimeError(
+            f"Production DB bootstrap failed: destination DB is not usable after startup bootstrap. "
+            f"dest_diag_after={dst_diag_after} source_diag={src_diag} copy_error={copy_error}"
         )
 
 
@@ -227,11 +329,19 @@ if IS_RAILWAY and os.path.abspath(DB_NAME) != os.path.abspath(RAILWAY_DB_PATH):
         "Set DB_PATH=/data/gadaoromo.db or remove DB_PATH to use the default."
     )
 
-if IS_RAILWAY and not os.path.isfile(DB_NAME):
-    raise RuntimeError(
-        f"Railway DB missing at startup: {DB_NAME}. "
-        f"bootstrap_source={BOOTSTRAP_DB_SOURCE} source_exists={os.path.isfile(BOOTSTRAP_DB_SOURCE)}"
-    )
+if IS_RAILWAY:
+    railway_db_diag = _inspect_sqlite_db(DB_NAME)
+    app.logger.info("Railway resolved DB diagnostics: %s", railway_db_diag)
+    if not railway_db_diag.get("exists", False):
+        raise RuntimeError(
+            f"Railway DB missing at startup: {DB_NAME}. "
+            f"bootstrap_source={BOOTSTRAP_DB_SOURCE} source_exists={os.path.isfile(BOOTSTRAP_DB_SOURCE)}"
+        )
+    if railway_db_diag.get("reseed", True):
+        raise RuntimeError(
+            f"Railway DB unusable after bootstrap: {DB_NAME}. "
+            f"diag={railway_db_diag}"
+        )
 app.logger.info(f"âœ… Using DB_NAME={DB_NAME}")
 
 DEFAULT_REQUIRE_EXPLICIT_DB_PATH = (
