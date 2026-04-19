@@ -81,29 +81,6 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 BOOTSTRAP_DB_SOURCE = os.path.join(APP_ROOT, "gadaoromo.db")
 RAILWAY_DB_PATH = "/data/gadaoromo.db"
 
-import sqlite3, os
-
-def inspect_db(path):
-    print("\n--- DB CHECK:", path)
-    print("exists:", os.path.exists(path))
-    if os.path.exists(path):
-        print("size:", os.path.getsize(path))
-        con = sqlite3.connect(path)
-        cur = con.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        print("tables:", cur.fetchall())
-
-        for t in ["words", "phrases"]:
-            try:
-                cur.execute(f"SELECT COUNT(*) FROM {t}")
-                print(f"{t} count:", cur.fetchone()[0])
-            except Exception as e:
-                print(f"{t} error:", e)
-
-        con.close()
-
-inspect_db("/app/gadaoromo.db")
-inspect_db("/data/gadaoromo.db")
 
 def _is_prod_runtime() -> bool:
     return (
