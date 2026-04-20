@@ -175,26 +175,86 @@
 
   <div class="card">
     <h2>Audio Repair Tools</h2>
-    <div class="subtle">Import missing phrase audio from source website into persistent uploads without Azure/TTS regeneration.</div>
-    <form id="importPhraseAudioForm" method="POST" action="/admin/import-missing-phrase-audio" class="row" style="margin-top:12px; align-items:flex-end; gap:10px; flex-wrap:wrap;">
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <label for="phrase-audio-limit" class="subtle">Batch size</label>
-        <input id="phrase-audio-limit" type="number" name="limit" min="1" max="2000" value="100" style="min-width:120px;">
+    <div class="subtle">Run missing-audio generation in background queue. Requests return immediately.</div>
+
+    <div class="grid" style="margin-top:12px;">
+      <div class="card" style="margin-top:0;">
+        <h3 style="margin-top:0;">Phrase Audio</h3>
+        <div class="result-box">Missing phrase audio: <b>{{ (phrase_audio_missing or {}).get('missing_entries', 0) }}</b></div>
+        <form method="POST" action="/admin/queue-regenerate-missing-phrase-audio" style="margin-top:10px;">
+          <input type="hidden" name="limit" value="0">
+          <button type="submit" class="btn primary">Generate Missing Phrase Audio</button>
+        </form>
       </div>
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <label for="phrase-audio-offset" class="subtle">Offset</label>
-        <input id="phrase-audio-offset" type="number" name="offset" min="0" value="0" style="min-width:120px;">
+
+      <div class="card" style="margin-top:0;">
+        <h3 style="margin-top:0;">Word Audio</h3>
+        <div class="result-box">Missing word audio: <b>{{ (word_audio_missing or {}).get('missing_entries', 0) }}</b></div>
+        <form method="POST" action="/admin/queue-regenerate-missing-word-audio" style="margin-top:10px;">
+          <input type="hidden" name="limit" value="0">
+          <button type="submit" class="btn primary">Generate Missing Word Audio</button>
+        </form>
       </div>
-      <div style="display:flex; flex-direction:column; gap:4px;">
-        <label for="phrase-audio-entry-id" class="subtle">Phrase ID (optional)</label>
-        <input id="phrase-audio-entry-id" type="number" name="entry_id" min="0" placeholder="e.g. 3241" style="min-width:160px;">
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <h3 style="margin-top:0;">Latest Audio Repair Results</h3>
+      <div class="result-box" style="margin-top:8px;">
+        <b>Phrase job:</b>
+        {% set ps = (latest_phrase_audio_job or {}).get('summary', {}) %}
+        {% if latest_phrase_audio_job %}
+          Job #{{ (latest_phrase_audio_job or {}).get('job_id', 0) }} ({{ (latest_phrase_audio_job or {}).get('status', 'unknown') }}).
+          Scanned: {{ ps.get('scanned_entries', 0) }},
+          Generated: {{ ps.get('audio_generated', 0) }},
+          Skipped existing: {{ ps.get('audio_skipped_existing', 0) }},
+          Missing voice: {{ ps.get('audio_missing_voice', 0) }},
+          Failed: {{ ps.get('audio_failed', 0) }}.
+        {% else %}
+          No phrase audio repair job run yet.
+        {% endif %}
       </div>
-      <label style="display:flex; align-items:center; gap:6px; padding-bottom:8px;">
-        <input type="checkbox" name="dry_run" value="1">
-        <span class="subtle">Dry run</span>
-      </label>
-      <button type="submit" class="btn primary">Import Missing Phrase Audio</button>
-    </form>
+      <div class="result-box" style="margin-top:8px;">
+        <b>Word job:</b>
+        {% set ws = (latest_word_audio_job or {}).get('summary', {}) %}
+        {% if latest_word_audio_job %}
+          Job #{{ (latest_word_audio_job or {}).get('job_id', 0) }} ({{ (latest_word_audio_job or {}).get('status', 'unknown') }}).
+          Scanned: {{ ws.get('scanned_entries', 0) }},
+          Generated: {{ ws.get('audio_generated', 0) }},
+          Skipped existing: {{ ws.get('audio_skipped_existing', 0) }},
+          Missing voice: {{ ws.get('audio_missing_voice', 0) }},
+          Failed: {{ ws.get('audio_failed', 0) }}.
+        {% else %}
+          No word audio repair job run yet.
+        {% endif %}
+      </div>
+    </div>
+
+    <details style="margin-top:12px;">
+      <summary><b>Advanced options</b></summary>
+      <div class="subtle" style="margin-top:8px;">Import missing phrase audio from source domain into Railway uploads (no regeneration).</div>
+      <div style="margin-top:8px;">
+        <a class="btn" href="/admin/repair-missing-audio">Open Legacy Audio Repair Page</a>
+      </div>
+      <form id="importPhraseAudioForm" method="POST" action="/admin/import-missing-phrase-audio" class="row" style="margin-top:12px; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label for="phrase-audio-limit" class="subtle">Limit</label>
+          <input id="phrase-audio-limit" type="number" name="limit" min="1" max="2000" value="100" style="min-width:120px;">
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label for="phrase-audio-offset" class="subtle">Offset</label>
+          <input id="phrase-audio-offset" type="number" name="offset" min="0" value="0" style="min-width:120px;">
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label for="phrase-audio-entry-id" class="subtle">Phrase entry_id (optional)</label>
+          <input id="phrase-audio-entry-id" type="number" name="entry_id" min="0" placeholder="e.g. 3241" style="min-width:180px;">
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; padding-bottom:8px;">
+          <input type="checkbox" name="dry_run" value="1">
+          <span class="subtle">dry_run</span>
+        </label>
+        <button id="importPhraseAudioBtn" type="submit" class="btn">Import Missing Phrase Audio</button>
+      </form>
+    </details>
     <div id="importPhraseAudioBanner" class="result-box" style="display:none; margin-top:10px;"></div>
     <pre id="importPhraseAudioResult" style="display:none; margin-top:10px; background:#111; color:#f4f4f4; padding:10px; border-radius:8px; overflow:auto; max-height:260px;"></pre>
   </div>
