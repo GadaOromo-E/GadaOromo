@@ -2651,6 +2651,7 @@ def ensure_post_import_jobs_table():
                 options_json TEXT NOT NULL DEFAULT '{}',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 runtime TEXT NOT NULL DEFAULT '',
+                result_json TEXT NOT NULL DEFAULT '{}',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 started_at DATETIME,
                 finished_at DATETIME,
@@ -2664,6 +2665,8 @@ def ensure_post_import_jobs_table():
             c.execute("ALTER TABLE post_import_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'post_import'")
         if "options_json" not in cols:
             c.execute("ALTER TABLE post_import_jobs ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
+        if "result_json" not in cols:
+            c.execute("ALTER TABLE post_import_jobs ADD COLUMN result_json TEXT NOT NULL DEFAULT '{}'")
         c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_id ON post_import_jobs(status, id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_type_id ON post_import_jobs(status, job_type, id)")
         conn.commit()
@@ -6105,7 +6108,7 @@ def _claim_next_post_import_job():
                 pass
 
 
-def _complete_post_import_job(job_id: int, ok: bool, error_text: str = ""):
+def _complete_post_import_job(job_id: int, ok: bool, error_text: str = "", result_payload: dict = None):
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -6113,17 +6116,23 @@ def _complete_post_import_job(job_id: int, ok: bool, error_text: str = ""):
         c.execute(
             """
             UPDATE post_import_jobs
-            SET status=?, finished_at=CURRENT_TIMESTAMP, last_error=?
+            SET status=?, finished_at=CURRENT_TIMESTAMP, last_error=?, result_json=?
             WHERE id=?
             """,
-            ("done" if ok else "failed", normalize_text(error_text or "")[:2000], int(job_id or 0)),
+            (
+                "done" if ok else "failed",
+                normalize_text(error_text or "")[:2000],
+                json.dumps(result_payload or {}, separators=(",", ":")),
+                int(job_id or 0),
+            ),
         )
         conn.commit()
         app.logger.info(
-            "post_import_worker job_%s job_id=%s error=%s",
+            "post_import_worker job_%s job_id=%s error=%s result=%s",
             "done" if ok else "failed",
             int(job_id or 0),
             normalize_text(error_text or ""),
+            (result_payload or {}),
         )
     except Exception:
         app.logger.exception("Failed to finalize post-import job id=%s", int(job_id or 0))
@@ -6245,10 +6254,11 @@ def _post_import_worker_loop():
                         chunk_size=chunk_size,
                         import_summary=import_summary,
                     )
+                    summary = {}
                 if run_ok:
-                    _complete_post_import_job(job_id, ok=True, error_text="")
+                    _complete_post_import_job(job_id, ok=True, error_text="", result_payload=summary)
                 else:
-                    _complete_post_import_job(job_id, ok=False, error_text="pipeline_returned_failure")
+                    _complete_post_import_job(job_id, ok=False, error_text="pipeline_returned_failure", result_payload=summary)
             except Exception as e:
                 app.logger.exception("post_import_worker job failed job_id=%s", job_id)
                 _complete_post_import_job(job_id, ok=False, error_text=repr(e))
@@ -9306,6 +9316,71 @@ def dashboard():
     if not require_admin():
         return redirect("/admin")
 
+    def _dashboard_missing_audio(entry_type: str):
+        try:
+            items = _fetch_approved_items_for_audio_regen(entry_type, limit=0)
+            scan = _scan_missing_audio_targets(entry_type, items)
+            return {
+                "entry_type": entry_type,
+                "scanned_entries": int((scan or {}).get("scanned_entries", 0) or 0),
+                "missing_entries": int(len((scan or {}).get("target_items", []) or [])),
+                "audio_attempted": int((scan or {}).get("audio_attempted", 0) or 0),
+                "audio_skipped_existing": int((scan or {}).get("audio_skipped_existing", 0) or 0),
+                "audio_missing_voice": int((scan or {}).get("audio_missing_voice", 0) or 0),
+            }
+        except Exception:
+            app.logger.exception("dashboard_missing_audio_count_failed entry_type=%s", entry_type)
+            return {
+                "entry_type": entry_type,
+                "scanned_entries": 0,
+                "missing_entries": 0,
+                "audio_attempted": 0,
+                "audio_skipped_existing": 0,
+                "audio_missing_voice": 0,
+            }
+
+    def _latest_audio_job_result(entry_type: str):
+        job_type = f"admin_audio_regen_{entry_type}"
+        conn2 = None
+        try:
+            conn2 = sqlite3.connect(DB_NAME)
+            c2 = conn2.cursor()
+            c2.execute(
+                """
+                SELECT id, status, result_json, last_error, created_at, finished_at
+                FROM post_import_jobs
+                WHERE job_type=?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (job_type,),
+            )
+            row = c2.fetchone()
+            if not row:
+                return {}
+            result_payload = {}
+            try:
+                result_payload = json.loads((row[2] or "{}"))
+            except Exception:
+                result_payload = {}
+            return {
+                "job_id": int(row[0] or 0),
+                "status": normalize_text(row[1] or ""),
+                "summary": result_payload or {},
+                "error": normalize_text(row[3] or ""),
+                "created_at": normalize_text(row[4] or ""),
+                "finished_at": normalize_text(row[5] or ""),
+            }
+        except Exception:
+            app.logger.exception("dashboard_latest_audio_job_failed entry_type=%s", entry_type)
+            return {}
+        finally:
+            if conn2 is not None:
+                try:
+                    conn2.close()
+                except Exception:
+                    pass
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     admin_msg = normalize_text(request.args.get("msg") or "")
@@ -9332,6 +9407,11 @@ def dashboard():
 
     conn.close()
 
+    phrase_audio_missing = _dashboard_missing_audio("phrase")
+    word_audio_missing = _dashboard_missing_audio("word")
+    latest_phrase_audio_job = _latest_audio_job_result("phrase")
+    latest_word_audio_job = _latest_audio_job_result("word")
+
     return render_template(
         "admin_dashboard.html",
         pending=pending_words,
@@ -9340,6 +9420,10 @@ def dashboard():
         words_lookup=words_lookup,
         phrases_lookup=phrases_lookup,
         admin_msg=admin_msg,
+        phrase_audio_missing=phrase_audio_missing,
+        word_audio_missing=word_audio_missing,
+        latest_phrase_audio_job=latest_phrase_audio_job,
+        latest_word_audio_job=latest_word_audio_job,
     )
 
 
@@ -9387,6 +9471,14 @@ def _queue_admin_audio_regen_response(entry_type: str):
     chunk_size = int(chunk_raw) if (chunk_raw and chunk_raw.isdigit()) else IMPORT_BATCH_SIZE
     chunk_size = max(1, min(int(chunk_size or IMPORT_BATCH_SIZE), 1000))
 
+    pre_scan = {}
+    try:
+        items = _fetch_approved_items_for_audio_regen(normalize_text(entry_type or "").lower(), limit=limit)
+        pre_scan = _scan_missing_audio_targets(normalize_text(entry_type or "").lower(), items)
+    except Exception:
+        app.logger.exception("admin_audio_regen_prescan_failed entry_type=%s", entry_type)
+        pre_scan = {}
+
     queued_ok, job_id = trigger_admin_audio_regen_async(entry_type, limit=limit, chunk_size=chunk_size)
     queued_jobs = 1 if queued_ok else 0
     out = {
@@ -9396,6 +9488,13 @@ def _queue_admin_audio_regen_response(entry_type: str):
         "job_id": int(job_id or 0),
         "limit": int(limit or 0),
         "chunk_size": int(chunk_size or IMPORT_BATCH_SIZE),
+        "scanned_entries": int((pre_scan or {}).get("scanned_entries", 0) or 0),
+        "missing_entries": int(len((pre_scan or {}).get("target_items", []) or [])),
+        "audio_attempted": int((pre_scan or {}).get("audio_attempted", 0) or 0),
+        "audio_skipped_existing": int((pre_scan or {}).get("audio_skipped_existing", 0) or 0),
+        "audio_missing_voice": int((pre_scan or {}).get("audio_missing_voice", 0) or 0),
+        "audio_generated": 0,
+        "audio_failed": 0,
         "db_path": DB_NAME,
         "upload_folder": UPLOAD_FOLDER,
         "queue_job_started": bool(queued_ok),
@@ -9404,7 +9503,15 @@ def _queue_admin_audio_regen_response(entry_type: str):
     if request.is_json:
         return jsonify(out), (200 if queued_ok else 500)
     if queued_ok:
-        msg = f"Queued missing {entry_type} audio regeneration job #{int(job_id or 0)}."
+        msg = (
+            f"{str(entry_type).capitalize()} audio job queued. "
+            f"Scanned: {int(out.get('scanned_entries', 0) or 0)}, "
+            f"Generated: 0, "
+            f"Skipped existing: {int(out.get('audio_skipped_existing', 0) or 0)}, "
+            f"Missing voice: {int(out.get('audio_missing_voice', 0) or 0)}, "
+            f"Failed: 0. "
+            f"(Job #{int(job_id or 0)})"
+        )
     else:
         msg = f"Failed to queue missing {entry_type} audio regeneration job."
     return redirect(f"/dashboard?msg={quote(msg, safe='')}")
