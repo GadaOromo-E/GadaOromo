@@ -688,7 +688,7 @@ UPLOAD_FOLDER = (
 )
 UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
 AUDIO_SOURCE_BASE_URL = (os.environ.get("AUDIO_SOURCE_BASE_URL") or "").strip().rstrip("/")
-
+UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "/data/uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
 # Do not derive from BASE_DIR; app static is code assets, not persistent storage.
@@ -1784,8 +1784,8 @@ def _normalized_audio_basename(ref: str) -> str:
     while fp.startswith("/"):
         fp = fp[1:]
 
-    if fp.startswith("uploads/uploads/"):
-        fp = fp[len("uploads/uploads/"):]
+    if fp.startswith("/data/uploads"):
+        fp = fp[len("/data/uploads"):]
 
     if fp.startswith("static/uploads/"):
         fp = fp[len("static/uploads/"):]
