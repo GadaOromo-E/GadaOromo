@@ -687,6 +687,7 @@ UPLOAD_FOLDER = (
     or DEFAULT_UPLOAD_FOLDER
 )
 UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
+AUDIO_SOURCE_BASE_URL = (os.environ.get("AUDIO_SOURCE_BASE_URL") or "").strip().rstrip("/")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
@@ -8988,6 +8989,205 @@ def admin_debug_db_counts():
 
 
 # ------------------ ADMIN MANAGEMENT ------------------
+
+def _coerce_int(value, default: int = 0, minimum: int = 0) -> int:
+    try:
+        out = int((value or default))
+    except Exception:
+        out = int(default)
+    return max(int(minimum), out)
+
+
+def _coerce_bool(value) -> bool:
+    raw = normalize_text(str(value or "")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def import_missing_phrase_audio_from_source(
+    limit: int = 100,
+    offset: int = 0,
+    entry_id: int = 0,
+    dry_run: bool = False,
+):
+    summary = {
+        "ok": True,
+        "source_base_url": AUDIO_SOURCE_BASE_URL,
+        "db_path": DB_NAME,
+        "upload_folder": UPLOAD_FOLDER,
+        "entry_type": "phrase",
+        "limit": int(limit or 0),
+        "offset": int(offset or 0),
+        "entry_id": int(entry_id or 0),
+        "dry_run": bool(dry_run),
+        "scanned": 0,
+        "downloaded": 0,
+        "would_download": 0,
+        "skipped_existing": 0,
+        "skipped_no_file_path": 0,
+        "failed": 0,
+        "sample_failures": [],
+    }
+    if not AUDIO_SOURCE_BASE_URL:
+        summary["ok"] = False
+        summary["error"] = "AUDIO_SOURCE_BASE_URL is not configured."
+        return summary
+
+    safe_limit = _coerce_int(limit, default=100, minimum=1)
+    safe_limit = min(safe_limit, 2000)
+    safe_offset = _coerce_int(offset, default=0, minimum=0)
+    safe_entry_id = _coerce_int(entry_id, default=0, minimum=0)
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = """
+        SELECT id, entry_id, lang_code, file_path
+        FROM generated_tts_audio
+        WHERE entry_type='phrase'
+    """
+    params = []
+    if safe_entry_id > 0:
+        sql += " AND entry_id=?"
+        params.append(safe_entry_id)
+    sql += " ORDER BY id ASC LIMIT ? OFFSET ?"
+    params.extend([safe_limit, safe_offset])
+    c.execute(sql, tuple(params))
+    rows = c.fetchall() or []
+    conn.close()
+
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    app.logger.info(
+        "admin_phrase_audio_import start source_base_url=%s upload_folder=%s db_path=%s limit=%s offset=%s entry_id=%s dry_run=%s selected_rows=%s",
+        AUDIO_SOURCE_BASE_URL,
+        UPLOAD_FOLDER,
+        DB_NAME,
+        safe_limit,
+        safe_offset,
+        safe_entry_id,
+        bool(dry_run),
+        len(rows),
+    )
+
+    sess = requests.Session()
+    for row_id, phrase_id, lang_code, file_path in rows:
+        summary["scanned"] += 1
+        fp = normalize_text(file_path or "")
+        if not fp:
+            summary["skipped_no_file_path"] += 1
+            continue
+
+        local_ref = _canonical_local_audio_ref(fp)
+        name = os.path.basename(local_ref or "")
+        if not name:
+            summary["skipped_no_file_path"] += 1
+            continue
+
+        dst_abs = os.path.join(UPLOAD_FOLDER, name)
+        static_abs = os.path.join(STATIC_UPLOADS_FOLDER, name)
+        if os.path.isfile(dst_abs) or os.path.isfile(static_abs):
+            summary["skipped_existing"] += 1
+            continue
+
+        source_url = f"{AUDIO_SOURCE_BASE_URL}/{local_ref.lstrip('/')}"
+        if dry_run:
+            summary["would_download"] += 1
+            continue
+
+        try:
+            with sess.get(source_url, timeout=(8, 60), stream=True) as resp:
+                if int(resp.status_code or 0) != 200:
+                    raise RuntimeError(f"http_status={resp.status_code}")
+                content_type = normalize_text(resp.headers.get("Content-Type", "")).lower()
+                if (not content_type.startswith("audio/")) and (not name.lower().endswith(".mp3")):
+                    raise RuntimeError(f"invalid_content_type={content_type or 'missing'}")
+
+                tmp_abs = dst_abs + ".part"
+                written = 0
+                try:
+                    with open(tmp_abs, "wb") as f:
+                        for chunk in resp.iter_content(chunk_size=65536):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            written += len(chunk)
+
+                    if written <= 0:
+                        raise RuntimeError("empty_download")
+                    if os.path.isfile(dst_abs):
+                        summary["skipped_existing"] += 1
+                        try:
+                            os.remove(tmp_abs)
+                        except Exception:
+                            pass
+                        continue
+                    os.replace(tmp_abs, dst_abs)
+                    summary["downloaded"] += 1
+                finally:
+                    if os.path.isfile(tmp_abs):
+                        try:
+                            os.remove(tmp_abs)
+                        except Exception:
+                            pass
+        except Exception as e:
+            summary["failed"] += 1
+            if len(summary["sample_failures"]) < 10:
+                summary["sample_failures"].append(
+                    {
+                        "row_id": int(row_id or 0),
+                        "phrase_id": int(phrase_id or 0),
+                        "lang_code": normalize_text(lang_code or ""),
+                        "file_path": fp,
+                        "source_url": source_url,
+                        "error": repr(e),
+                    }
+                )
+            app.logger.warning(
+                "admin_phrase_audio_import failed row_id=%s phrase_id=%s lang=%s file_path=%s source_url=%s error=%s",
+                row_id,
+                phrase_id,
+                lang_code,
+                fp,
+                source_url,
+                repr(e),
+            )
+
+    app.logger.info(
+        "admin_phrase_audio_import done scanned=%s downloaded=%s would_download=%s skipped_existing=%s skipped_no_file_path=%s failed=%s",
+        summary["scanned"],
+        summary["downloaded"],
+        summary["would_download"],
+        summary["skipped_existing"],
+        summary["skipped_no_file_path"],
+        summary["failed"],
+    )
+    return summary
+
+
+@app.route("/admin/import-missing-phrase-audio", methods=["POST"])
+def admin_import_missing_phrase_audio():
+    if not require_admin():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    if not session.get("manage_unlocked"):
+        return jsonify({"ok": False, "error": "Admin management is locked"}), 403
+
+    payload = request.get_json(silent=True) if request.is_json else None
+    src = payload if isinstance(payload, dict) else request.form
+    limit = _coerce_int((src or {}).get("limit"), default=100, minimum=1)
+    offset = _coerce_int((src or {}).get("offset"), default=0, minimum=0)
+    entry_id = _coerce_int((src or {}).get("entry_id"), default=0, minimum=0)
+    dry_run = _coerce_bool((src or {}).get("dry_run"))
+
+    try:
+        summary = import_missing_phrase_audio_from_source(
+            limit=limit,
+            offset=offset,
+            entry_id=entry_id,
+            dry_run=dry_run,
+        )
+        status = 200 if summary.get("ok", True) else 400
+        return jsonify(summary), status
+    except Exception as e:
+        app.logger.exception("admin_import_missing_phrase_audio failed: %s", repr(e))
+        return jsonify({"ok": False, "error": "Import failed", "details": repr(e)}), 500
 
 @app.route("/admin/manage", methods=["GET", "POST"])
 def admin_manage():
