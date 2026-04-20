@@ -2643,10 +2643,12 @@ def ensure_post_import_jobs_table():
             CREATE TABLE IF NOT EXISTS post_import_jobs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 status TEXT NOT NULL DEFAULT 'pending',
+                job_type TEXT NOT NULL DEFAULT 'post_import',
                 word_ids_json TEXT NOT NULL DEFAULT '[]',
                 phrase_ids_json TEXT NOT NULL DEFAULT '[]',
                 chunk_size INTEGER,
                 import_summary_json TEXT NOT NULL DEFAULT '{}',
+                options_json TEXT NOT NULL DEFAULT '{}',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 runtime TEXT NOT NULL DEFAULT '',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2656,7 +2658,14 @@ def ensure_post_import_jobs_table():
             )
             """
         )
+        c.execute("PRAGMA table_info(post_import_jobs)")
+        cols = {str((r or ["", ""])[1] or "").strip() for r in (c.fetchall() or [])}
+        if "job_type" not in cols:
+            c.execute("ALTER TABLE post_import_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'post_import'")
+        if "options_json" not in cols:
+            c.execute("ALTER TABLE post_import_jobs ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
         c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_id ON post_import_jobs(status, id)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_type_id ON post_import_jobs(status, job_type, id)")
         conn.commit()
         conn.close()
         return True
@@ -5858,6 +5867,120 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
     return bool(pipeline_ok)
 
 
+def _fetch_approved_items_for_audio_regen(entry_type: str, limit: int = 0):
+    if entry_type not in ("word", "phrase"):
+        return []
+    table = "words" if entry_type == "word" else "phrases"
+    safe_limit = int(limit or 0)
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = (
+        f"""
+        SELECT id, english
+        FROM {table}
+        WHERE status='approved'
+          AND english IS NOT NULL
+          AND TRIM(english) != ''
+        ORDER BY id DESC
+        """
+    )
+    params = []
+    if safe_limit > 0:
+        sql += " LIMIT ?"
+        params.append(safe_limit)
+    c.execute(sql, tuple(params))
+    rows = [(int(eid or 0), normalize_text(en or "")) for eid, en in c.fetchall()]
+    conn.close()
+    return [(eid, en) for eid, en in rows if eid > 0 and en]
+
+
+def _scan_missing_audio_targets(entry_type: str, items):
+    scanned_entries = 0
+    audio_attempted = 0
+    audio_skipped_existing = 0
+    audio_missing_voice = 0
+    target_items = []
+    for entry_id, english_text in (items or []):
+        eid = int(entry_id or 0)
+        if eid <= 0:
+            continue
+        scanned_entries += 1
+        texts = _get_entry_texts_for_tts(entry_type, eid)
+        has_missing_for_entry = False
+        for lang in LEARN_TTS_LANGS:
+            txt = normalize_text((texts or {}).get(lang, "") or "")
+            if not txt:
+                continue
+            voice_name = _azure_voice_for_lang(lang)
+            if not voice_name:
+                audio_missing_voice += 1
+                continue
+            if _resolve_generated_tts_row(entry_type, eid, lang, txt, voice_name):
+                audio_skipped_existing += 1
+                continue
+            audio_attempted += 1
+            has_missing_for_entry = True
+        if has_missing_for_entry:
+            target_items.append((eid, normalize_text(english_text or "")))
+    return {
+        "target_items": target_items,
+        "scanned_entries": int(scanned_entries),
+        "audio_attempted": int(audio_attempted),
+        "audio_skipped_existing": int(audio_skipped_existing),
+        "audio_missing_voice": int(audio_missing_voice),
+    }
+
+
+def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int = None):
+    et = normalize_text(entry_type or "").lower()
+    if et not in ("word", "phrase"):
+        return False, {"error": "invalid_entry_type"}
+
+    items = _fetch_approved_items_for_audio_regen(et, limit=limit)
+    scan = _scan_missing_audio_targets(et, items)
+    target_items = list(scan.get("target_items", []) or [])
+    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
+    if safe_chunk < 1:
+        safe_chunk = 50
+
+    generated = 0
+    failed = 0
+    sample_failed_ids = []
+    processed_entries = 0
+    for entry_id, _en in target_items:
+        row = generate_tts_for_entry(et, int(entry_id), force_regenerate=False)
+        processed_entries += 1
+        generated += int((row or {}).get("generated", 0) or 0)
+        row_failed = int((row or {}).get("failed", 0) or 0)
+        failed += row_failed
+        if row_failed > 0 and len(sample_failed_ids) < 20:
+            sample_failed_ids.append(int(entry_id))
+        if processed_entries % max(1, safe_chunk) == 0:
+            app.logger.info(
+                "admin_audio_regen_job_progress entry_type=%s processed_entries=%s/%s generated=%s failed=%s",
+                et,
+                processed_entries,
+                len(target_items),
+                generated,
+                failed,
+            )
+
+    summary = {
+        "entry_type": et,
+        "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
+        "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
+        "audio_generated": int(generated),
+        "audio_skipped_existing": int(scan.get("audio_skipped_existing", 0) or 0),
+        "audio_missing_voice": int(scan.get("audio_missing_voice", 0) or 0),
+        "audio_failed": int(failed),
+        "processed_entries": int(processed_entries),
+        "target_entries": int(len(target_items)),
+        "sample_failed_ids": sample_failed_ids,
+    }
+    app.logger.info("admin_audio_regen_job_summary %s", summary)
+    return True, summary
+
+
 POST_IMPORT_QUEUE_POLL_SECONDS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_POLL_SECONDS") or "2").strip() or 2))
 POST_IMPORT_QUEUE_MAX_IDLE_POLLS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_MAX_IDLE_POLLS") or "3").strip() or 3))
 POST_IMPORT_WORKER_START_ON_BOOT = ((os.environ.get("POST_IMPORT_WORKER_START_ON_BOOT") or "1").strip() == "1")
@@ -5866,7 +5989,14 @@ _post_import_worker_lock = threading.Lock()
 _post_import_worker_started = False
 
 
-def _enqueue_post_import_job(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
+def _enqueue_post_import_job(
+    word_ids,
+    phrase_ids,
+    chunk_size: int = None,
+    import_summary: dict = None,
+    job_type: str = "post_import",
+    options: dict = None,
+):
     word_ids = [int(x) for x in (word_ids or []) if int(x or 0) > 0]
     phrase_ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
     if not word_ids and not phrase_ids:
@@ -5879,27 +6009,31 @@ def _enqueue_post_import_job(word_ids, phrase_ids, chunk_size: int = None, impor
         c.execute(
             """
             INSERT INTO post_import_jobs
-            (status, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, runtime)
-            VALUES (?, ?, ?, ?, ?, ?)
+            (status, job_type, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, options_json, runtime)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "pending",
+                normalize_text(job_type or "post_import") or "post_import",
                 json.dumps(word_ids, separators=(",", ":")),
                 json.dumps(phrase_ids, separators=(",", ":")),
                 int(chunk_size or 0) if chunk_size else None,
                 json.dumps(import_summary or {}, separators=(",", ":")),
+                json.dumps(options or {}, separators=(",", ":")),
                 APP_RUNTIME,
             ),
         )
         conn.commit()
         job_id = int(c.lastrowid or 0)
         app.logger.info(
-            "post_import_pipeline_job_enqueued job_id=%s word_ids=%s phrase_ids=%s chunk_size=%s runtime=%s",
+            "post_import_pipeline_job_enqueued job_id=%s job_type=%s word_ids=%s phrase_ids=%s chunk_size=%s runtime=%s options=%s",
             job_id,
+            normalize_text(job_type or "post_import") or "post_import",
             len(word_ids),
             len(phrase_ids),
             int(chunk_size or 0),
             APP_RUNTIME,
+            (options or {}),
         )
         return job_id
     except Exception:
@@ -5921,7 +6055,7 @@ def _claim_next_post_import_job():
         c.execute("BEGIN IMMEDIATE")
         c.execute(
             """
-            SELECT id, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, attempts
+            SELECT id, job_type, word_ids_json, phrase_ids_json, chunk_size, import_summary_json, options_json, attempts
             FROM post_import_jobs
             WHERE status='pending'
             ORDER BY id ASC
@@ -5947,11 +6081,13 @@ def _claim_next_post_import_job():
         conn.commit()
         return {
             "id": job_id,
-            "word_ids_json": row[1] or "[]",
-            "phrase_ids_json": row[2] or "[]",
-            "chunk_size": row[3],
-            "import_summary_json": row[4] or "{}",
-            "attempts_before": int((row[5] or 0)),
+            "job_type": normalize_text((row[1] or "") or "post_import") or "post_import",
+            "word_ids_json": row[2] or "[]",
+            "phrase_ids_json": row[3] or "[]",
+            "chunk_size": row[4],
+            "import_summary_json": row[5] or "{}",
+            "options_json": row[6] or "{}",
+            "attempts_before": int((row[7] or 0)),
         }
     except Exception:
         if conn is not None:
@@ -6059,9 +6195,11 @@ def _post_import_worker_loop():
             idle_polls = 0
             job_id = int((job or {}).get("id") or 0)
             try:
+                job_type = normalize_text((job or {}).get("job_type") or "post_import") or "post_import"
                 word_ids = json.loads((job or {}).get("word_ids_json") or "[]")
                 phrase_ids = json.loads((job or {}).get("phrase_ids_json") or "[]")
                 import_summary = json.loads((job or {}).get("import_summary_json") or "{}")
+                options = json.loads((job or {}).get("options_json") or "{}")
                 chunk_size = int((job or {}).get("chunk_size") or 0) or None
             except Exception:
                 app.logger.exception("Invalid post-import job payload job_id=%s", job_id)
@@ -6069,19 +6207,44 @@ def _post_import_worker_loop():
                 continue
 
             app.logger.info(
-                "post_import_worker processing job_id=%s attempts_before=%s word_ids=%s phrase_ids=%s",
+                "post_import_worker processing job_id=%s job_type=%s attempts_before=%s word_ids=%s phrase_ids=%s options=%s",
                 job_id,
+                job_type,
                 int((job or {}).get("attempts_before") or 0),
                 len(word_ids or []),
                 len(phrase_ids or []),
+                options,
             )
             try:
-                run_ok = _run_post_import_pipeline(
-                    word_ids,
-                    phrase_ids,
-                    chunk_size=chunk_size,
-                    import_summary=import_summary,
-                )
+                if job_type in ("admin_audio_regen_word", "admin_audio_regen_phrase"):
+                    target_entry_type = "word" if job_type.endswith("_word") else "phrase"
+                    limit = int((options or {}).get("limit") or 0)
+                    run_ok, summary = _run_admin_audio_regen_job(
+                        target_entry_type,
+                        limit=limit,
+                        chunk_size=chunk_size,
+                    )
+                    if run_ok:
+                        app.logger.info(
+                            "post_import_worker admin_audio_regen_done job_id=%s job_type=%s summary=%s",
+                            job_id,
+                            job_type,
+                            summary,
+                        )
+                    else:
+                        app.logger.error(
+                            "post_import_worker admin_audio_regen_failed job_id=%s job_type=%s summary=%s",
+                            job_id,
+                            job_type,
+                            summary,
+                        )
+                else:
+                    run_ok = _run_post_import_pipeline(
+                        word_ids,
+                        phrase_ids,
+                        chunk_size=chunk_size,
+                        import_summary=import_summary,
+                    )
                 if run_ok:
                     _complete_post_import_job(job_id, ok=True, error_text="")
                 else:
@@ -6122,6 +6285,27 @@ def trigger_post_import_pipeline_async(word_ids, phrase_ids, chunk_size: int = N
     if not _start_post_import_worker_if_needed():
         app.logger.warning("post_import_worker_not_started job_id=%s", int(job_id or 0))
     return True
+
+
+def trigger_admin_audio_regen_async(entry_type: str, limit: int = 0, chunk_size: int = None):
+    et = normalize_text(entry_type or "").lower()
+    if et not in ("word", "phrase"):
+        return False, 0
+    safe_limit = max(0, int(limit or 0))
+    job_type = f"admin_audio_regen_{et}"
+    job_id = _enqueue_post_import_job(
+        word_ids=[],
+        phrase_ids=[],
+        chunk_size=chunk_size,
+        import_summary={},
+        job_type=job_type,
+        options={"entry_type": et, "limit": safe_limit},
+    )
+    if not int(job_id or 0):
+        return False, 0
+    if not _start_post_import_worker_if_needed():
+        app.logger.warning("post_import_worker_not_started job_id=%s job_type=%s", int(job_id or 0), job_type)
+    return True, int(job_id or 0)
 
 
 if POST_IMPORT_WORKER_START_ON_BOOT:
@@ -9124,6 +9308,7 @@ def dashboard():
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    admin_msg = normalize_text(request.args.get("msg") or "")
 
     c.execute("SELECT id, english, oromo FROM words WHERE status='pending' ORDER BY id DESC")
     pending_words = c.fetchall()
@@ -9153,7 +9338,8 @@ def dashboard():
         pending_phrases=pending_phrases,
         pending_audio=pending_audio,
         words_lookup=words_lookup,
-        phrases_lookup=phrases_lookup
+        phrases_lookup=phrases_lookup,
+        admin_msg=admin_msg,
     )
 
 
@@ -9176,6 +9362,62 @@ def admin_debug_db_counts():
             "error": "Could not read DB counts.",
             "db_path": DB_NAME
         }), 500
+
+
+def _queue_admin_audio_regen_response(entry_type: str):
+    if not require_admin():
+        return (jsonify({"ok": False, "error": "Unauthorized"}), 401) if request.is_json else redirect("/admin")
+
+    payload = request.get_json(silent=True) if request.is_json else {}
+    def _norm_any(v) -> str:
+        return normalize_text("" if v is None else str(v))
+
+    limit_raw = _norm_any(
+        (payload or {}).get("limit")
+        if request.is_json
+        else (request.form.get("limit") or request.args.get("limit") or "")
+    )
+    chunk_raw = _norm_any(
+        (payload or {}).get("chunk_size")
+        if request.is_json
+        else (request.form.get("chunk_size") or request.args.get("chunk_size") or "")
+    )
+    limit = int(limit_raw) if (limit_raw and limit_raw.isdigit()) else 0
+    limit = max(0, min(limit, 100000))
+    chunk_size = int(chunk_raw) if (chunk_raw and chunk_raw.isdigit()) else IMPORT_BATCH_SIZE
+    chunk_size = max(1, min(int(chunk_size or IMPORT_BATCH_SIZE), 1000))
+
+    queued_ok, job_id = trigger_admin_audio_regen_async(entry_type, limit=limit, chunk_size=chunk_size)
+    queued_jobs = 1 if queued_ok else 0
+    out = {
+        "ok": bool(queued_ok),
+        "entry_type": normalize_text(entry_type or ""),
+        "queued_jobs": int(queued_jobs),
+        "job_id": int(job_id or 0),
+        "limit": int(limit or 0),
+        "chunk_size": int(chunk_size or IMPORT_BATCH_SIZE),
+        "db_path": DB_NAME,
+        "upload_folder": UPLOAD_FOLDER,
+        "queue_job_started": bool(queued_ok),
+    }
+    app.logger.info("admin_audio_regen_queue_request %s", out)
+    if request.is_json:
+        return jsonify(out), (200 if queued_ok else 500)
+    if queued_ok:
+        msg = f"Queued missing {entry_type} audio regeneration job #{int(job_id or 0)}."
+    else:
+        msg = f"Failed to queue missing {entry_type} audio regeneration job."
+    return redirect(f"/dashboard?msg={quote(msg, safe='')}")
+
+
+@app.route("/admin/queue-regenerate-missing-phrase-audio", methods=["POST"])
+def admin_queue_regenerate_missing_phrase_audio():
+    return _queue_admin_audio_regen_response("phrase")
+
+
+@app.route("/admin/queue-regenerate-missing-word-audio", methods=["POST"])
+def admin_queue_regenerate_missing_word_audio():
+    return _queue_admin_audio_regen_response("word")
 
 
 # ------------------ ADMIN MANAGEMENT ------------------

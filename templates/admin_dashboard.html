@@ -10,6 +10,10 @@
 
 <div class="container">
 
+  {% if admin_msg %}
+    <div class="result-box" style="margin-bottom:10px;">{{ admin_msg }}</div>
+  {% endif %}
+
   <div class="topbar">
     <div class="title-row">
       <div>
@@ -36,6 +40,23 @@
 
   <div class="card">
     <h2>Audio Repair Tools</h2>
+    <div class="subtle">Queue missing-audio regeneration in background (Railway-safe persisted queue).</div>
+    <div class="row" style="margin-top:10px; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+      <form method="POST" action="/admin/queue-regenerate-missing-phrase-audio" class="row" style="align-items:flex-end; gap:8px;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label for="regen-phrase-limit" class="subtle">Phrase limit (0=all)</label>
+          <input id="regen-phrase-limit" type="number" name="limit" min="0" value="0" style="min-width:140px;">
+        </div>
+        <button type="submit" class="btn primary">Regenerate Missing Phrase Audio</button>
+      </form>
+      <form method="POST" action="/admin/queue-regenerate-missing-word-audio" class="row" style="align-items:flex-end; gap:8px;">
+        <div style="display:flex; flex-direction:column; gap:4px;">
+          <label for="regen-word-limit" class="subtle">Word limit (0=all)</label>
+          <input id="regen-word-limit" type="number" name="limit" min="0" value="0" style="min-width:140px;">
+        </div>
+        <button type="submit" class="btn primary">Regenerate Missing Word Audio</button>
+      </form>
+    </div>
     <div class="subtle">Import missing phrase audio from source domain into Railway uploads. This does not regenerate audio.</div>
     <form id="importPhraseAudioForm" method="POST" action="/admin/import-missing-phrase-audio" class="row" style="margin-top:12px; align-items:flex-end; gap:10px; flex-wrap:wrap;">
       <div style="display:flex; flex-direction:column; gap:4px;">
