@@ -1831,6 +1831,23 @@ def _canonical_local_audio_ref(file_path: str) -> str:
     return f"uploads/{name}"
 
 
+def _tts_ref_matches_text_hash(file_path: str, text_value: str) -> bool:
+    """
+    Verify local generated TTS reference hash segment matches the provided text hash.
+    Non-generated/local-unknown references return False.
+    """
+    fp = normalize_text((file_path or "").replace("\\", "/"))
+    txt = normalize_text(text_value or "")
+    if (not fp) or (not txt) or _is_remote_audio_ref(fp):
+        return False
+    name = os.path.basename(fp)
+    m = GENERATED_TTS_FILENAME_RE.match(name)
+    if not m:
+        return False
+    hash12 = normalize_text((m.groups()[3] if m.groups() else "") or "")
+    return bool(hash12 and hash12 == _text_hash(txt)[:12])
+
+
 def _parse_tts_semantic_parts(file_name: str):
     name = os.path.basename((file_name or "").replace("\\", "/").strip())
     if not name:
@@ -4567,7 +4584,7 @@ def _resolve_or_generate_tts_for_text(
         return ""
 
 
-def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
+def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None, text_by_lang: dict = None):
     if entry_type not in ("word", "phrase"):
         return {}, {"audio_rows_found": 0, "audio_urls_attached": 0}
     requested = {_canonical_tts_lang_code(lc) for lc in (langs or ("en", "om"))}
@@ -4579,7 +4596,7 @@ def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
     c = conn.cursor()
     c.execute(
         """
-        SELECT lang_code, file_path
+        SELECT lang_code, file_path, text_hash
         FROM generated_tts_audio
         WHERE entry_type=? AND entry_id=?
         ORDER BY id DESC
@@ -4589,11 +4606,21 @@ def _get_saved_generated_tts_audio(entry_type: str, entry_id: int, langs=None):
     rows = c.fetchall()
     conn.close()
 
+    expected_hash_by_lang = {}
+    for lc, txt in (text_by_lang or {}).items():
+        canonical = _canonical_tts_lang_code(lc or "")
+        normalized_txt = normalize_text(txt or "")
+        if canonical and normalized_txt:
+            expected_hash_by_lang[canonical] = _text_hash(normalized_txt)
+
     out = {}
     found_rows = len(rows)
-    for lang_code, file_path in rows:
+    for lang_code, file_path, text_hash in rows:
         lang = _canonical_tts_lang_code(lang_code or "")
         if lang not in requested:
+            continue
+        expected_hash = expected_hash_by_lang.get(lang, "")
+        if expected_hash and normalize_text(text_hash or "") != expected_hash:
             continue
         key = "english" if lang == "en" else ("oromo" if lang == "om" else lang)
         if key in out:
@@ -4614,7 +4641,15 @@ def _get_saved_audio_for_entry(
     return_meta: bool = False,
 ):
     out = get_approved_audio(entry_type, int(entry_id)) or {}
-    gen_audio, gen_meta = _get_saved_generated_tts_audio(entry_type, int(entry_id), langs=("en", "om"))
+    gen_audio, gen_meta = _get_saved_generated_tts_audio(
+        entry_type,
+        int(entry_id),
+        langs=("en", "om"),
+        text_by_lang={
+            "en": normalize_text(english_text or ""),
+            "om": normalize_text(oromo_text or ""),
+        },
+    )
     if gen_audio.get("english") and not out.get("english"):
         out["english"] = gen_audio.get("english", "")
     if gen_audio.get("oromo") and not out.get("oromo"):
@@ -6217,7 +6252,17 @@ def _get_or_generate_word_translation(
     if cached and _is_meaningful_generated_text((cached or [""])[0]):
         app.logger.info("using cached translation word_id=%s lang=%s", word_id, target_lang)
         translated_cached = normalize_text(cached[0] or "")
-        tts_cached = _normalize_cached_tts_url((cached or [None, ""])[1] or "")
+        tts_cached_raw = _normalize_cached_tts_url((cached or [None, ""])[1] or "")
+        tts_cached = tts_cached_raw
+        if tts_cached and (not _tts_ref_matches_text_hash(tts_cached, translated_cached)):
+            app.logger.warning(
+                "cached_translation_tts_hash_mismatch word_id=%s lang=%s tts_ref=%s translated_hash=%s",
+                int(word_id or 0),
+                normalize_text(target_lang or ""),
+                tts_cached,
+                _text_hash(translated_cached)[:12],
+            )
+            tts_cached = ""
         if not tts_cached:
             tts_cached = _resolve_or_generate_tts_for_text(
                 "word",
@@ -6809,7 +6854,7 @@ def _bulk_fetch_generated_tts_urls(entry_type: str, entry_ids, text_by_key: dict
     return out
 
 
-def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
+def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None, text_by_key: dict = None):
     """
     DB-first bulk audio lookup for Learn page.
     Returns latest usable generated_tts_audio URL per (entry_id, lang_code),
@@ -6827,7 +6872,7 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
     c = conn.cursor()
     c.execute(
         f"""
-        SELECT entry_id, lang_code, file_path
+        SELECT entry_id, lang_code, file_path, text_hash
         FROM generated_tts_audio
         WHERE entry_type=?
           AND entry_id IN ({placeholders})
@@ -6838,15 +6883,28 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None):
     rows = c.fetchall()
     conn.close()
 
+    expected_hash_by_key = {}
+    for (entry_id, lang_code), text_value in (text_by_key or {}).items():
+        canonical_lang = _canonical_tts_lang_code(lang_code or "")
+        text_norm = normalize_text(text_value or "")
+        if (not canonical_lang) or (not text_norm):
+            continue
+        expected_hash_by_key[(int(entry_id or 0), canonical_lang)] = _text_hash(text_norm)
+
     out = {}
-    for entry_id, lang_code, file_path in rows:
+    for entry_id, lang_code, file_path, text_hash in rows:
         canonical_lang = _canonical_tts_lang_code(lang_code or "")
         if canonical_lang not in requested:
             continue
         key = (int(entry_id or 0), canonical_lang)
         if key in out:
             continue
+        expected_hash = expected_hash_by_key.get(key, "")
+        if expected_hash and normalize_text(text_hash or "") != expected_hash:
+            continue
         if not normalize_text(file_path or ""):
+            continue
+        if not _has_usable_audio_ref(file_path or ""):
             continue
         url = _public_audio_url(file_path or "")
         if not url:
@@ -6983,7 +7041,30 @@ def _load_learn_rows():
             phrase_translations.setdefault(int(pid), {})[lang] = normalize_text(txt or "")
     conn.close()
 
-    phrase_tts = _bulk_fetch_saved_tts_by_entry_lang("phrase", phrase_ids, langs=("en", "am", "ar", "fr", "zh-CN", "om"))
+    phrase_text_by_key = {}
+    for pid, en, om in phrase_rows:
+        pid_int = int(pid or 0)
+        if pid_int <= 0:
+            continue
+        en_norm = normalize_text(en or "")
+        om_norm = normalize_text(om or "")
+        if en_norm:
+            phrase_text_by_key[(pid_int, "en")] = en_norm
+        if om_norm:
+            phrase_text_by_key[(pid_int, "om")] = om_norm
+    for pid, tr_map in (phrase_translations or {}).items():
+        pid_int = int(pid or 0)
+        for lang_code, translated_text in ((tr_map or {}).items()):
+            txt = normalize_text(translated_text or "")
+            if txt:
+                phrase_text_by_key[(pid_int, lang_code)] = txt
+
+    phrase_tts = _bulk_fetch_saved_tts_by_entry_lang(
+        "phrase",
+        phrase_ids,
+        langs=("en", "am", "ar", "fr", "zh-CN", "om"),
+        text_by_key=phrase_text_by_key,
+    )
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
     rows = []
