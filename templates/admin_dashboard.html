@@ -35,6 +35,32 @@
   </div>
 
   <div class="card">
+    <h2>Audio Repair Tools</h2>
+    <div class="subtle">Import missing phrase audio from source domain into Railway uploads. This does not regenerate audio.</div>
+    <form id="importPhraseAudioForm" method="POST" action="/admin/import-missing-phrase-audio" class="row" style="margin-top:12px; align-items:flex-end; gap:10px; flex-wrap:wrap;">
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label for="phrase-audio-limit" class="subtle">Limit</label>
+        <input id="phrase-audio-limit" type="number" name="limit" min="1" max="2000" value="100" style="min-width:120px;">
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label for="phrase-audio-offset" class="subtle">Offset</label>
+        <input id="phrase-audio-offset" type="number" name="offset" min="0" value="0" style="min-width:120px;">
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label for="phrase-audio-entry-id" class="subtle">Phrase entry_id (optional)</label>
+        <input id="phrase-audio-entry-id" type="number" name="entry_id" min="0" placeholder="e.g. 3241" style="min-width:180px;">
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; padding-bottom:8px;">
+        <input type="checkbox" name="dry_run" value="1">
+        <span class="subtle">dry_run</span>
+      </label>
+      <button id="importPhraseAudioBtn" type="submit" class="btn primary">Import Missing Phrase Audio</button>
+    </form>
+    <div id="importPhraseAudioBanner" class="result-box" style="display:none; margin-top:10px;"></div>
+    <pre id="importPhraseAudioResult" style="display:none; margin-top:10px; background:#111; color:#f4f4f4; padding:10px; border-radius:8px; overflow:auto; max-height:260px;"></pre>
+  </div>
+
+  <div class="card">
     <h2>Pending Words</h2>
 
     {% if pending and pending|length > 0 %}
@@ -84,7 +110,6 @@
     {% endif %}
   </div>
 
-  <!-- ===== Pending Audio ===== -->
   <div class="card">
     <h2>Pending Audio</h2>
     <div class="subtle">
@@ -95,7 +120,6 @@
     {% if pending_audio and pending_audio|length > 0 %}
       <div class="grid">
         {% for a in pending_audio %}
-          {# a = (id, entry_type, entry_id, lang, file_path) #}
           <div class="card" style="margin-top:0;">
 
             <div class="subtle">Entry</div>
@@ -123,14 +147,12 @@
               {% endif %}
             {% endif %}
 
-            <!-- ✅ FIX: Correct upload URL -->
             <div class="subtle" style="margin-top:10px;">Audio preview</div>
             <audio controls preload="none" style="width:100%; margin-top:8px;">
               <source src="/{{ a[4] }}">
               Your browser does not support audio playback.
             </audio>
 
-            <!-- ✅ FIX: must be GET links because app.py uses GET routes -->
             <div class="small-actions" style="margin-top:10px;">
               <a class="btn primary" href="/approve_audio/{{ a[0] }}">✅ Approve</a>
               <a class="btn danger" href="/reject_audio/{{ a[0] }}" onclick="return confirm('Reject this audio and delete the file?');">❌ Reject</a>
@@ -150,12 +172,74 @@
 
 </div>
 
+<script>
+  (function () {
+    const form = document.getElementById("importPhraseAudioForm");
+    if (!form) return;
+
+    const banner = document.getElementById("importPhraseAudioBanner");
+    const out = document.getElementById("importPhraseAudioResult");
+    const submitBtn = document.getElementById("importPhraseAudioBtn");
+
+    form.addEventListener("submit", async function (e) {
+      e.preventDefault();
+
+      const fd = new FormData(form);
+      const payload = {
+        limit: fd.get("limit") || "100",
+        offset: fd.get("offset") || "0",
+        entry_id: fd.get("entry_id") || "0",
+        dry_run: fd.get("dry_run") ? "1" : "0"
+      };
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Running...";
+      }
+      if (banner) {
+        banner.style.display = "none";
+        banner.textContent = "";
+      }
+      if (out) {
+        out.style.display = "none";
+        out.textContent = "";
+      }
+
+      try {
+        const res = await fetch("/admin/import-missing-phrase-audio", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        const ok = !!(data && data.ok && res.ok);
+        const message = ok
+          ? "Phrase audio import complete."
+          : "Phrase audio import failed.";
+
+        if (banner) {
+          banner.style.display = "block";
+          banner.textContent = message;
+          banner.style.border = ok ? "1px solid #2c7a3f" : "1px solid #b42318";
+        }
+        if (out) {
+          out.style.display = "block";
+          out.textContent = JSON.stringify(data, null, 2);
+        }
+      } catch (err) {
+        if (banner) {
+          banner.style.display = "block";
+          banner.textContent = "Phrase audio import failed: " + String(err);
+          banner.style.border = "1px solid #b42318";
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Import Missing Phrase Audio";
+        }
+      }
+    });
+  })();
+</script>
 </body>
 </html>
-
-
-
-
-
-
-

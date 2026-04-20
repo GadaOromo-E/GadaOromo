@@ -9166,8 +9166,6 @@ def import_missing_phrase_audio_from_source(
 def admin_import_missing_phrase_audio():
     if not require_admin():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
-    if not session.get("manage_unlocked"):
-        return jsonify({"ok": False, "error": "Admin management is locked"}), 403
 
     payload = request.get_json(silent=True) if request.is_json else None
     src = payload if isinstance(payload, dict) else request.form
