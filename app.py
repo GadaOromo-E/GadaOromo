@@ -909,8 +909,9 @@ def google_verification():
 @app.route("/uploads/<path:filename>")
 def uploads(filename):
     safe_name = os.path.basename(filename)
-    full_path = os.path.join(UPLOAD_FOLDER, safe_name)
-    static_path = os.path.join(STATIC_UPLOADS_FOLDER, safe_name)
+    full_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, safe_name))
+    static_path = os.path.abspath(os.path.join(STATIC_UPLOADS_FOLDER, safe_name))
+    t0 = time.perf_counter()
 
     def _audio_mimetype_for_name(name: str) -> str:
         ext = (os.path.splitext(name or "")[1] or "").lower().strip(".")
@@ -926,68 +927,75 @@ def uploads(filename):
             return "audio/mp4"
         return "application/octet-stream"
 
-    def _serve_audio_abs(abs_path: str, source: str):
+    def _serve_audio_abs(abs_path: str, source: str, send_start: float):
         mime = _audio_mimetype_for_name(safe_name)
+        size = _safe_file_size(abs_path)
         app.logger.info(
-            "uploads_serve file=%s source=%s abs_path=%s mime=%s size=%s",
+            "uploads_timing_send_prepare file=%s source=%s abs_path=%s mime=%s size=%s elapsed_ms=%.3f",
             safe_name,
             source,
             abs_path,
             mime,
-            _safe_file_size(abs_path),
+            size,
+            (send_start - t0) * 1000.0,
         )
-        return send_file(abs_path, mimetype=mime, conditional=True)
+        response = send_file(abs_path, mimetype=mime, conditional=True)
+        done = time.perf_counter()
+        app.logger.info(
+            "uploads_timing_done file=%s status=%s source=%s total_ms=%.3f send_file_ms=%.3f",
+            safe_name,
+            int(response.status_code or 200),
+            source,
+            (done - t0) * 1000.0,
+            (done - send_start) * 1000.0,
+        )
+        return response
 
     app.logger.info(
-        "uploads_request file=%s upload_path=%s static_path=%s",
+        "uploads_timing_start file=%s requested=%s upload_path=%s static_path=%s",
+        safe_name,
+        filename,
+        full_path,
+        static_path,
+    )
+
+    t_exists_start = time.perf_counter()
+    upload_exists = os.path.exists(full_path)
+    upload_is_file = os.path.isfile(full_path)
+    static_exists = os.path.exists(static_path)
+    static_is_file = os.path.isfile(static_path)
+    t_exists_done = time.perf_counter()
+
+    app.logger.info(
+        "uploads_timing_exists file=%s upload_exists=%s upload_is_file=%s static_exists=%s static_is_file=%s exists_ms=%.3f elapsed_ms=%.3f",
+        safe_name,
+        bool(upload_exists),
+        bool(upload_is_file),
+        bool(static_exists),
+        bool(static_is_file),
+        (t_exists_done - t_exists_start) * 1000.0,
+        (t_exists_done - t0) * 1000.0,
+    )
+    app.logger.info(
+        "uploads_timing_resolved file=%s resolved_upload=%s resolved_static=%s",
         safe_name,
         full_path,
         static_path,
     )
 
-    resolved = resolve_existing_audio_file(filename, return_meta=True)
-    resolved_path = normalize_text((resolved or {}).get("path", "") or "")
-    if resolved_path and os.path.isfile(resolved_path):
-        app.logger.info(
-            "uploads_resolve requested=%s strategy=%s reason=%s resolved=%s candidates=%s",
-            filename,
-            resolved.get("strategy", ""),
-            resolved.get("reason", ""),
-            resolved_path,
-            resolved.get("candidate_count", 0),
-        )
-        resolved_name = os.path.basename(resolved_path)
-        try:
-            if IS_RENDER_DISK and os.path.abspath(os.path.dirname(resolved_path)) == os.path.abspath(STATIC_UPLOADS_FOLDER):
-                promoted_abs = os.path.join(UPLOAD_FOLDER, resolved_name)
-                if not os.path.isfile(promoted_abs):
-                    shutil.copy2(resolved_path, promoted_abs)
-                if os.path.isfile(promoted_abs):
-                    return _serve_audio_abs(promoted_abs, f"{resolved.get('strategy', 'resolved')}:promoted_to_upload_folder")
-        except Exception:
-            app.logger.exception("Failed to promote resolved audio file to upload folder: %s", resolved_name)
-        return _serve_audio_abs(resolved_path, resolved.get("strategy", "resolved_existing"))
+    if upload_is_file:
+        send_start = time.perf_counter()
+        return _serve_audio_abs(full_path, "upload_folder", send_start)
+
+    if static_is_file:
+        send_start = time.perf_counter()
+        return _serve_audio_abs(static_path, "static_uploads", send_start)
 
     app.logger.warning(
-        "uploads_file_missing requested=%s normalized_name=%s strategy=%s reason=%s upload_path=%s static_path=%s",
+        "uploads_timing_404 file=%s requested=%s reason=missing_in_upload_and_static total_ms=%.3f",
+        safe_name,
         filename,
-        (resolved or {}).get("normalized_name", ""),
-        (resolved or {}).get("strategy", ""),
-        (resolved or {}).get("reason", ""),
-        full_path,
-        static_path,
-    )
-
-    # Lazy self-heal for generated TTS assets only.
-    if _try_regenerate_missing_tts_file(safe_name):
-        regenerated = resolve_existing_audio_file(filename, return_meta=True)
-        regenerated_path = normalize_text((regenerated or {}).get("path", "") or "")
-        if regenerated_path and os.path.isfile(regenerated_path):
-            return _serve_audio_abs(regenerated_path, f"lazy_regenerated:{regenerated.get('strategy', 'resolved')}")
-
-    app.logger.warning(
-        "uploads_file_404 requested=%s reason=not_found_after_resolve_and_regen",
-        filename,
+        (time.perf_counter() - t0) * 1000.0,
     )
     return jsonify({"ok": False, "error": "Audio file not found", "file": safe_name}), 404
 
