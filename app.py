@@ -688,7 +688,6 @@ UPLOAD_FOLDER = (
 )
 UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
 AUDIO_SOURCE_BASE_URL = (os.environ.get("AUDIO_SOURCE_BASE_URL") or "").strip().rstrip("/")
-UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "/data/uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
 # Do not derive from BASE_DIR; app static is code assets, not persistent storage.
@@ -1005,6 +1004,10 @@ def uploads(filename):
 IMPORT_BATCH_SIZE = 100
 IMPORT_MAX_WORDS = 200
 MISSING_OROMO_KEY_SENTINEL = "__missing_oromo__"
+LEARN_RECENT_PHRASE_LIMIT = max(
+    10,
+    int((os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or "200").strip() or 200),
+)
 
 
 # ------------------ STOPWORDS ------------------
@@ -1667,6 +1670,12 @@ def ensure_missing_generated_translations_for_words(
                     lang_stats["batch_mismatch_fallback"] += len(chunk_pairs)
             except Exception:
                 lang_stats["provider_errors"] += 1
+                app.logger.exception(
+                    "%s batch_translate_failed entry_type=word lang=%s batch_size=%s",
+                    log_context,
+                    lang,
+                    len(chunk_pairs),
+                )
 
             if used_batch:
                 continue
@@ -1702,6 +1711,12 @@ def ensure_missing_generated_translations_for_words(
                         processed_new_log_count += 1
                 except Exception:
                     lang_stats["provider_errors"] += 1
+                    app.logger.exception(
+                        "%s fallback_translate_failed entry_type=word entry_id=%s lang=%s",
+                        log_context,
+                        wid,
+                        lang,
+                    )
 
     try:
         compact = {
@@ -1979,7 +1994,12 @@ def _has_usable_audio_ref(file_path: str) -> bool:
     if _is_remote_audio_ref(file_path):
         return True
     abs_path = _audio_abs_path(file_path)
-    return bool(abs_path and os.path.isfile(abs_path))
+    if not (abs_path and os.path.isfile(abs_path)):
+        return False
+    try:
+        return bool(os.path.getsize(abs_path) > 0)
+    except Exception:
+        return False
 
 
 def _azure_blob_enabled() -> bool:
@@ -5526,6 +5546,7 @@ def _new_pipeline_summary(entry_type: str):
         "audio_missing_voice": 0,
         "audio_failed": 0,
         "learn_ready_phrases_with_audio": 0,
+        "learn_visible_phrase_count": 0,
     }
 
 
@@ -5573,6 +5594,32 @@ def _count_phrases_with_any_audio(phrase_ids):
         if _has_usable_audio_ref(fp or ""):
             ready_ids.add(int(eid or 0))
     return len([x for x in ready_ids if x > 0])
+
+
+def _count_recent_visible_learn_phrases(limit: int):
+    safe_limit = int(limit or 0)
+    if safe_limit <= 0:
+        return 0
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT id
+            FROM phrases
+            WHERE status='approved'
+              AND english IS NOT NULL
+              AND TRIM(english) != ''
+            ORDER BY id DESC
+            LIMIT ?
+        ) recent
+        """,
+        (safe_limit,),
+    )
+    out = int((c.fetchone() or [0])[0] or 0)
+    conn.close()
+    return out
 
 
 def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
@@ -5749,6 +5796,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
             phrases_summary["audio_failed"]
         )
         phrases_summary["learn_ready_phrases_with_audio"] = _count_phrases_with_any_audio(phrase_ids)
+        phrases_summary["learn_visible_phrase_count"] = _count_recent_visible_learn_phrases(LEARN_RECENT_PHRASE_LIMIT)
 
         app.logger.info("post_import_pipeline summary words=%s", words_summary)
         app.logger.info("post_import_pipeline summary phrases=%s", phrases_summary)
@@ -5900,6 +5948,12 @@ def _complete_post_import_job(job_id: int, ok: bool, error_text: str = ""):
             ("done" if ok else "failed", normalize_text(error_text or "")[:2000], int(job_id or 0)),
         )
         conn.commit()
+        app.logger.info(
+            "post_import_worker job_%s job_id=%s error=%s",
+            "done" if ok else "failed",
+            int(job_id or 0),
+            normalize_text(error_text or ""),
+        )
     except Exception:
         app.logger.exception("Failed to finalize post-import job id=%s", int(job_id or 0))
     finally:
@@ -6903,8 +6957,10 @@ def _load_learn_rows():
         FROM phrases
         WHERE status='approved'
           AND english IS NOT NULL AND TRIM(english) != ''
-        ORDER BY english ASC
+        ORDER BY id DESC
+        LIMIT ?
         """,
+        (int(LEARN_RECENT_PHRASE_LIMIT),),
     )
     phrase_rows = c.fetchall()
 
@@ -6945,20 +7001,8 @@ def _load_learn_rows():
             "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
             "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
         }
-        has_any_phrase_audio = any(normalize_text(u or "") for u in audio_map.values())
-        if not has_any_phrase_audio:
-            continue
         if not om_text:
             phrases_with_missing_oromo_but_shown += 1
-        rich_text_count = int(
-            bool(normalize_text(en or "")) +
-            bool(om_text) +
-            bool(normalize_text(tr.get("am", "") or "")) +
-            bool(normalize_text(tr.get("ar", "") or "")) +
-            bool(normalize_text(tr.get("fr", "") or "")) +
-            bool(normalize_text(tr.get("zh-CN", "") or ""))
-        )
-        audio_count = int(sum(1 for u in audio_map.values() if normalize_text(u or "")))
         rows.append({
             "entry_type": "phrase",
             "entry_id": pid_int,
@@ -6969,8 +7013,6 @@ def _load_learn_rows():
             "fr": normalize_text(tr.get("fr", "") or ""),
             "zh-CN": normalize_text(tr.get("zh-CN", "") or ""),
             "audio": audio_map,
-            "_rich_text_count": rich_text_count,
-            "_audio_count": audio_count,
         })
 
     words_loaded_raw = 0
@@ -6984,7 +7026,7 @@ def _load_learn_rows():
     rows_with_any_audio = 0
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
-    phrase_rows_with_audio = []
+    phrase_rows_visible = []
     for r in rows:
         audio = (r or {}).get("audio") or {}
         entry_type = (r or {}).get("entry_type")
@@ -7005,30 +7047,18 @@ def _load_learn_rows():
         if row_has_audio:
             rows_with_any_audio += 1
             rows_rendered_with_audio_url += 1
-            if entry_type == "phrase":
-                phrase_rows_with_audio.append(r)
-    # Phrase-focused ordering: richer multilingual rows first, then by audio density.
-    phrase_rows_with_audio.sort(
-        key=lambda r: (
-            -int((r or {}).get("_rich_text_count", 0) or 0),
-            -int((r or {}).get("_audio_count", 0) or 0),
-            normalize_text((r or {}).get("english", "") or "").casefold(),
-            int((r or {}).get("entry_id", 0) or 0),
-        )
-    )
-    for r in phrase_rows_with_audio:
-        if "_rich_text_count" in r:
-            del r["_rich_text_count"]
-        if "_audio_count" in r:
-            del r["_audio_count"]
-    rows = phrase_rows_with_audio
+        if entry_type == "phrase":
+            phrase_rows_visible.append(r)
+    rows = phrase_rows_visible
 
-    phrases_loaded_with_audio = int(len(phrase_rows_with_audio))
+    newest_phrase_ids = [int((r or {}).get("entry_id") or 0) for r in rows]
+    phrases_loaded_with_audio = int(len(rows))
     words_loaded_with_audio = 0
     total_rows_loaded = int(len(rows))
+    learn_visible_phrase_count = total_rows_loaded
 
     app.logger.info(
-        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_attached_count=%s phrases_with_missing_oromo_but_shown=%s",
+        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_attached_count=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
         total_rows_loaded,
         phrases_loaded_with_audio,
         words_loaded_with_audio,
@@ -7044,6 +7074,9 @@ def _load_learn_rows():
         rows_rendered_with_audio_url,
         audio_attached_count,
         phrases_with_missing_oromo_but_shown,
+        learn_visible_phrase_count,
+        int(LEARN_RECENT_PHRASE_LIMIT),
+        newest_phrase_ids[:20],
     )
     return rows
 
@@ -7115,10 +7148,16 @@ def learn():
         if any(normalize_text(v or "") for v in a.values()):
             rows_rendered_with_audio_url += 1
     rows_with_any_audio = int(rows_rendered_with_audio_url)
+    learn_visible_phrase_count = int(phrases_loaded_with_audio)
+    newest_phrase_ids_selected = [
+        int((r or {}).get("entry_id") or 0)
+        for r in (learn_rows or [])
+        if (r or {}).get("entry_type") == "phrase"
+    ]
     learn_render_path = "table_rows" if total_rows_loaded > 0 else "table_rows_empty"
     legacy_cards_path = False
     app.logger.info(
-        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s total_rows_loaded=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
+        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s total_rows_loaded=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids_selected=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
         LEARN_TEMPLATE_VERSION,
         APP_BUILD_TOKEN,
         learn_render_path,
@@ -7128,6 +7167,9 @@ def learn():
         total_rows_loaded,
         rows_with_any_audio,
         rows_rendered_with_audio_url,
+        learn_visible_phrase_count,
+        int(LEARN_RECENT_PHRASE_LIMIT),
+        newest_phrase_ids_selected[:20],
         AUDIO_JS_VERSION,
         PWA_UI_JS_VERSION,
         SW_JS_VERSION,
@@ -7141,6 +7183,9 @@ def learn():
         "rows_loaded": total_rows_loaded,
         "rows_with_any_audio": rows_with_any_audio,
         "rows_rendered_with_audio_url": rows_rendered_with_audio_url,
+        "learn_visible_phrase_count": learn_visible_phrase_count,
+        "learn_recent_limit": int(LEARN_RECENT_PHRASE_LIMIT),
+        "newest_phrase_ids_selected": newest_phrase_ids_selected[:20],
         "template_version": LEARN_TEMPLATE_VERSION,
         "build_token": APP_BUILD_TOKEN,
         "render_path": learn_render_path,
@@ -10456,6 +10501,10 @@ def admin_import():
                             affected_phrase_items.append((int(eid), en))
                     elif insert_reason == "existing_english":
                         skipped_existing_during_insert += 1
+                        if entry_type == "word":
+                            affected_word_items.append((int(eid), en))
+                        else:
+                            affected_phrase_items.append((int(eid), en))
                     else:
                         failed += 1
                         failed_base_inserts += 1
