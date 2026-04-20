@@ -4438,6 +4438,21 @@ def _resolve_or_generate_tts_for_text(
         )
         stored = _canonical_local_audio_ref(stored_raw)
         if stored:
+            public_url = _public_audio_url(stored)
+            if entry_type == "phrase":
+                abs_save_path = os.path.join(UPLOAD_FOLDER, os.path.basename(stored))
+                exists_after_write = bool(os.path.isfile(abs_save_path))
+                file_size = int(_safe_file_size(abs_save_path) or 0)
+                app.logger.info(
+                    "phrase_tts_write_check entry_id=%s lang=%s abs_save_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+                    entry_id,
+                    lang_code,
+                    abs_save_path,
+                    exists_after_write,
+                    file_size,
+                    stored,
+                    public_url,
+                )
             if not _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored):
                 app.logger.warning(
                     "tts service save verification failed entry_type=%s entry_id=%s lang=%s stored_raw=%s stored=%s",
@@ -4448,7 +4463,6 @@ def _resolve_or_generate_tts_for_text(
                     stored,
                 )
                 return ""
-            public_url = _public_audio_url(stored)
             app.logger.info(
                 "tts service persisted entry_type=%s entry_id=%s lang=%s db_file_path=%s playback_url=%s",
                 entry_type,
@@ -4499,6 +4513,20 @@ def _resolve_or_generate_tts_for_text(
         stored_ref, public_url = _persist_generated_tts_audio(file_name, audio_bytes)
         if not stored_ref:
             return ""
+        if entry_type == "phrase":
+            abs_save_path = os.path.join(UPLOAD_FOLDER, file_name)
+            exists_after_write = bool(os.path.isfile(abs_save_path))
+            file_size = int(_safe_file_size(abs_save_path) or 0)
+            app.logger.info(
+                "phrase_tts_write_check entry_id=%s lang=%s abs_save_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+                entry_id,
+                lang_code,
+                abs_save_path,
+                exists_after_write,
+                file_size,
+                stored_ref,
+                public_url,
+            )
         if not _save_generated_tts_row(entry_type, int(entry_id), lang_code, txt, voice_name, stored_ref):
             return ""
         app.logger.info(
@@ -4736,6 +4764,20 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             stored = _canonical_local_audio_ref(stored_raw)
             if stored:
                 public_url = _public_audio_url(stored)
+                if entry_type == "phrase":
+                    abs_save_path = os.path.join(UPLOAD_FOLDER, os.path.basename(stored))
+                    exists_after_write = bool(os.path.isfile(abs_save_path))
+                    file_size = int(_safe_file_size(abs_save_path) or 0)
+                    app.logger.info(
+                        "phrase_tts_write_check entry_id=%s lang=%s abs_save_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+                        entry_id,
+                        lang,
+                        abs_save_path,
+                        exists_after_write,
+                        file_size,
+                        stored,
+                        public_url,
+                    )
                 if not _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, stored):
                     app.logger.warning(
                         "tts service save verification failed entry_type=%s entry_id=%s lang=%s stored_raw=%s stored=%s",
@@ -4827,6 +4869,20 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             if not stored_ref:
                 result["failed"] += 1
                 continue
+            if entry_type == "phrase":
+                abs_save_path = os.path.join(UPLOAD_FOLDER, file_name)
+                exists_after_write = bool(os.path.isfile(abs_save_path))
+                file_size = int(_safe_file_size(abs_save_path) or 0)
+                app.logger.info(
+                    "phrase_tts_write_check entry_id=%s lang=%s abs_save_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+                    entry_id,
+                    lang,
+                    abs_save_path,
+                    exists_after_write,
+                    file_size,
+                    stored_ref,
+                    public_url,
+                )
             if not _save_generated_tts_row(entry_type, entry_id, lang, text, voice_name, stored_ref):
                 result["failed"] += 1
                 result["by_language"][lang] = "failed_persistence_check"

@@ -1,5 +1,28 @@
 import hashlib
 import os
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+
+def _is_remote_ref(file_path: str) -> bool:
+    fp = (file_path or "").strip().lower()
+    return fp.startswith("http://") or fp.startswith("https://")
+
+
+def _local_basename_from_ref(file_path: str) -> str:
+    fp = (file_path or "").replace("\\", "/").strip()
+    if not fp or _is_remote_ref(fp):
+        return ""
+    return os.path.basename(fp)
+
+
+def _file_is_nonempty(path: str) -> bool:
+    try:
+        return bool(path and os.path.isfile(path) and (os.path.getsize(path) > 0))
+    except Exception:
+        return False
 
 
 def azure_synthesize_mp3(
@@ -72,6 +95,13 @@ def generate_and_store_tts(
     if not clean_text:
         return ""
 
+    target_dir = (
+        (upload_dir or "").strip()
+        or (os.environ.get("AUDIO_UPLOAD_DIR", "").strip())
+        or (os.environ.get("UPLOAD_FOLDER", "").strip())
+        or "/data/uploads"
+    )
+
     text_hash = hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
     cur = db.cursor()
     cur.execute(
@@ -87,7 +117,14 @@ def generate_and_store_tts(
     )
     row = cur.fetchone()
     if row and row[0]:
-        return (row[0] or "").strip()
+        existing_ref = (row[0] or "").strip()
+        if _is_remote_ref(existing_ref):
+            return existing_ref
+        existing_name = _local_basename_from_ref(existing_ref)
+        existing_abs = os.path.join(target_dir, existing_name) if existing_name else ""
+        if _file_is_nonempty(existing_abs):
+            return existing_ref
+        # Stale DB metadata: file row exists but file is missing; continue and regenerate.
 
     audio_bytes, err = azure_synthesize_mp3(
         clean_text,
@@ -100,17 +137,17 @@ def generate_and_store_tts(
         return ""
 
     safe_name = (output_filename or "").strip() or f"tts_{entry_type}_{entry_id}_{lang_code}_{text_hash[:12]}.mp3"
-    target_dir = (
-        (upload_dir or "").strip()
-        or (os.environ.get("AUDIO_UPLOAD_DIR", "").strip())
-        or (os.environ.get("UPLOAD_FOLDER", "").strip())
-        or "/data/uploads"
-    )
     os.makedirs(target_dir, exist_ok=True)
     abs_path = os.path.join(target_dir, safe_name)
     with open(abs_path, "wb") as fh:
         fh.write(audio_bytes)
+    exists_after_write = _file_is_nonempty(abs_path)
+    file_size = os.path.getsize(abs_path) if os.path.isfile(abs_path) else 0
     file_ref = f"uploads/{safe_name}"
+    playback_url = f"/uploads/{safe_name}"
+
+    if not exists_after_write:
+        return ""
 
     cur.execute(
         """
@@ -132,4 +169,15 @@ def generate_and_store_tts(
         ),
     )
     db.commit()
+    if str(entry_type or "").strip().lower() == "phrase":
+        logger.info(
+            "phrase_tts_service_write entry_id=%s lang=%s abs_save_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+            int(entry_id or 0),
+            lang_code,
+            abs_path,
+            exists_after_write,
+            int(file_size or 0),
+            file_ref,
+            playback_url,
+        )
     return file_ref
