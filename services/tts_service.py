@@ -1,9 +1,38 @@
 import hashlib
 import os
 import logging
+import random
+import time
 
 
 logger = logging.getLogger(__name__)
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int((os.environ.get(name, str(default)) or str(default)).strip() or default)
+    except Exception:
+        return int(default)
+
+
+def _azure_429_retry_settings() -> dict:
+    max_retries = max(0, min(_int_env("AZURE_TTS_429_MAX_RETRIES", 2), 6))
+    base_backoff_ms = max(50, min(_int_env("AZURE_TTS_429_BASE_BACKOFF_MS", 500), 10000))
+    max_backoff_ms = max(base_backoff_ms, min(_int_env("AZURE_TTS_429_MAX_BACKOFF_MS", 4000), 60000))
+    jitter_ms = max(0, min(_int_env("AZURE_TTS_429_JITTER_MS", 250), 5000))
+    return {
+        "max_retries": int(max_retries),
+        "base_backoff_ms": int(base_backoff_ms),
+        "max_backoff_ms": int(max_backoff_ms),
+        "jitter_ms": int(jitter_ms),
+    }
+
+
+def _is_azure_429_error(error_text: str) -> bool:
+    e = (error_text or "").strip().lower()
+    if not e:
+        return False
+    return ("429" in e) or ("too many requests" in e)
 
 
 def _is_remote_ref(file_path: str) -> bool:
@@ -50,31 +79,70 @@ def azure_synthesize_mp3(
     except Exception:
         return b"", "azure_speech_sdk_not_installed"
 
-    try:
-        config = speechsdk.SpeechConfig(subscription=key, region=region)
-        config.set_speech_synthesis_output_format(
-            speechsdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3
-        )
-        if voice_name:
-            config.speech_synthesis_voice_name = voice_name
-        if speech_lang:
-            config.speech_synthesis_language = speech_lang
+    retry_cfg = _azure_429_retry_settings()
+    max_retries = int(retry_cfg.get("max_retries", 0) or 0)
+    base_backoff_ms = int(retry_cfg.get("base_backoff_ms", 500) or 500)
+    max_backoff_ms = int(retry_cfg.get("max_backoff_ms", 4000) or 4000)
+    jitter_ms = int(retry_cfg.get("jitter_ms", 250) or 250)
 
-        # None output target -> returns audio bytes in memory.
-        synthesizer = speechsdk.SpeechSynthesizer(speech_config=config, audio_config=None)
-        result = synthesizer.speak_text_async(clean_text).get()
+    attempt = 0
+    while True:
+        try:
+            config = speechsdk.SpeechConfig(subscription=key, region=region)
+            config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Audio24Khz48KBitRateMonoMp3
+            )
+            if voice_name:
+                config.speech_synthesis_voice_name = voice_name
+            if speech_lang:
+                config.speech_synthesis_language = speech_lang
 
-        if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
-            return bytes(result.audio_data or b""), ""
+            # None output target -> returns audio bytes in memory.
+            synthesizer = speechsdk.SpeechSynthesizer(speech_config=config, audio_config=None)
+            result = synthesizer.speak_text_async(clean_text).get()
 
-        if result.reason == speechsdk.ResultReason.Canceled:
-            details = speechsdk.SpeechSynthesisCancellationDetails(result)
-            msg = (details.error_details or details.reason or "tts_canceled")
-            return b"", f"azure_tts_canceled:{msg}"
+            if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                return bytes(result.audio_data or b""), ""
 
-        return b"", f"azure_tts_failed:{result.reason}"
-    except Exception as exc:
-        return b"", f"azure_tts_exception:{repr(exc)}"
+            if result.reason == speechsdk.ResultReason.Canceled:
+                details = speechsdk.SpeechSynthesisCancellationDetails(result)
+                msg = str(details.error_details or details.reason or "tts_canceled")
+                if _is_azure_429_error(msg) and attempt < max_retries:
+                    delay_ms = min(max_backoff_ms, int(base_backoff_ms * (2 ** attempt)))
+                    if jitter_ms > 0:
+                        delay_ms += int(random.uniform(0, jitter_ms))
+                    attempt += 1
+                    logger.warning(
+                        "azure_tts_retry_429 attempt=%s/%s delay_ms=%s voice=%s speech_lang=%s",
+                        attempt,
+                        max_retries,
+                        int(delay_ms),
+                        (voice_name or ""),
+                        (speech_lang or ""),
+                    )
+                    time.sleep(max(0.0, float(delay_ms) / 1000.0))
+                    continue
+                return b"", f"azure_tts_canceled:{msg}"
+
+            return b"", f"azure_tts_failed:{result.reason}"
+        except Exception as exc:
+            err_text = f"azure_tts_exception:{repr(exc)}"
+            if _is_azure_429_error(err_text) and attempt < max_retries:
+                delay_ms = min(max_backoff_ms, int(base_backoff_ms * (2 ** attempt)))
+                if jitter_ms > 0:
+                    delay_ms += int(random.uniform(0, jitter_ms))
+                attempt += 1
+                logger.warning(
+                    "azure_tts_retry_429_exception attempt=%s/%s delay_ms=%s voice=%s speech_lang=%s",
+                    attempt,
+                    max_retries,
+                    int(delay_ms),
+                    (voice_name or ""),
+                    (speech_lang or ""),
+                )
+                time.sleep(max(0.0, float(delay_ms) / 1000.0))
+                continue
+            return b"", err_text
 
 
 def generate_and_store_tts(

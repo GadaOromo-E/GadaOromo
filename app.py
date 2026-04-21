@@ -1382,6 +1382,25 @@ def _log_runtime_repair_context(context: str):
         app.logger.exception("%s runtime context logging failed", context)
 
 
+def _provider_health_snapshot() -> dict:
+    return {
+        "google_configured": bool(_get_google_key()),
+        "google_key_source": (_google_key_source_name() or "missing"),
+        "azure_configured": bool(_get_azure_speech_key() and _get_azure_speech_region()),
+        "azure_voice_map": {lc: (DEFAULT_AZURE_VOICES.get(lc) or "") for lc in ("en", "om", "am", "ar", "fr", "zh-CN")},
+        "azure_retry": {
+            "max_retries": int(AZURE_TTS_429_MAX_RETRIES),
+            "base_backoff_ms": int(AZURE_TTS_429_BASE_BACKOFF_MS),
+            "max_backoff_ms": int(AZURE_TTS_429_MAX_BACKOFF_MS),
+            "jitter_ms": int(AZURE_TTS_429_JITTER_MS),
+        },
+        "tts_job_throttle": {
+            "chunk_size": int(TTS_JOB_CHUNK_SIZE),
+            "entry_delay_ms": int(TTS_JOB_ENTRY_DELAY_MS),
+        },
+    }
+
+
 def google_translate_batch_v2(texts, target: str, source: str = "en"):
     api_key = _get_google_key()
     if not api_key:
@@ -1456,6 +1475,23 @@ except Exception:
 LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
 TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "0").strip() == "1")
 TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
+TTS_JOB_CHUNK_SIZE = max(1, min(int((os.environ.get("TTS_JOB_CHUNK_SIZE") or "10").strip() or 10), 200))
+TTS_JOB_ENTRY_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_ENTRY_DELAY_MS") or "120").strip() or 120), 5000))
+AZURE_TTS_429_MAX_RETRIES = max(0, min(int((os.environ.get("AZURE_TTS_429_MAX_RETRIES") or "2").strip() or 2), 6))
+AZURE_TTS_429_BASE_BACKOFF_MS = max(50, min(int((os.environ.get("AZURE_TTS_429_BASE_BACKOFF_MS") or "500").strip() or 500), 10000))
+AZURE_TTS_429_MAX_BACKOFF_MS = max(AZURE_TTS_429_BASE_BACKOFF_MS, min(int((os.environ.get("AZURE_TTS_429_MAX_BACKOFF_MS") or "4000").strip() or 4000), 60000))
+AZURE_TTS_429_JITTER_MS = max(0, min(int((os.environ.get("AZURE_TTS_429_JITTER_MS") or "250").strip() or 250), 5000))
+app.logger.info(
+    "Startup provider settings google_configured=%s azure_configured=%s azure_retry={max_retries:%s,base_backoff_ms:%s,max_backoff_ms:%s,jitter_ms:%s} tts_job_throttle={chunk_size:%s,entry_delay_ms:%s}",
+    bool(_get_google_key()),
+    bool((os.environ.get("AZURE_SPEECH_KEY") or "").strip() and (os.environ.get("AZURE_SPEECH_REGION") or "").strip()),
+    int(AZURE_TTS_429_MAX_RETRIES),
+    int(AZURE_TTS_429_BASE_BACKOFF_MS),
+    int(AZURE_TTS_429_MAX_BACKOFF_MS),
+    int(AZURE_TTS_429_JITTER_MS),
+    int(TTS_JOB_CHUNK_SIZE),
+    int(TTS_JOB_ENTRY_DELAY_MS),
+)
 
 AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
 AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
@@ -1603,6 +1639,9 @@ def ensure_missing_generated_translations_for_words(
             "empty_results": 0,
             "batch_mismatch_fallback": 0,
             "provider_errors": 0,
+            "google_empty_result": 0,
+            "google_request_failures": 0,
+            "google_provider_errors": 0,
             "failed_db_write": 0,
         }
         stats[lang] = lang_stats
@@ -1694,8 +1733,15 @@ def ensure_missing_generated_translations_for_words(
                             processed_new_log_count += 1
                 else:
                     lang_stats["batch_mismatch_fallback"] += len(chunk_pairs)
+                    lang_stats["google_request_failures"] += len(chunk_pairs)
+                    if not translated_list:
+                        lang_stats["google_empty_result"] += len(chunk_pairs)
+                        lang_stats["provider_errors"] += len(chunk_pairs)
+                        lang_stats["google_provider_errors"] += len(chunk_pairs)
             except Exception:
                 lang_stats["provider_errors"] += 1
+                lang_stats["google_provider_errors"] += 1
+                lang_stats["google_request_failures"] += len(chunk_pairs)
                 app.logger.exception(
                     "%s batch_translate_failed entry_type=word lang=%s batch_size=%s",
                     log_context,
@@ -1713,6 +1759,10 @@ def ensure_missing_generated_translations_for_words(
                     translated_text = normalize_text(translated or "")
                     if not _is_meaningful_generated_text(translated_text):
                         lang_stats["empty_results"] += 1
+                        lang_stats["google_empty_result"] += 1
+                        lang_stats["google_request_failures"] += 1
+                        lang_stats["provider_errors"] += 1
+                        lang_stats["google_provider_errors"] += 1
                         continue
                     write_ok = _save_generated_translation(
                         wid,
@@ -1737,6 +1787,8 @@ def ensure_missing_generated_translations_for_words(
                         processed_new_log_count += 1
                 except Exception:
                     lang_stats["provider_errors"] += 1
+                    lang_stats["google_provider_errors"] += 1
+                    lang_stats["google_request_failures"] += 1
                     app.logger.exception(
                         "%s fallback_translate_failed entry_type=word entry_id=%s lang=%s",
                         log_context,
@@ -1754,6 +1806,9 @@ def ensure_missing_generated_translations_for_words(
                 "empty": st["empty_results"],
                 "fallback": st["batch_mismatch_fallback"],
                 "errors": st["provider_errors"],
+                "google_empty_result": st.get("google_empty_result", 0),
+                "google_request_failures": st.get("google_request_failures", 0),
+                "google_provider_errors": st.get("google_provider_errors", 0),
             }
             for lang, st in stats.items()
         }
@@ -3349,6 +3404,9 @@ def ensure_missing_generated_translations_for_phrases(
             "empty_results": 0,
             "batch_mismatch_fallback": 0,
             "provider_errors": 0,
+            "google_empty_result": 0,
+            "google_request_failures": 0,
+            "google_provider_errors": 0,
             "missing_api_key": 0,
             "request_failures": 0,
             "fallback_errors": 0,
@@ -3423,6 +3481,8 @@ def ensure_missing_generated_translations_for_phrases(
             api_key = _get_google_key()
             if not api_key:
                 st["provider_errors"] += len(pairs)
+                st["google_provider_errors"] += len(pairs)
+                st["google_request_failures"] += len(pairs)
                 st["missing_api_key"] += len(pairs)
                 for pid, _en in pairs:
                     phrase_debug[int(pid)]["skips"].append(f"{lang}:missing_api_key")
@@ -3449,7 +3509,12 @@ def ensure_missing_generated_translations_for_phrases(
                     source="en",
                 )
                 if not translated:
+                    # Do not drop the chunk on empty batch response.
+                    # Fall through to per-item fallback translate below.
                     st["provider_errors"] += len(pairs)
+                    st["google_provider_errors"] += len(pairs)
+                    st["google_empty_result"] += len(pairs)
+                    st["google_request_failures"] += len(pairs)
                     st["request_failures"] += len(pairs)
                     for pid, _en in pairs:
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_batch_response")
@@ -3463,13 +3528,12 @@ def ensure_missing_generated_translations_for_phrases(
                             skip_reason="empty_batch_response",
                         )
                     app.logger.error(
-                        "phrase batch translate empty response context=%s lang=%s pairs=%s key_source=%s",
+                        "phrase batch translate empty response context=%s lang=%s pairs=%s key_source=%s; falling back to per-item translate",
                         log_context,
                         lang,
                         len(pairs),
                         (_google_key_source_name() or "missing"),
                     )
-                    continue
                 if len(translated) != len(pairs):
                     st["batch_mismatch_fallback"] += len(pairs)
                     for pid, _en in pairs:
@@ -3487,6 +3551,8 @@ def ensure_missing_generated_translations_for_phrases(
             except Exception:
                 translated = []
                 st["provider_errors"] += len(pairs)
+                st["google_provider_errors"] += len(pairs)
+                st["google_request_failures"] += len(pairs)
                 st["request_failures"] += len(pairs)
                 for pid, _en in pairs:
                     phrase_debug[int(pid)]["skips"].append(f"{lang}:batch_exception")
@@ -3505,7 +3571,7 @@ def ensure_missing_generated_translations_for_phrases(
                     lang,
                     len(pairs),
                 )
-                continue
+                # Fall through to per-item fallback translate below.
 
             if translated and len(translated) == len(pairs):
                 for (pid, _en), out in zip(pairs, translated):
@@ -3521,6 +3587,7 @@ def ensure_missing_generated_translations_for_phrases(
                     )
                     if not _is_meaningful_generated_text(txt):
                         st["empty_results"] += 1
+                        st["google_empty_result"] += 1
                         run_summary["skipped_empty_result"] += 1
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:empty_text")
                         _log_phrase_lang_status(
@@ -3602,6 +3669,10 @@ def ensure_missing_generated_translations_for_phrases(
                         if not _is_meaningful_generated_text(txt):
                             st["request_failures"] += 1
                             st["empty_results"] += 1
+                            st["google_request_failures"] += 1
+                            st["google_empty_result"] += 1
+                            st["provider_errors"] += 1
+                            st["google_provider_errors"] += 1
                             run_summary["skipped_empty_result"] += 1
                             phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_empty_text")
                             _log_phrase_lang_status(
@@ -3652,6 +3723,8 @@ def ensure_missing_generated_translations_for_phrases(
                             processed_new_log_count += 1
                     except Exception:
                         st["provider_errors"] += 1
+                        st["google_provider_errors"] += 1
+                        st["google_request_failures"] += 1
                         st["fallback_errors"] += 1
                         phrase_debug[int(pid)]["skips"].append(f"{lang}:fallback_exception")
                         _log_phrase_lang_status(
@@ -3680,6 +3753,9 @@ def ensure_missing_generated_translations_for_phrases(
                 "empty": st["empty_results"],
                 "fallback": st["batch_mismatch_fallback"],
                 "errors": st["provider_errors"],
+                "google_empty_result": st.get("google_empty_result", 0),
+                "google_request_failures": st.get("google_request_failures", 0),
+                "google_provider_errors": st.get("google_provider_errors", 0),
                 "failed_db_write": st.get("failed_db_write", 0),
                 "missing_api_key": st.get("missing_api_key", 0),
                 "request_failures": st.get("request_failures", 0),
@@ -5394,6 +5470,7 @@ def ensure_missing_tts_for_words(
     word_items,
     force_regenerate: bool = False,
     chunk_size: int = None,
+    per_entry_delay_ms: int = 0,
     log_context: str = "word_tts_backfill",
 ):
     summary = {
@@ -5412,7 +5489,7 @@ def ensure_missing_tts_for_words(
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
-
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0 )
     unique_items = []
     seen = set()
     for wid, en in word_items:
@@ -5459,6 +5536,8 @@ def ensure_missing_tts_for_words(
             row = generate_tts_for_entry("word", wid, force_regenerate=force_regenerate)
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
+            if delay_s > 0:
+                time.sleep(delay_s)
         app.logger.info(
             "%s chunk_done start=%s size=%s processed_new=%s skipped_existing=%s generated=%s cached=%s failed=%s",
             log_context,
@@ -5477,6 +5556,7 @@ def ensure_missing_tts_for_phrases(
     phrase_items,
     force_regenerate: bool = False,
     chunk_size: int = None,
+    per_entry_delay_ms: int = 0,
     log_context: str = "phrase_tts_backfill",
 ):
     summary = {
@@ -5496,7 +5576,7 @@ def ensure_missing_tts_for_phrases(
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
-
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0 )
     unique_items = []
     seen = set()
     for pid, en in phrase_items:
@@ -5585,6 +5665,8 @@ def ensure_missing_tts_for_phrases(
                 )
                 if state == "generated":
                     summary["generated_by_language"][lang] = int(summary["generated_by_language"].get(lang, 0) or 0) + 1
+            if delay_s > 0:
+                time.sleep(delay_s)
         app.logger.info(
             "%s chunk_done start=%s size=%s processed_new=%s skipped_existing=%s generated=%s cached=%s failed=%s",
             log_context,
@@ -5719,8 +5801,11 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         len(phrase_ids),
         {"word": words_summary, "phrase": phrases_summary},
     )
+    app.logger.info("post_import_pipeline provider_health=%s", _provider_health_snapshot())
 
     pipeline_ok = True
+    word_tr_stats = {}
+    phrase_tr_stats = {}
     conn = None
     cursor = None
     try:
@@ -5833,16 +5918,19 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                 )
             )
 
+        tts_chunk = max(1, min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE)))
         words_tts = ensure_missing_tts_for_words(
             word_items,
             force_regenerate=False,
-            chunk_size=safe_chunk,
+            chunk_size=tts_chunk,
+            per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
             log_context="post_import_pipeline_tts_words",
         ) if word_items else {}
         phrases_tts = ensure_missing_tts_for_phrases(
             phrase_items,
             force_regenerate=False,
-            chunk_size=safe_chunk,
+            chunk_size=tts_chunk,
+            per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
             log_context="post_import_pipeline_tts_phrases",
         ) if phrase_items else {}
         words_summary["audio_generated"] = int((words_tts or {}).get("generated", 0) or 0)
@@ -5871,11 +5959,49 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         phrases_summary["learn_ready_phrases_with_audio"] = _count_phrases_with_any_audio(phrase_ids)
         phrases_summary["learn_visible_phrase_count"] = _count_recent_visible_learn_phrases(LEARN_RECENT_PHRASE_LIMIT)
 
+        words_google_provider_errors = int(sum(int((st or {}).get("google_provider_errors", (st or {}).get("provider_errors", 0)) or 0) for st in (word_tr_stats or {}).values()))
+        phrases_google_provider_errors = int(sum(int((st or {}).get("google_provider_errors", (st or {}).get("provider_errors", 0)) or 0) for st in (phrase_tr_stats or {}).values()))
+        words_google_empty_result = int(sum(int((st or {}).get("google_empty_result", (st or {}).get("empty_results", 0)) or 0) for st in (word_tr_stats or {}).values()))
+        phrases_google_empty_result = int(sum(int((st or {}).get("google_empty_result", (st or {}).get("empty_results", 0)) or 0) for st in (phrase_tr_stats or {}).values()))
+        words_google_request_failures = int(sum(int((st or {}).get("google_request_failures", (st or {}).get("request_failures", 0)) or 0) for st in (word_tr_stats or {}).values()))
+        phrases_google_request_failures = int(sum(int((st or {}).get("google_request_failures", (st or {}).get("request_failures", 0)) or 0) for st in (phrase_tr_stats or {}).values()))
+        provider_failure_summary = {
+            "google_provider_errors": int(words_google_provider_errors + phrases_google_provider_errors),
+            "google_empty_result": int(words_google_empty_result + phrases_google_empty_result),
+            "google_request_failures": int(words_google_request_failures + phrases_google_request_failures),
+            "azure_tts_failures": int(words_summary.get("audio_failed", 0) + phrases_summary.get("audio_failed", 0)),
+        }
+        completed_with_provider_failures = bool(
+            int(provider_failure_summary.get("google_provider_errors", 0) or 0) > 0
+            or int(provider_failure_summary.get("azure_tts_failures", 0) or 0) > 0
+        )
+        if completed_with_provider_failures:
+            app.logger.warning(
+                "post_import_pipeline completed_with_provider_failures provider_failure_summary=%s words=%s phrases=%s",
+                provider_failure_summary,
+                words_summary,
+                phrases_summary,
+            )
+        result_payload = {
+            "ok": True,
+            "completed_with_provider_failures": completed_with_provider_failures,
+            "provider_failure_summary": provider_failure_summary,
+            "words_summary": words_summary,
+            "phrases_summary": phrases_summary,
+        }
+
         app.logger.info("post_import_pipeline summary words=%s", words_summary)
         app.logger.info("post_import_pipeline summary phrases=%s", phrases_summary)
         conn.commit()
     except Exception:
         pipeline_ok = False
+        result_payload = {
+            "ok": False,
+            "completed_with_provider_failures": False,
+            "provider_failure_summary": {},
+            "words_summary": words_summary,
+            "phrases_summary": phrases_summary,
+        }
         app.logger.exception("Post-import pipeline failed with unhandled exception")
         if conn is not None:
             try:
@@ -5893,7 +6019,17 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                 conn.close()
             except Exception:
                 pass
-    return bool(pipeline_ok)
+    if not pipeline_ok:
+        return result_payload
+    if "result_payload" not in locals():
+        result_payload = {
+            "ok": True,
+            "completed_with_provider_failures": False,
+            "provider_failure_summary": {},
+            "words_summary": words_summary,
+            "phrases_summary": phrases_summary,
+        }
+    return result_payload
 
 
 def _fetch_approved_items_for_audio_regen(entry_type: str, limit: int = 0):
@@ -5971,6 +6107,18 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
+    safe_chunk = min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE))
+    delay_s = max(0.0, float(int(TTS_JOB_ENTRY_DELAY_MS or 0)) / 1000.0)
+    app.logger.info(
+        "admin_audio_regen_job provider_health=%s tts_job_chunk_size=%s tts_job_entry_delay_ms=%s",
+        _provider_health_snapshot(),
+        int(safe_chunk),
+        int(TTS_JOB_ENTRY_DELAY_MS),
+    )
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
+    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
 
     generated = 0
     failed = 0
@@ -5993,6 +6141,8 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
                 generated,
                 failed,
             )
+        if delay_s > 0:
+            time.sleep(delay_s)
 
     summary = {
         "entry_type": et,
@@ -6006,6 +6156,11 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
         "target_entries": int(len(target_items)),
         "sample_failed_ids": sample_failed_ids,
     }
+    summary["completed_with_provider_failures"] = bool(
+        int(summary.get("target_entries", 0) or 0) > 0
+        and int(summary.get("audio_generated", 0) or 0) <= 0
+        and int(summary.get("audio_failed", 0) or 0) > 0
+    )
     app.logger.info("admin_audio_regen_job_summary %s", summary)
     return True, summary
 
@@ -6291,6 +6446,7 @@ def _post_import_worker_loop():
                 len(phrase_ids or []),
                 options,
             )
+            app.logger.info("post_import_worker provider_health=%s", _provider_health_snapshot())
             try:
                 if job_type in ("admin_audio_regen_word", "admin_audio_regen_phrase"):
                     target_entry_type = "word" if job_type.endswith("_word") else "phrase"
@@ -6341,15 +6497,19 @@ def _post_import_worker_loop():
                     summary["mode"] = mode
                     run_ok = True
                 else:
-                    run_ok = _run_post_import_pipeline(
+                    pipeline_result = _run_post_import_pipeline(
                         word_ids,
                         phrase_ids,
                         chunk_size=chunk_size,
                         import_summary=import_summary,
                     )
-                    summary = {}
+                    summary = pipeline_result if isinstance(pipeline_result, dict) else {}
+                    run_ok = bool((pipeline_result or {}).get("ok", False)) if isinstance(pipeline_result, dict) else bool(pipeline_result)
                 if run_ok:
-                    _complete_post_import_job(job_id, ok=True, error_text="", result_payload=summary)
+                    warn_text = ""
+                    if isinstance(summary, dict) and bool(summary.get("completed_with_provider_failures")):
+                        warn_text = "completed_with_provider_failures"
+                    _complete_post_import_job(job_id, ok=True, error_text=warn_text, result_payload=summary)
                 else:
                     _complete_post_import_job(job_id, ok=False, error_text="pipeline_returned_failure", result_payload=summary)
             except Exception as e:
@@ -9654,13 +9814,10 @@ def _queue_admin_audio_regen_response(entry_type: str):
     if request.is_json:
         return jsonify(out), (200 if queued_ok else 500)
     if queued_ok:
+        # Job stats are unknown at queue-time; show only queue confirmation.
         msg = (
             f"{str(entry_type).capitalize()} audio job queued. "
-            f"Scanned: {int(out.get('scanned_entries', 0) or 0)}, "
-            f"Generated: 0, "
-            f"Skipped existing: {int(out.get('audio_skipped_existing', 0) or 0)}, "
-            f"Missing voice: {int(out.get('audio_missing_voice', 0) or 0)}, "
-            f"Failed: 0. "
+            f"Results will appear after completion. "
             f"(Job #{int(job_id or 0)})"
         )
     else:
