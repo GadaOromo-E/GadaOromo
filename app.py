@@ -1476,7 +1476,8 @@ LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
 TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "0").strip() == "1")
 TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
 TTS_JOB_CHUNK_SIZE = max(1, min(int((os.environ.get("TTS_JOB_CHUNK_SIZE") or "10").strip() or 10), 200))
-TTS_JOB_ENTRY_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_ENTRY_DELAY_MS") or "120").strip() or 120), 5000))
+TTS_JOB_ENTRY_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_ENTRY_DELAY_MS") or "2000").strip() or 2000), 15000))
+TTS_JOB_LANGUAGE_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_LANGUAGE_DELAY_MS") or "700").strip() or 700), 5000))
 AZURE_TTS_429_MAX_RETRIES = max(0, min(int((os.environ.get("AZURE_TTS_429_MAX_RETRIES") or "2").strip() or 2), 6))
 AZURE_TTS_429_BASE_BACKOFF_MS = max(50, min(int((os.environ.get("AZURE_TTS_429_BASE_BACKOFF_MS") or "500").strip() or 500), 10000))
 AZURE_TTS_429_MAX_BACKOFF_MS = max(AZURE_TTS_429_BASE_BACKOFF_MS, min(int((os.environ.get("AZURE_TTS_429_MAX_BACKOFF_MS") or "4000").strip() or 4000), 60000))
@@ -1594,6 +1595,7 @@ def ensure_missing_generated_translations_for_words(
     langs=None,
     chunk_size: int = None,
     log_context: str = "generated_backfill",
+    cancel_check=None,
 ):
     """
     Robust best-effort generated translation backfill.
@@ -1626,6 +1628,7 @@ def ensure_missing_generated_translations_for_words(
 
     total_saved = 0
     stats = {}
+    canceled = False
 
     for lang in langs:
         lang_stats = {
@@ -1651,6 +1654,9 @@ def ensure_missing_generated_translations_for_words(
         invalid_cache_log_count = 0
         processed_new_log_count = 0
         for wid, en in unique_items:
+            if callable(cancel_check) and bool(cancel_check()):
+                canceled = True
+                break
             source_hash = _text_hash(en)
             cached = _get_cached_generated_translation(wid, lang)
             if cached:
@@ -1683,6 +1689,8 @@ def ensure_missing_generated_translations_for_words(
                     )
                     invalid_cache_log_count += 1
             missing_pairs.append((wid, en))
+        if canceled:
+            break
 
         lang_stats["missing_before"] = len(missing_pairs)
         if not missing_pairs:
@@ -1706,6 +1714,9 @@ def ensure_missing_generated_translations_for_words(
                 if translated_list and len(translated_list) == len(chunk_pairs):
                     used_batch = True
                     for (wid, _en), translated in zip(chunk_pairs, translated_list):
+                        if callable(cancel_check) and bool(cancel_check()):
+                            canceled = True
+                            break
                         translated_text = normalize_text(translated or "")
                         if not _is_meaningful_generated_text(translated_text):
                             lang_stats["empty_results"] += 1
@@ -1731,6 +1742,8 @@ def ensure_missing_generated_translations_for_words(
                                 lang,
                             )
                             processed_new_log_count += 1
+                    if canceled:
+                        break
                 else:
                     lang_stats["batch_mismatch_fallback"] += len(chunk_pairs)
                     lang_stats["google_request_failures"] += len(chunk_pairs)
@@ -1754,6 +1767,9 @@ def ensure_missing_generated_translations_for_words(
 
             # Per-item fallback avoids all-or-nothing loss when batch fails/mismatches.
             for wid, en in chunk_pairs:
+                if callable(cancel_check) and bool(cancel_check()):
+                    canceled = True
+                    break
                 try:
                     translated = google_translate_text_v2(en, target=target_code, source="en")
                     translated_text = normalize_text(translated or "")
@@ -1795,6 +1811,10 @@ def ensure_missing_generated_translations_for_words(
                         wid,
                         lang,
                     )
+            if canceled:
+                break
+        if canceled:
+            break
 
     try:
         compact = {
@@ -1820,6 +1840,9 @@ def ensure_missing_generated_translations_for_words(
         )
     except Exception:
         pass
+
+    if canceled:
+        stats["__meta__"] = {"canceled": True}
 
     return total_saved, stats
 
@@ -2748,6 +2771,8 @@ def ensure_post_import_jobs_table():
             c.execute("ALTER TABLE post_import_jobs ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
         if "result_json" not in cols:
             c.execute("ALTER TABLE post_import_jobs ADD COLUMN result_json TEXT NOT NULL DEFAULT '{}'")
+        if "cancel_requested" not in cols:
+            c.execute("ALTER TABLE post_import_jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0")
         c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_id ON post_import_jobs(status, id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_post_import_jobs_status_type_id ON post_import_jobs(status, job_type, id)")
         conn.commit()
@@ -3303,6 +3328,7 @@ def ensure_missing_generated_translations_for_phrases(
     chunk_size: int = None,
     overwrite_existing: bool = False,
     log_context: str = "generated_phrase_backfill",
+    cancel_check=None,
 ):
     if not phrase_items:
         return 0, {}
@@ -3360,6 +3386,7 @@ def ensure_missing_generated_translations_for_phrases(
 
     total_saved = 0
     stats = {}
+    canceled = False
     phrase_debug = {
         int(pid): {"attempted": [], "saved": [], "skips": []}
         for pid, _en in unique_items
@@ -3418,6 +3445,9 @@ def ensure_missing_generated_translations_for_phrases(
         skipped_existing_log_count = 0
         processed_new_log_count = 0
         for pid, en in unique_items:
+            if callable(cancel_check) and bool(cancel_check()):
+                canceled = True
+                break
             phrase_debug.setdefault(int(pid), {"attempted": [], "saved": [], "skips": []})
             phrase_debug[int(pid)]["attempted"].append(lang)
             cached_raw = _get_generated_phrase_translation_row_raw(pid, lang)
@@ -3469,6 +3499,8 @@ def ensure_missing_generated_translations_for_phrases(
                         source_hash[:12],
                     )
             missing.append((pid, en))
+        if canceled:
+            break
         # Missing means either no generated translation for this language OR empty Oromo base text.
         missing_translation_ids = {int(pid or 0) for pid, _en in missing if int(pid or 0) > 0}
         st["missing_before"] = len(missing_translation_ids.union(oromo_missing_ids))
@@ -3575,6 +3607,9 @@ def ensure_missing_generated_translations_for_phrases(
 
             if translated and len(translated) == len(pairs):
                 for (pid, _en), out in zip(pairs, translated):
+                    if callable(cancel_check) and bool(cancel_check()):
+                        canceled = True
+                        break
                     txt = normalize_text(out or "")
                     meta = cache_meta.get(int(pid), {}) or {}
                     app.logger.info(
@@ -3648,8 +3683,13 @@ def ensure_missing_generated_translations_for_phrases(
                             result_text=txt,
                             skip_reason="save_exception",
                         )
+                if canceled:
+                    break
             else:
                 for pid, en in pairs:
+                    if callable(cancel_check) and bool(cancel_check()):
+                        canceled = True
+                        break
                     try:
                         meta = cache_meta.get(int(pid), {}) or {}
                         translated = google_translate_text_v2(
@@ -3741,6 +3781,12 @@ def ensure_missing_generated_translations_for_phrases(
                             pid,
                             lang,
                         )
+                if canceled:
+                    break
+            if canceled:
+                break
+        if canceled:
+            break
 
     try:
         compact = {
@@ -3780,6 +3826,9 @@ def ensure_missing_generated_translations_for_phrases(
         )
     except Exception:
         pass
+
+    if canceled:
+        stats["__meta__"] = {"canceled": True}
 
     try:
         for pid, dbg in phrase_debug.items():
@@ -3843,6 +3892,7 @@ def ensure_missing_oromo_for_entries(
     items,
     chunk_size: int = None,
     log_context: str = "post_import_oromo",
+    cancel_check=None,
 ):
     """
     Best-effort Oromo backfill for base entries that were imported without Oromo text.
@@ -3906,6 +3956,9 @@ def ensure_missing_oromo_for_entries(
         )
 
     for eid, en in unique_items:
+        if callable(cancel_check) and bool(cancel_check()):
+            summary["canceled"] = True
+            break
         if entry_type == "phrase":
             c.execute(
                 """
@@ -3945,6 +3998,9 @@ def ensure_missing_oromo_for_entries(
 
     summary["missing_before"] = len(missing_pairs)
     summary["scanned_missing_oromo"] = len(missing_pairs)
+    if bool(summary.get("canceled")):
+        conn.close()
+        return summary
     if not missing_pairs:
         conn.close()
         return summary
@@ -4045,6 +4101,9 @@ def ensure_missing_oromo_for_entries(
 
         if translated_list and len(translated_list) == len(chunk):
             for (eid, _en), om_raw in zip(chunk, translated_list):
+                if callable(cancel_check) and bool(cancel_check()):
+                    summary["canceled"] = True
+                    break
                 om = normalize_text(om_raw or "")
                 if not om:
                     # Batch empty -> single translation with one retry.
@@ -4095,8 +4154,13 @@ def ensure_missing_oromo_for_entries(
                     )
                     if len(failed_examples) < 10:
                         failed_examples.append((int(eid), normalize_text(update_reason or "")))
+            if bool(summary.get("canceled")):
+                break
         else:
             for eid, en in chunk:
+                if callable(cancel_check) and bool(cancel_check()):
+                    summary["canceled"] = True
+                    break
                 try:
                     om, single_reason = _translate_oromo_single_with_retry(en)
                     if not om:
@@ -4153,8 +4217,12 @@ def ensure_missing_oromo_for_entries(
                             filled_oromo=False,
                             reason="provider_exception",
                         )
-                        if len(failed_examples) < 10:
-                            failed_examples.append((int(eid), "provider_exception"))
+                    if len(failed_examples) < 10:
+                        failed_examples.append((int(eid), "provider_exception"))
+            if bool(summary.get("canceled")):
+                break
+        if bool(summary.get("canceled")):
+            break
 
     conn.commit()
     conn.close()
@@ -4848,7 +4916,21 @@ def _get_entry_texts_for_tts(entry_type: str, entry_id: int):
     return texts
 
 
-def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: bool = False):
+def _is_tts_rate_limited_error(error_text: str) -> bool:
+    msg = normalize_text(error_text or "").lower()
+    if not msg:
+        return False
+    return ("429" in msg) or ("too many requests" in msg) or ("throttl" in msg) or ("rate limit" in msg)
+
+
+def generate_tts_for_entry(
+    entry_type: str,
+    entry_id: int,
+    force_regenerate: bool = False,
+    langs=None,
+    per_language_delay_ms: int = 0,
+    stop_on_429: bool = False,
+):
     global _phrase_tts_voice_map_logged
     result = {
         "generated": 0,
@@ -4857,6 +4939,7 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         "skipped_missing_text": 0,
         "skipped_missing_voice": 0,
         "by_language": {},
+        "rate_limited": False,
     }
     texts = _get_entry_texts_for_tts(entry_type, entry_id)
     speech_key = _get_azure_speech_key()
@@ -4872,7 +4955,12 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
             {lc: (DEFAULT_AZURE_VOICES.get(lc) or "") for lc in ("en", "om", "am", "ar", "fr", "zh-CN")},
         )
 
-    for lang in LEARN_TTS_LANGS:
+    selected_langs = tuple(langs or LEARN_TTS_LANGS)
+    lang_delay_s = max(0.0, float(int(per_language_delay_ms or 0)) / 1000.0)
+
+    for idx, lang in enumerate(selected_langs):
+        if lang_delay_s > 0 and idx > 0:
+            time.sleep(lang_delay_s)
         text = normalize_text(texts.get(lang, "") or "")
         if not text:
             result["skipped_missing_text"] += 1
@@ -4910,6 +4998,8 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, cached["url"])
             continue
 
+        service_error_text = ""
+        skip_direct_fallback = False
         service_conn = None
         try:
             service_conn = sqlite3.connect(DB_NAME)
@@ -4995,19 +5085,30 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
                 IS_RENDER_DISK,
             )
         except Exception as e:
+            service_error_text = repr(e)
             app.logger.exception(
                 "service generate_and_store_tts failed entry_type=%s entry_id=%s lang=%s error=%s",
                 entry_type,
                 entry_id,
                 lang,
-                repr(e),
+                service_error_text,
             )
+            if _is_tts_rate_limited_error(service_error_text):
+                result["failed"] += 1
+                result["rate_limited"] = True
+                result["by_language"][lang] = "failed_429"
+                skip_direct_fallback = True
         finally:
             if service_conn is not None:
                 try:
                     service_conn.close()
                 except Exception:
                     pass
+
+        if skip_direct_fallback:
+            if stop_on_429:
+                break
+            continue
 
         audio_bytes, error = azure_synthesize_mp3(
             text=text,
@@ -5018,7 +5119,13 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
         )
         if error or not audio_bytes:
             result["failed"] += 1
-            result["by_language"][lang] = "failed"
+            if _is_tts_rate_limited_error(error or ""):
+                result["rate_limited"] = True
+                result["by_language"][lang] = "failed_429"
+                if stop_on_429:
+                    break
+            else:
+                result["by_language"][lang] = "failed"
             app.logger.error(
                 "TTS generation failed entry_type=%s entry_id=%s lang=%s error=%s speech_key_present=%s speech_region_present=%s upload_folder=%s",
                 entry_type,
@@ -5078,7 +5185,13 @@ def generate_tts_for_entry(entry_type: str, entry_id: int, force_regenerate: boo
     return result
 
 
-def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerate: bool = False, limit: int = 0):
+def run_tts_backfill(
+    entry_type: str = "all",
+    entry_id: int = 0,
+    force_regenerate: bool = False,
+    limit: int = 0,
+    cancel_check=None,
+):
     summary = {
         "processed_items": 0,
         "generated": 0,
@@ -5100,6 +5213,9 @@ def run_tts_backfill(entry_type: str = "all", entry_id: int = 0, force_regenerat
         plans.extend([("phrase", pid) for pid, _en in items])
 
     for etype, eid in plans:
+        if callable(cancel_check) and bool(cancel_check()):
+            summary["canceled"] = True
+            break
         row = generate_tts_for_entry(etype, eid, force_regenerate=force_regenerate)
         summary["processed_items"] += 1
         for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
@@ -5244,6 +5360,7 @@ def run_backfill_existing_audio_linkage(
     dry_run: bool = False,
     source_dirs=None,
     promote_to_uploads: bool = True,
+    cancel_check=None,
 ):
     """
     DB/file linkage backfill only.
@@ -5348,6 +5465,9 @@ def run_backfill_existing_audio_linkage(
         names = names[: int(limit)]
 
     for name in names:
+        if callable(cancel_check) and bool(cancel_check()):
+            summary["canceled"] = True
+            break
         summary["files_scanned"] += 1
         m = GENERATED_TTS_FILENAME_RE.match(name)
         if not m:
@@ -5448,6 +5568,9 @@ def run_backfill_existing_audio_linkage(
     conn.close()
 
     for entry_type, entry_id, lang_code, translated_text, tts_url in (cache_rows_word + cache_rows_phrase):
+        if callable(cancel_check) and bool(cancel_check()):
+            summary["canceled"] = True
+            break
         summary["cache_rows_scanned"] += 1
         if (not entry_id) or (not translated_text):
             continue
@@ -5472,6 +5595,7 @@ def ensure_missing_tts_for_words(
     chunk_size: int = None,
     per_entry_delay_ms: int = 0,
     log_context: str = "word_tts_backfill",
+    cancel_check=None,
 ):
     summary = {
         "words_seen": 0,
@@ -5506,6 +5630,9 @@ def ensure_missing_tts_for_words(
     for i in range(0, len(unique_items), safe_chunk):
         chunk = unique_items[i:i + safe_chunk]
         for wid, _en in chunk:
+            if callable(cancel_check) and bool(cancel_check()):
+                summary["canceled"] = True
+                return summary
             summary["words_seen"] += 1
             if not force_regenerate:
                 texts = _get_entry_texts_for_tts("word", wid)
@@ -5558,6 +5685,7 @@ def ensure_missing_tts_for_phrases(
     chunk_size: int = None,
     per_entry_delay_ms: int = 0,
     log_context: str = "phrase_tts_backfill",
+    cancel_check=None,
 ):
     summary = {
         "phrases_seen": 0,
@@ -5593,6 +5721,9 @@ def ensure_missing_tts_for_phrases(
     for i in range(0, len(unique_items), safe_chunk):
         chunk = unique_items[i:i + safe_chunk]
         for pid, _en in chunk:
+            if callable(cancel_check) and bool(cancel_check()):
+                summary["canceled"] = True
+                return summary
             summary["phrases_seen"] += 1
             if not force_regenerate:
                 texts = _get_entry_texts_for_tts("phrase", pid)
@@ -5777,7 +5908,13 @@ def _count_recent_visible_learn_phrases(limit: int):
     return out
 
 
-def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, import_summary: dict = None):
+def _run_post_import_pipeline(
+    word_ids,
+    phrase_ids,
+    chunk_size: int = None,
+    import_summary: dict = None,
+    cancel_check=None,
+):
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
@@ -5854,6 +5991,15 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         # Re-fetch from DB inside this thread; do not use caller-owned row objects.
         word_items = _fetch_items_by_ids("words", word_ids)
         phrase_items = _fetch_items_by_ids("phrases", phrase_ids)
+        if callable(cancel_check) and bool(cancel_check()):
+            return {
+                "ok": False,
+                "canceled": True,
+                "completed_with_provider_failures": False,
+                "provider_failure_summary": {},
+                "words_summary": words_summary,
+                "phrases_summary": phrases_summary,
+            }
 
         app.logger.info(
             "post_import_pipeline voice_map provider=%s voices=%s",
@@ -5868,20 +6014,36 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                 word_items,
                 chunk_size=safe_chunk,
                 log_context="post_import_pipeline",
+                cancel_check=cancel_check,
             )
             words_summary["scanned_missing_oromo"] = int(word_oromo_summary.get("scanned_missing_oromo", 0) or 0)
             words_summary["filled_oromo"] = int(word_oromo_summary.get("filled_oromo", 0) or 0)
             words_summary["failed_oromo_fill"] = int(word_oromo_summary.get("failed_oromo_fill", 0) or 0)
+            if bool(word_oromo_summary.get("canceled")):
+                return {
+                    "ok": False,
+                    "canceled": True,
+                    "words_summary": words_summary,
+                    "phrases_summary": phrases_summary,
+                }
         if phrase_items:
             phrase_oromo_summary = ensure_missing_oromo_for_entries(
                 "phrase",
                 phrase_items,
                 chunk_size=safe_chunk,
                 log_context="post_import_pipeline",
+                cancel_check=cancel_check,
             )
             phrases_summary["scanned_missing_oromo"] = int(phrase_oromo_summary.get("scanned_missing_oromo", 0) or 0)
             phrases_summary["filled_oromo"] = int(phrase_oromo_summary.get("filled_oromo", 0) or 0)
             phrases_summary["failed_oromo_fill"] = int(phrase_oromo_summary.get("failed_oromo_fill", 0) or 0)
+            if bool(phrase_oromo_summary.get("canceled")):
+                return {
+                    "ok": False,
+                    "canceled": True,
+                    "words_summary": words_summary,
+                    "phrases_summary": phrases_summary,
+                }
 
         if word_items:
             words_saved, word_tr_stats = ensure_missing_generated_translations_for_words(
@@ -5889,6 +6051,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                 langs=EXTRA_GENERATED_LANGS,
                 chunk_size=safe_chunk,
                 log_context="post_import_pipeline_words",
+                cancel_check=cancel_check,
             )
             words_summary["translations_generated"] = int(words_saved or 0)
             words_summary["translations_attempted"] = int(sum(int((st or {}).get("attempted", 0) or 0) for st in (word_tr_stats or {}).values()))
@@ -5900,12 +6063,20 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                     for st in (word_tr_stats or {}).values()
                 )
             )
+            if bool(((word_tr_stats or {}).get("__meta__") or {}).get("canceled")):
+                return {
+                    "ok": False,
+                    "canceled": True,
+                    "words_summary": words_summary,
+                    "phrases_summary": phrases_summary,
+                }
         if phrase_items:
             phrases_saved, phrase_tr_stats = ensure_missing_generated_translations_for_phrases(
                 phrase_items,
                 langs=EXTRA_GENERATED_LANGS,
                 chunk_size=safe_chunk,
                 log_context="post_import_pipeline_phrases",
+                cancel_check=cancel_check,
             )
             phrases_summary["translations_generated"] = int(phrases_saved or 0)
             phrases_summary["translations_attempted"] = int(sum(int((st or {}).get("attempted", 0) or 0) for st in (phrase_tr_stats or {}).values()))
@@ -5917,6 +6088,13 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
                     for st in (phrase_tr_stats or {}).values()
                 )
             )
+            if bool(((phrase_tr_stats or {}).get("__meta__") or {}).get("canceled")):
+                return {
+                    "ok": False,
+                    "canceled": True,
+                    "words_summary": words_summary,
+                    "phrases_summary": phrases_summary,
+                }
 
         tts_chunk = max(1, min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE)))
         words_tts = ensure_missing_tts_for_words(
@@ -5925,6 +6103,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
             chunk_size=tts_chunk,
             per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
             log_context="post_import_pipeline_tts_words",
+            cancel_check=cancel_check,
         ) if word_items else {}
         phrases_tts = ensure_missing_tts_for_phrases(
             phrase_items,
@@ -5932,6 +6111,7 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
             chunk_size=tts_chunk,
             per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
             log_context="post_import_pipeline_tts_phrases",
+            cancel_check=cancel_check,
         ) if phrase_items else {}
         words_summary["audio_generated"] = int((words_tts or {}).get("generated", 0) or 0)
         words_summary["audio_skipped_existing"] = int((words_tts or {}).get("skipped_existing", 0) or 0)
@@ -5958,6 +6138,13 @@ def _run_post_import_pipeline(word_ids, phrase_ids, chunk_size: int = None, impo
         )
         phrases_summary["learn_ready_phrases_with_audio"] = _count_phrases_with_any_audio(phrase_ids)
         phrases_summary["learn_visible_phrase_count"] = _count_recent_visible_learn_phrases(LEARN_RECENT_PHRASE_LIMIT)
+        if bool((words_tts or {}).get("canceled")) or bool((phrases_tts or {}).get("canceled")):
+            return {
+                "ok": False,
+                "canceled": True,
+                "words_summary": words_summary,
+                "phrases_summary": phrases_summary,
+            }
 
         words_google_provider_errors = int(sum(int((st or {}).get("google_provider_errors", (st or {}).get("provider_errors", 0)) or 0) for st in (word_tr_stats or {}).values()))
         phrases_google_provider_errors = int(sum(int((st or {}).get("google_provider_errors", (st or {}).get("provider_errors", 0)) or 0) for st in (phrase_tr_stats or {}).values()))
@@ -6059,13 +6246,22 @@ def _fetch_approved_items_for_audio_regen(entry_type: str, limit: int = 0):
     return [(eid, en) for eid, en in rows if eid > 0 and en]
 
 
-def _scan_missing_audio_targets(entry_type: str, items):
+def _scan_missing_audio_targets(entry_type: str, items, cancel_check=None):
     scanned_entries = 0
     audio_attempted = 0
     audio_skipped_existing = 0
     audio_missing_voice = 0
     target_items = []
     for entry_id, english_text in (items or []):
+        if callable(cancel_check) and bool(cancel_check()):
+            return {
+                "target_items": target_items,
+                "scanned_entries": int(scanned_entries),
+                "audio_attempted": int(audio_attempted),
+                "audio_skipped_existing": int(audio_skipped_existing),
+                "audio_missing_voice": int(audio_missing_voice),
+                "canceled": True,
+            }
         eid = int(entry_id or 0)
         if eid <= 0:
             continue
@@ -6093,45 +6289,89 @@ def _scan_missing_audio_targets(entry_type: str, items):
         "audio_attempted": int(audio_attempted),
         "audio_skipped_existing": int(audio_skipped_existing),
         "audio_missing_voice": int(audio_missing_voice),
+        "canceled": False,
     }
 
-
-def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int = None):
+def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int = None, cancel_check=None):
     et = normalize_text(entry_type or "").lower()
     if et not in ("word", "phrase"):
         return False, {"error": "invalid_entry_type"}
 
-    items = _fetch_approved_items_for_audio_regen(et, limit=limit)
-    scan = _scan_missing_audio_targets(et, items)
-    target_items = list(scan.get("target_items", []) or [])
+    # Strict hard cap for admin-run batch size to prevent overload.
+    safe_limit = max(1, min(int(limit or 100), 100000))
+    items = _fetch_approved_items_for_audio_regen(et, limit=safe_limit)
+    scan = _scan_missing_audio_targets(et, items, cancel_check=cancel_check)
+    target_items = list((scan.get("target_items", []) or [])[:safe_limit])
+    if bool(scan.get("canceled")):
+        return False, {
+            "entry_type": et,
+            "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
+            "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
+            "audio_generated": 0,
+            "audio_skipped_existing": int(scan.get("audio_skipped_existing", 0) or 0),
+            "audio_missing_voice": int(scan.get("audio_missing_voice", 0) or 0),
+            "audio_failed": 0,
+            "processed_entries": 0,
+            "target_entries": int(len(target_items)),
+            "sample_failed_ids": [],
+            "canceled": True,
+        }
+
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
-    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
-    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
     safe_chunk = min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE))
+
     delay_s = max(0.0, float(int(TTS_JOB_ENTRY_DELAY_MS or 0)) / 1000.0)
+    per_lang_delay_ms = int(TTS_JOB_LANGUAGE_DELAY_MS or 0)
+
     app.logger.info(
-        "admin_audio_regen_job provider_health=%s tts_job_chunk_size=%s tts_job_entry_delay_ms=%s",
+        "admin_audio_regen_job provider_health=%s tts_job_chunk_size=%s tts_job_entry_delay_ms=%s tts_job_language_delay_ms=%s limit=%s",
         _provider_health_snapshot(),
         int(safe_chunk),
         int(TTS_JOB_ENTRY_DELAY_MS),
+        int(per_lang_delay_ms),
+        int(safe_limit),
     )
-    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
-    delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0)
 
     generated = 0
     failed = 0
     sample_failed_ids = []
     processed_entries = 0
+
     for entry_id, _en in target_items:
-        row = generate_tts_for_entry(et, int(entry_id), force_regenerate=False)
+        if callable(cancel_check) and bool(cancel_check()):
+            summary = {
+                "entry_type": et,
+                "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
+                "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
+                "audio_generated": int(generated),
+                "audio_skipped_existing": int(scan.get("audio_skipped_existing", 0) or 0),
+                "audio_missing_voice": int(scan.get("audio_missing_voice", 0) or 0),
+                "audio_failed": int(failed),
+                "processed_entries": int(processed_entries),
+                "target_entries": int(len(target_items)),
+                "sample_failed_ids": sample_failed_ids,
+                "canceled": True,
+            }
+            return False, summary
+        row = generate_tts_for_entry(
+            et,
+            int(entry_id),
+            force_regenerate=False,
+            langs=LEARN_TTS_LANGS,
+            per_language_delay_ms=per_lang_delay_ms,
+            stop_on_429=True,
+        )
         processed_entries += 1
         generated += int((row or {}).get("generated", 0) or 0)
+
         row_failed = int((row or {}).get("failed", 0) or 0)
         failed += row_failed
+
         if row_failed > 0 and len(sample_failed_ids) < 20:
             sample_failed_ids.append(int(entry_id))
+
         if processed_entries % max(1, safe_chunk) == 0:
             app.logger.info(
                 "admin_audio_regen_job_progress entry_type=%s processed_entries=%s/%s generated=%s failed=%s",
@@ -6141,6 +6381,7 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
                 generated,
                 failed,
             )
+
         if delay_s > 0:
             time.sleep(delay_s)
 
@@ -6156,16 +6397,22 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
         "target_entries": int(len(target_items)),
         "sample_failed_ids": sample_failed_ids,
     }
+
     summary["completed_with_provider_failures"] = bool(
         int(summary.get("target_entries", 0) or 0) > 0
         and int(summary.get("audio_generated", 0) or 0) <= 0
         and int(summary.get("audio_failed", 0) or 0) > 0
     )
+
     app.logger.info("admin_audio_regen_job_summary %s", summary)
     return True, summary
 
-
-def _run_admin_repair_generated_job(entry_type: str, max_items: int = 5000, chunk_size: int = None):
+def _run_admin_repair_generated_job(
+    entry_type: str,
+    max_items: int = 5000,
+    chunk_size: int = None,
+    cancel_check=None,
+):
     et = normalize_text(entry_type or "").lower()
     if et not in ("word", "phrase"):
         return False, {"error": "invalid_entry_type"}
@@ -6179,12 +6426,14 @@ def _run_admin_repair_generated_job(entry_type: str, max_items: int = 5000, chun
             langs=EXTRA_GENERATED_LANGS,
             chunk_size=safe_chunk,
             log_context="admin_repair_generated_queue",
+            cancel_check=cancel_check,
         )
         summary = {
             "entry_type": et,
             "scanned_entries": int(len(items)),
             "translations_generated": int(saved or 0),
             "stats_by_lang": stats or {},
+            "canceled": bool(((stats or {}).get("__meta__") or {}).get("canceled")),
         }
         return True, summary
 
@@ -6195,12 +6444,14 @@ def _run_admin_repair_generated_job(entry_type: str, max_items: int = 5000, chun
         chunk_size=safe_chunk,
         overwrite_existing=False,
         log_context="admin_repair_generated_phrases_queue",
+        cancel_check=cancel_check,
     )
     summary = {
         "entry_type": et,
         "scanned_entries": int(len(phrase_items)),
         "translations_generated": int(saved or 0),
         "stats_by_lang": stats or {},
+        "canceled": bool(((stats or {}).get("__meta__") or {}).get("canceled")),
     }
     return True, summary
 
@@ -6330,7 +6581,38 @@ def _claim_next_post_import_job():
                 pass
 
 
-def _complete_post_import_job(job_id: int, ok: bool, error_text: str = "", result_payload: dict = None):
+def _is_post_import_job_cancel_requested(job_id: int) -> bool:
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            "SELECT cancel_requested FROM post_import_jobs WHERE id=? LIMIT 1",
+            (int(job_id or 0),),
+        )
+        row = c.fetchone()
+        return bool(int((row or [0])[0] or 0))
+    except Exception:
+        app.logger.exception("Failed to read post-import job cancel flag job_id=%s", int(job_id or 0))
+        return False
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _complete_post_import_job(
+    job_id: int,
+    ok: bool = None,
+    error_text: str = "",
+    result_payload: dict = None,
+    status: str = "",
+):
+    normalized_status = normalize_text(status or "").lower()
+    if normalized_status not in ("done", "failed", "canceled"):
+        normalized_status = "done" if bool(ok) else "failed"
     conn = None
     try:
         conn = sqlite3.connect(DB_NAME)
@@ -6342,7 +6624,7 @@ def _complete_post_import_job(job_id: int, ok: bool, error_text: str = "", resul
             WHERE id=?
             """,
             (
-                "done" if ok else "failed",
+                normalized_status,
                 normalize_text(error_text or "")[:2000],
                 json.dumps(result_payload or {}, separators=(",", ":")),
                 int(job_id or 0),
@@ -6351,7 +6633,7 @@ def _complete_post_import_job(job_id: int, ok: bool, error_text: str = "", resul
         conn.commit()
         app.logger.info(
             "post_import_worker job_%s job_id=%s error=%s result=%s",
-            "done" if ok else "failed",
+            normalized_status,
             int(job_id or 0),
             normalize_text(error_text or ""),
             (result_payload or {}),
@@ -6447,6 +6729,20 @@ def _post_import_worker_loop():
                 options,
             )
             app.logger.info("post_import_worker provider_health=%s", _provider_health_snapshot())
+            cancel_check = lambda jid=job_id: _is_post_import_job_cancel_requested(jid)
+            if bool(cancel_check()):
+                _complete_post_import_job(
+                    job_id,
+                    status="canceled",
+                    error_text="cancel_requested",
+                    result_payload={
+                        "ok": False,
+                        "canceled": True,
+                        "job_id": int(job_id or 0),
+                        "job_type": job_type,
+                    },
+                )
+                continue
             try:
                 if job_type in ("admin_audio_regen_word", "admin_audio_regen_phrase"):
                     target_entry_type = "word" if job_type.endswith("_word") else "phrase"
@@ -6455,6 +6751,7 @@ def _post_import_worker_loop():
                         target_entry_type,
                         limit=limit,
                         chunk_size=chunk_size,
+                        cancel_check=cancel_check,
                     )
                     if run_ok:
                         app.logger.info(
@@ -6477,6 +6774,7 @@ def _post_import_worker_loop():
                         offset=int((options or {}).get("offset") or 0),
                         entry_id=int((options or {}).get("entry_id") or 0),
                         dry_run=bool((options or {}).get("dry_run")),
+                        cancel_check=cancel_check,
                     )
                     if not bool((summary or {}).get("ok", True)):
                         run_ok = False
@@ -6486,6 +6784,7 @@ def _post_import_worker_loop():
                         target_entry_type,
                         max_items=int((options or {}).get("max_items") or 5000),
                         chunk_size=chunk_size,
+                        cancel_check=cancel_check,
                     )
                 elif job_type in ("admin_repair_missing_audio_import_only", "admin_repair_missing_audio_full_repair"):
                     mode = "full_repair" if job_type.endswith("_full_repair") else "import_only"
@@ -6493,6 +6792,7 @@ def _post_import_worker_loop():
                         limit=int((options or {}).get("limit") or 5000),
                         generate_missing=(mode == "full_repair"),
                         source_dirs=[STATIC_UPLOADS_FOLDER],
+                        cancel_check=cancel_check,
                     )
                     summary["mode"] = mode
                     run_ok = True
@@ -6502,9 +6802,21 @@ def _post_import_worker_loop():
                         phrase_ids,
                         chunk_size=chunk_size,
                         import_summary=import_summary,
+                        cancel_check=cancel_check,
                     )
                     summary = pipeline_result if isinstance(pipeline_result, dict) else {}
                     run_ok = bool((pipeline_result or {}).get("ok", False)) if isinstance(pipeline_result, dict) else bool(pipeline_result)
+                if bool((summary or {}).get("canceled")) or bool(cancel_check()):
+                    canceled_summary = dict(summary or {})
+                    canceled_summary["ok"] = False
+                    canceled_summary["canceled"] = True
+                    _complete_post_import_job(
+                        job_id,
+                        status="canceled",
+                        error_text="cancel_requested",
+                        result_payload=canceled_summary,
+                    )
+                    continue
                 if run_ok:
                     warn_text = ""
                     if isinstance(summary, dict) and bool(summary.get("completed_with_provider_failures")):
@@ -9835,6 +10147,106 @@ def admin_queue_regenerate_missing_word_audio():
     return _queue_admin_audio_regen_response("word")
 
 
+def _safe_admin_next_url(raw_next: str) -> str:
+    nxt = normalize_text(raw_next or "")
+    if nxt.startswith("/") and not nxt.startswith("//"):
+        return nxt
+    return "/admin/manage"
+
+
+@app.route("/admin/cancel-job/<int:job_id>", methods=["POST"])
+def admin_cancel_job(job_id: int):
+    if not require_admin():
+        return redirect("/admin")
+
+    next_url = _safe_admin_next_url(request.form.get("next") or request.args.get("next") or "/admin/manage")
+    jid = int(job_id or 0)
+    if jid <= 0:
+        return redirect(f"{next_url}?msg={quote('Invalid job id.', safe='')}")
+
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_NAME, timeout=30)
+        c = conn.cursor()
+        c.execute("BEGIN IMMEDIATE")
+        c.execute(
+            """
+            SELECT status, cancel_requested, result_json, job_type
+            FROM post_import_jobs
+            WHERE id=?
+            LIMIT 1
+            """,
+            (jid,),
+        )
+        row = c.fetchone()
+        if not row:
+            conn.commit()
+            return redirect(f"{next_url}?msg={quote(f'Job #{jid} was not found.', safe='')}")
+
+        status = normalize_text((row or ["", 0, "{}", ""])[0] or "").lower()
+        cancel_requested = bool(int((row or ["", 0, "{}", ""])[1] or 0))
+        result_payload = {}
+        try:
+            result_payload = json.loads((row or ["", 0, "{}", ""])[2] or "{}")
+        except Exception:
+            result_payload = {}
+        job_type = normalize_text((row or ["", 0, "{}", ""])[3] or "")
+
+        if status in ("done", "failed", "canceled"):
+            conn.commit()
+            return redirect(f"{next_url}?msg={quote(f'Job #{jid} is already {status}.', safe='')}")
+
+        result_payload["job_id"] = jid
+        result_payload["job_type"] = job_type
+        result_payload["canceled"] = True
+        result_payload["ok"] = False
+
+        if status == "pending":
+            c.execute(
+                """
+                UPDATE post_import_jobs
+                SET status='canceled',
+                    cancel_requested=1,
+                    finished_at=CURRENT_TIMESTAMP,
+                    last_error='cancel_requested_before_start',
+                    result_json=?
+                WHERE id=?
+                """,
+                (json.dumps(result_payload, separators=(",", ":")), jid),
+            )
+            conn.commit()
+            return redirect(f"{next_url}?msg={quote(f'Job #{jid} canceled before start.', safe='')}")
+
+        c.execute(
+            """
+            UPDATE post_import_jobs
+            SET cancel_requested=1
+            WHERE id=?
+            """,
+            (jid,),
+        )
+        conn.commit()
+        if cancel_requested:
+            msg = f"Stop already requested for Job #{jid}. Waiting for worker to stop."
+        else:
+            msg = f"Stop requested for Job #{jid}. Worker will stop at next entry checkpoint."
+        return redirect(f"{next_url}?msg={quote(msg, safe='')}")
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        app.logger.exception("Failed to request cancel for job id=%s", jid)
+        return redirect(f"{next_url}?msg={quote(f'Failed to stop Job #{jid}.', safe='')}")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 # ------------------ ADMIN MANAGEMENT ------------------
 
 def _coerce_int(value, default: int = 0, minimum: int = 0) -> int:
@@ -9855,6 +10267,7 @@ def import_missing_phrase_audio_from_source(
     offset: int = 0,
     entry_id: int = 0,
     dry_run: bool = False,
+    cancel_check=None,
 ):
     summary = {
         "ok": True,
@@ -9916,6 +10329,9 @@ def import_missing_phrase_audio_from_source(
 
     sess = requests.Session()
     for row_id, phrase_id, lang_code, file_path in rows:
+        if callable(cancel_check) and bool(cancel_check()):
+            summary["canceled"] = True
+            break
         summary["scanned"] += 1
         fp = normalize_text(file_path or "")
         if not fp:
@@ -10173,6 +10589,26 @@ def admin_manage():
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    c.execute(
+        """
+        SELECT id, job_type, status, created_at, started_at, cancel_requested
+        FROM post_import_jobs
+        WHERE status='running'
+        ORDER BY id DESC
+        LIMIT 20
+        """
+    )
+    running_jobs = [
+        {
+            "id": int((r or [0, "", "", "", "", 0])[0] or 0),
+            "job_type": normalize_text((r or [0, "", "", "", "", 0])[1] or ""),
+            "status": normalize_text((r or [0, "", "", "", "", 0])[2] or ""),
+            "created_at": normalize_text((r or [0, "", "", "", "", 0])[3] or ""),
+            "started_at": normalize_text((r or [0, "", "", "", "", 0])[4] or ""),
+            "cancel_requested": bool(int((r or [0, "", "", "", "", 0])[5] or 0)),
+        }
+        for r in (c.fetchall() or [])
+    ]
 
     if word_q:
         q = "%" + normalize_text(word_q) + "%"
@@ -10250,7 +10686,8 @@ def admin_manage():
         language_options=LANGUAGE_OPTIONS,
         approved_phrases=approved_phrases,
         word_q=word_q,
-        phrase_q=phrase_q
+        phrase_q=phrase_q,
+        running_jobs=running_jobs,
     )
 
 # ------------------ CHANGE PASSWORD ------------------
@@ -10661,6 +11098,7 @@ def run_repair_missing_audio(
     limit: int = 0,
     generate_missing: bool = True,
     source_dirs=None,
+    cancel_check=None,
 ):
     _log_runtime_repair_context("run_repair_missing_audio")
     words = _fetch_approved_word_items(limit=limit)
@@ -10670,7 +11108,24 @@ def run_repair_missing_audio(
         dry_run=False,
         source_dirs=source_dirs,
         promote_to_uploads=True,
+        cancel_check=cancel_check,
     )
+    if callable(cancel_check) and bool(cancel_check()):
+        return {
+            "words_scanned": len(words),
+            "phrases_scanned": len(phrases),
+            "items_scanned": int(len(words) + len(phrases)),
+            "audio_reused": 0,
+            "audio_generated": 0,
+            "missing_text": 0,
+            "missing_voice_config": 0,
+            "failures": 0,
+            "processed_items": 0,
+            "linkage": linkage,
+            "per_language_counts": {},
+            "generation_performed": False,
+            "canceled": True,
+        }
     tts = {
         "processed_items": 0,
         "generated": 0,
@@ -10681,7 +11136,15 @@ def run_repair_missing_audio(
     }
     if generate_missing:
         try:
-            tts = run_tts_backfill(entry_type="all", entry_id=0, force_regenerate=False, limit=int(limit or 0))
+            tts = run_tts_backfill(
+                entry_type="all",
+                entry_id=0,
+                force_regenerate=False,
+                limit=int(limit or 0),
+                cancel_check=cancel_check,
+            )
+            if callable(cancel_check) and bool(cancel_check()):
+                tts["canceled"] = True
         except Exception:
             app.logger.exception("run_repair_missing_audio full generation failed")
             tts["failed"] = int(tts.get("failed", 0) or 0) + 1
@@ -10724,6 +11187,7 @@ def run_repair_missing_audio(
         "linkage": linkage,
         "per_language_counts": per_language,
         "generation_performed": bool(generate_missing),
+        "canceled": bool(tts.get("canceled")),
     }
     if int(out.get("failures", 0) or 0) > 0:
         app.logger.error(

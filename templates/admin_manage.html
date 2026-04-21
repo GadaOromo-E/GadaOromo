@@ -176,6 +176,27 @@
   <div class="card">
     <h2>Audio Repair Tools</h2>
     <div class="subtle">Run missing-audio generation in background queue. Requests return immediately.</div>
+    <div class="card" style="margin-top:12px;">
+      <h3 style="margin-top:0;">Running Jobs</h3>
+      {% if running_jobs and running_jobs|length > 0 %}
+        {% for job in running_jobs %}
+          <div class="result-box" style="margin-top:8px;">
+            <b>Job #{{ job.id }}</b> ({{ job.job_type or "post_import" }}) - {{ job.status or "running" }}.
+            Started: {{ job.started_at or "n/a" }}.
+            {% if job.cancel_requested %}
+              Stop already requested.
+            {% else %}
+              <form method="POST" action="/admin/cancel-job/{{ job.id }}" style="display:inline; margin-left:8px;">
+                <input type="hidden" name="next" value="{{ request.full_path or '/admin/manage' }}">
+                <button type="submit" class="btn danger" onclick="return confirm('Stop running job #{{ job.id }}?');">Stop Job</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="result-box" style="margin-top:8px;">No running background jobs.</div>
+      {% endif %}
+    </div>
 
     <div class="grid" style="margin-top:12px;">
       <div class="card" style="margin-top:0;">
@@ -204,11 +225,15 @@
         {% set ps = (latest_phrase_audio_job or {}).get('summary', {}) %}
         {% if latest_phrase_audio_job %}
           Job #{{ (latest_phrase_audio_job or {}).get('job_id', 0) }} ({{ (latest_phrase_audio_job or {}).get('status', 'unknown') }}).
-          Scanned: {{ ps.get('scanned_entries', 0) }},
-          Generated: {{ ps.get('audio_generated', 0) }},
-          Skipped existing: {{ ps.get('audio_skipped_existing', 0) }},
-          Missing voice: {{ ps.get('audio_missing_voice', 0) }},
-          Failed: {{ ps.get('audio_failed', 0) }}.
+          {% if (latest_phrase_audio_job or {}).get('status') == 'running' %}
+            Running. Summary metrics will appear after the job finishes.
+          {% else %}
+            Scanned: {{ ps.get('scanned_entries', 0) }},
+            Generated: {{ ps.get('audio_generated', 0) }},
+            Skipped existing: {{ ps.get('audio_skipped_existing', 0) }},
+            Missing voice: {{ ps.get('audio_missing_voice', 0) }},
+            Failed: {{ ps.get('audio_failed', 0) }}.
+          {% endif %}
         {% else %}
           No phrase audio repair job run yet.
         {% endif %}
@@ -218,11 +243,15 @@
         {% set ws = (latest_word_audio_job or {}).get('summary', {}) %}
         {% if latest_word_audio_job %}
           Job #{{ (latest_word_audio_job or {}).get('job_id', 0) }} ({{ (latest_word_audio_job or {}).get('status', 'unknown') }}).
-          Scanned: {{ ws.get('scanned_entries', 0) }},
-          Generated: {{ ws.get('audio_generated', 0) }},
-          Skipped existing: {{ ws.get('audio_skipped_existing', 0) }},
-          Missing voice: {{ ws.get('audio_missing_voice', 0) }},
-          Failed: {{ ws.get('audio_failed', 0) }}.
+          {% if (latest_word_audio_job or {}).get('status') == 'running' %}
+            Running. Summary metrics will appear after the job finishes.
+          {% else %}
+            Scanned: {{ ws.get('scanned_entries', 0) }},
+            Generated: {{ ws.get('audio_generated', 0) }},
+            Skipped existing: {{ ws.get('audio_skipped_existing', 0) }},
+            Missing voice: {{ ws.get('audio_missing_voice', 0) }},
+            Failed: {{ ws.get('audio_failed', 0) }}.
+          {% endif %}
         {% else %}
           No word audio repair job run yet.
         {% endif %}
