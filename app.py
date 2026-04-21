@@ -6169,10 +6169,34 @@ def _run_post_import_pipeline(
                 words_summary,
                 phrases_summary,
             )
+        phrase_missing_before_total = int(
+            sum(int((st or {}).get("missing_before", 0) or 0) for st in (phrase_tr_stats or {}).values())
+        )
+        phrase_translation_saved = int(phrases_summary.get("translations_generated", 0) or 0)
+        phrase_translation_cached = int(phrases_summary.get("translations_skipped_existing", 0) or 0)
+        phrase_translation_failed = int(phrases_summary.get("translations_failed", 0) or 0)
+        phrase_translation_required_but_not_persisted = bool(
+            len(phrase_ids or []) > 0
+            and phrase_missing_before_total > 0
+            and phrase_translation_saved <= 0
+            and phrase_translation_cached <= 0
+            and phrase_translation_failed > 0
+        )
+        if phrase_translation_required_but_not_persisted:
+            app.logger.error(
+                "post_import_pipeline phrase_translation_persist_failed phrase_ids=%s missing_before_total=%s saved=%s cached=%s failed=%s",
+                len(phrase_ids or []),
+                phrase_missing_before_total,
+                phrase_translation_saved,
+                phrase_translation_cached,
+                phrase_translation_failed,
+            )
         result_payload = {
-            "ok": True,
+            "ok": (not phrase_translation_required_but_not_persisted),
             "completed_with_provider_failures": completed_with_provider_failures,
             "provider_failure_summary": provider_failure_summary,
+            "phrase_translation_required_but_not_persisted": bool(phrase_translation_required_but_not_persisted),
+            "phrase_missing_before_total": int(phrase_missing_before_total),
             "words_summary": words_summary,
             "phrases_summary": phrases_summary,
         }

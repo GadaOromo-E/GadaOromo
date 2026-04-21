@@ -203,8 +203,11 @@
         <h3 style="margin-top:0;">Phrase Audio</h3>
         <div class="result-box">Missing phrase audio: <b>{{ (phrase_audio_missing or {}).get('missing_entries', 0) }}</b></div>
         <form method="POST" action="/admin/queue-regenerate-missing-phrase-audio" style="margin-top:10px;">
-          <input type="hidden" name="limit" value="0">
-          <button type="submit" class="btn primary">Generate Missing Phrase Audio</button>
+          <label for="regen-phrase-limit" class="subtle">How many phrases to process</label>
+          <div class="row" style="margin-top:6px; align-items:flex-end; gap:10px;">
+            <input id="regen-phrase-limit" type="number" name="limit" min="1" max="100000" value="100" placeholder="1, 10, 100" style="max-width:180px;">
+            <button type="submit" class="btn primary">Generate Phrase Audio</button>
+          </div>
         </form>
       </div>
 
@@ -212,8 +215,11 @@
         <h3 style="margin-top:0;">Word Audio</h3>
         <div class="result-box">Missing word audio: <b>{{ (word_audio_missing or {}).get('missing_entries', 0) }}</b></div>
         <form method="POST" action="/admin/queue-regenerate-missing-word-audio" style="margin-top:10px;">
-          <input type="hidden" name="limit" value="0">
-          <button type="submit" class="btn primary">Generate Missing Word Audio</button>
+          <label for="regen-word-limit" class="subtle">How many words to process</label>
+          <div class="row" style="margin-top:6px; align-items:flex-end; gap:10px;">
+            <input id="regen-word-limit" type="number" name="limit" min="1" max="100000" value="100" placeholder="1, 10, 100" style="max-width:180px;">
+            <button type="submit" class="btn primary">Generate Word Audio</button>
+          </div>
         </form>
       </div>
     </div>
@@ -229,6 +235,7 @@
             Running. Summary metrics will appear after the job finishes.
           {% else %}
             Scanned: {{ ps.get('scanned_entries', 0) }},
+            Processed: {{ ps.get('processed_entries', 0) }},
             Generated: {{ ps.get('audio_generated', 0) }},
             Skipped existing: {{ ps.get('audio_skipped_existing', 0) }},
             Missing voice: {{ ps.get('audio_missing_voice', 0) }},
@@ -247,6 +254,7 @@
             Running. Summary metrics will appear after the job finishes.
           {% else %}
             Scanned: {{ ws.get('scanned_entries', 0) }},
+            Processed: {{ ws.get('processed_entries', 0) }},
             Generated: {{ ws.get('audio_generated', 0) }},
             Skipped existing: {{ ws.get('audio_skipped_existing', 0) }},
             Missing voice: {{ ws.get('audio_missing_voice', 0) }},
