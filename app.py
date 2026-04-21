@@ -55,7 +55,7 @@ import unicodedata
 import requests
 from flask import (
     Flask, render_template, request, redirect, session,
-    jsonify, send_from_directory, send_file, abort, make_response, Response
+    jsonify, send_from_directory, send_file, abort, make_response, Response, g
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -404,6 +404,17 @@ def _safe_url(u: str) -> str:
     return ""
 
 DONATE_URLS = {k: _safe_url(v) for k, v in DONATE_URLS.items()}
+TIMED_ROUTE_PREFIXES = ("/dashboard", "/learn", "/uploads/", "/admin")
+
+
+def _should_time_route(path: str) -> bool:
+    p = (path or "").strip()
+    return bool(
+        p == "/dashboard"
+        or p == "/learn"
+        or p.startswith("/uploads/")
+        or p.startswith("/admin")
+    )
 
 @app.before_request
 def force_primary_domain():
@@ -423,6 +434,16 @@ def force_primary_domain():
         return redirect(primary_base + dest, code=301)
 
     return None
+
+
+@app.before_request
+def mark_route_timing_start():
+    try:
+        req_path = request.path or ""
+        if _should_time_route(req_path):
+            g._route_timing_started = time.perf_counter()
+    except Exception:
+        pass
 
 def _site_base_url() -> str:
     if WEBSITE_URL:
@@ -466,6 +487,24 @@ def add_security_headers(resp):
         req_path = (request.path or "").strip()
         if req_path in noindex_exact or any(req_path.startswith(p) for p in noindex_prefixes):
             resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return resp
+
+
+@app.after_request
+def log_route_duration(resp):
+    try:
+        started = getattr(g, "_route_timing_started", None)
+        if started is not None:
+            elapsed_ms = (time.perf_counter() - float(started)) * 1000.0
+            app.logger.info(
+                "route_timing method=%s path=%s status=%s duration_ms=%.3f",
+                request.method,
+                request.path,
+                int(getattr(resp, "status_code", 0) or 0),
+                elapsed_ms,
+            )
+    except Exception:
+        pass
     return resp
 
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
@@ -909,7 +948,6 @@ def google_verification():
 def uploads(filename):
     safe_name = os.path.basename(filename)
     full_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, safe_name))
-    static_path = os.path.abspath(os.path.join(STATIC_UPLOADS_FOLDER, safe_name))
     t0 = time.perf_counter()
 
     def _audio_mimetype_for_name(name: str) -> str:
@@ -951,47 +989,35 @@ def uploads(filename):
         return response
 
     app.logger.info(
-        "uploads_timing_start file=%s requested=%s upload_path=%s static_path=%s",
+        "uploads_timing_start file=%s requested=%s upload_path=%s",
         safe_name,
         filename,
         full_path,
-        static_path,
     )
 
     t_exists_start = time.perf_counter()
     upload_exists = os.path.exists(full_path)
-    upload_is_file = os.path.isfile(full_path)
-    static_exists = os.path.exists(static_path)
-    static_is_file = os.path.isfile(static_path)
     t_exists_done = time.perf_counter()
 
     app.logger.info(
-        "uploads_timing_exists file=%s upload_exists=%s upload_is_file=%s static_exists=%s static_is_file=%s exists_ms=%.3f elapsed_ms=%.3f",
+        "uploads_timing_exists file=%s upload_exists=%s exists_ms=%.3f elapsed_ms=%.3f",
         safe_name,
         bool(upload_exists),
-        bool(upload_is_file),
-        bool(static_exists),
-        bool(static_is_file),
         (t_exists_done - t_exists_start) * 1000.0,
         (t_exists_done - t0) * 1000.0,
     )
     app.logger.info(
-        "uploads_timing_resolved file=%s resolved_upload=%s resolved_static=%s",
+        "uploads_timing_resolved file=%s resolved_upload=%s",
         safe_name,
         full_path,
-        static_path,
     )
 
-    if upload_is_file:
+    if upload_exists:
         send_start = time.perf_counter()
         return _serve_audio_abs(full_path, "upload_folder", send_start)
 
-    if static_is_file:
-        send_start = time.perf_counter()
-        return _serve_audio_abs(static_path, "static_uploads", send_start)
-
     app.logger.warning(
-        "uploads_timing_404 file=%s requested=%s reason=missing_in_upload_and_static total_ms=%.3f",
+        "uploads_timing_404 file=%s requested=%s reason=missing_in_upload_folder total_ms=%.3f",
         safe_name,
         filename,
         (time.perf_counter() - t0) * 1000.0,
@@ -5984,6 +6010,46 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
     return True, summary
 
 
+def _run_admin_repair_generated_job(entry_type: str, max_items: int = 5000, chunk_size: int = None):
+    et = normalize_text(entry_type or "").lower()
+    if et not in ("word", "phrase"):
+        return False, {"error": "invalid_entry_type"}
+    safe_limit = max(1, min(int(max_items or 5000), 50000))
+    safe_chunk = max(1, int(chunk_size or IMPORT_BATCH_SIZE or 100))
+
+    if et == "word":
+        items = _fetch_approved_word_items(limit=safe_limit)
+        saved, stats = ensure_missing_generated_translations_for_words(
+            items,
+            langs=EXTRA_GENERATED_LANGS,
+            chunk_size=safe_chunk,
+            log_context="admin_repair_generated_queue",
+        )
+        summary = {
+            "entry_type": et,
+            "scanned_entries": int(len(items)),
+            "translations_generated": int(saved or 0),
+            "stats_by_lang": stats or {},
+        }
+        return True, summary
+
+    phrase_items = _fetch_approved_phrase_items(limit=safe_limit)
+    saved, stats = ensure_missing_generated_translations_for_phrases(
+        phrase_items,
+        langs=EXTRA_GENERATED_LANGS,
+        chunk_size=safe_chunk,
+        overwrite_existing=False,
+        log_context="admin_repair_generated_phrases_queue",
+    )
+    summary = {
+        "entry_type": et,
+        "scanned_entries": int(len(phrase_items)),
+        "translations_generated": int(saved or 0),
+        "stats_by_lang": stats or {},
+    }
+    return True, summary
+
+
 POST_IMPORT_QUEUE_POLL_SECONDS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_POLL_SECONDS") or "2").strip() or 2))
 POST_IMPORT_QUEUE_MAX_IDLE_POLLS = max(1, int((os.environ.get("POST_IMPORT_QUEUE_MAX_IDLE_POLLS") or "3").strip() or 3))
 POST_IMPORT_WORKER_START_ON_BOOT = ((os.environ.get("POST_IMPORT_WORKER_START_ON_BOOT") or "1").strip() == "1")
@@ -6002,7 +6068,8 @@ def _enqueue_post_import_job(
 ):
     word_ids = [int(x) for x in (word_ids or []) if int(x or 0) > 0]
     phrase_ids = [int(x) for x in (phrase_ids or []) if int(x or 0) > 0]
-    if not word_ids and not phrase_ids:
+    normalized_job_type = normalize_text(job_type or "post_import") or "post_import"
+    if normalized_job_type == "post_import" and (not word_ids and not phrase_ids):
         return 0
 
     conn = None
@@ -6017,7 +6084,7 @@ def _enqueue_post_import_job(
             """,
             (
                 "pending",
-                normalize_text(job_type or "post_import") or "post_import",
+                normalized_job_type,
                 json.dumps(word_ids, separators=(",", ":")),
                 json.dumps(phrase_ids, separators=(",", ":")),
                 int(chunk_size or 0) if chunk_size else None,
@@ -6031,7 +6098,7 @@ def _enqueue_post_import_job(
         app.logger.info(
             "post_import_pipeline_job_enqueued job_id=%s job_type=%s word_ids=%s phrase_ids=%s chunk_size=%s runtime=%s options=%s",
             job_id,
-            normalize_text(job_type or "post_import") or "post_import",
+            normalized_job_type,
             len(word_ids),
             len(phrase_ids),
             int(chunk_size or 0),
@@ -6247,6 +6314,32 @@ def _post_import_worker_loop():
                             job_type,
                             summary,
                         )
+                elif job_type == "admin_import_missing_phrase_audio":
+                    run_ok = True
+                    summary = import_missing_phrase_audio_from_source(
+                        limit=int((options or {}).get("limit") or 100),
+                        offset=int((options or {}).get("offset") or 0),
+                        entry_id=int((options or {}).get("entry_id") or 0),
+                        dry_run=bool((options or {}).get("dry_run")),
+                    )
+                    if not bool((summary or {}).get("ok", True)):
+                        run_ok = False
+                elif job_type in ("admin_repair_generated_word", "admin_repair_generated_phrase"):
+                    target_entry_type = "word" if job_type.endswith("_word") else "phrase"
+                    run_ok, summary = _run_admin_repair_generated_job(
+                        target_entry_type,
+                        max_items=int((options or {}).get("max_items") or 5000),
+                        chunk_size=chunk_size,
+                    )
+                elif job_type in ("admin_repair_missing_audio_import_only", "admin_repair_missing_audio_full_repair"):
+                    mode = "full_repair" if job_type.endswith("_full_repair") else "import_only"
+                    summary = run_repair_missing_audio(
+                        limit=int((options or {}).get("limit") or 5000),
+                        generate_missing=(mode == "full_repair"),
+                        source_dirs=[STATIC_UPLOADS_FOLDER],
+                    )
+                    summary["mode"] = mode
+                    run_ok = True
                 else:
                     run_ok = _run_post_import_pipeline(
                         word_ids,
@@ -6310,6 +6403,68 @@ def trigger_admin_audio_regen_async(entry_type: str, limit: int = 0, chunk_size:
         import_summary={},
         job_type=job_type,
         options={"entry_type": et, "limit": safe_limit},
+    )
+    if not int(job_id or 0):
+        return False, 0
+    if not _start_post_import_worker_if_needed():
+        app.logger.warning("post_import_worker_not_started job_id=%s job_type=%s", int(job_id or 0), job_type)
+    return True, int(job_id or 0)
+
+
+def trigger_admin_import_missing_phrase_audio_async(limit: int = 100, offset: int = 0, entry_id: int = 0, dry_run: bool = False):
+    job_type = "admin_import_missing_phrase_audio"
+    job_id = _enqueue_post_import_job(
+        word_ids=[],
+        phrase_ids=[],
+        chunk_size=None,
+        import_summary={},
+        job_type=job_type,
+        options={
+            "limit": max(1, min(int(limit or 100), 2000)),
+            "offset": max(0, int(offset or 0)),
+            "entry_id": max(0, int(entry_id or 0)),
+            "dry_run": bool(dry_run),
+        },
+    )
+    if not int(job_id or 0):
+        return False, 0
+    if not _start_post_import_worker_if_needed():
+        app.logger.warning("post_import_worker_not_started job_id=%s job_type=%s", int(job_id or 0), job_type)
+    return True, int(job_id or 0)
+
+
+def trigger_admin_repair_generated_async(entry_type: str, max_items: int = 5000, chunk_size: int = None):
+    et = normalize_text(entry_type or "").lower()
+    if et not in ("word", "phrase"):
+        return False, 0
+    job_type = f"admin_repair_generated_{et}"
+    job_id = _enqueue_post_import_job(
+        word_ids=[],
+        phrase_ids=[],
+        chunk_size=chunk_size,
+        import_summary={},
+        job_type=job_type,
+        options={"entry_type": et, "max_items": max(1, min(int(max_items or 5000), 50000))},
+    )
+    if not int(job_id or 0):
+        return False, 0
+    if not _start_post_import_worker_if_needed():
+        app.logger.warning("post_import_worker_not_started job_id=%s job_type=%s", int(job_id or 0), job_type)
+    return True, int(job_id or 0)
+
+
+def trigger_admin_repair_missing_audio_async(mode: str, limit: int = 5000):
+    selected = normalize_text(mode or "import_only")
+    if selected not in ("import_only", "full_repair"):
+        selected = "import_only"
+    job_type = f"admin_repair_missing_audio_{selected}"
+    job_id = _enqueue_post_import_job(
+        word_ids=[],
+        phrase_ids=[],
+        chunk_size=None,
+        import_summary={},
+        job_type=job_type,
+        options={"mode": selected, "limit": max(1, min(int(limit or 5000), 50000))},
     )
     if not int(job_id or 0):
         return False, 0
@@ -9316,29 +9471,6 @@ def dashboard():
     if not require_admin():
         return redirect("/admin")
 
-    def _dashboard_missing_audio(entry_type: str):
-        try:
-            items = _fetch_approved_items_for_audio_regen(entry_type, limit=0)
-            scan = _scan_missing_audio_targets(entry_type, items)
-            return {
-                "entry_type": entry_type,
-                "scanned_entries": int((scan or {}).get("scanned_entries", 0) or 0),
-                "missing_entries": int(len((scan or {}).get("target_items", []) or [])),
-                "audio_attempted": int((scan or {}).get("audio_attempted", 0) or 0),
-                "audio_skipped_existing": int((scan or {}).get("audio_skipped_existing", 0) or 0),
-                "audio_missing_voice": int((scan or {}).get("audio_missing_voice", 0) or 0),
-            }
-        except Exception:
-            app.logger.exception("dashboard_missing_audio_count_failed entry_type=%s", entry_type)
-            return {
-                "entry_type": entry_type,
-                "scanned_entries": 0,
-                "missing_entries": 0,
-                "audio_attempted": 0,
-                "audio_skipped_existing": 0,
-                "audio_missing_voice": 0,
-            }
-
     def _latest_audio_job_result(entry_type: str):
         job_type = f"admin_audio_regen_{entry_type}"
         conn2 = None
@@ -9381,14 +9513,25 @@ def dashboard():
                 except Exception:
                     pass
 
+    def _dashboard_missing_audio_from_latest(entry_type: str, latest_job: dict):
+        summary = (latest_job or {}).get("summary", {}) if isinstance(latest_job, dict) else {}
+        return {
+            "entry_type": entry_type,
+            "scanned_entries": int((summary or {}).get("scanned_entries", 0) or 0),
+            "missing_entries": int((summary or {}).get("target_entries", 0) or 0),
+            "audio_attempted": int((summary or {}).get("audio_attempted", 0) or 0),
+            "audio_skipped_existing": int((summary or {}).get("audio_skipped_existing", 0) or 0),
+            "audio_missing_voice": int((summary or {}).get("audio_missing_voice", 0) or 0),
+        }
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     admin_msg = normalize_text(request.args.get("msg") or "")
 
-    c.execute("SELECT id, english, oromo FROM words WHERE status='pending' ORDER BY id DESC")
+    c.execute("SELECT id, english, oromo FROM words WHERE status='pending' ORDER BY id DESC LIMIT 100")
     pending_words = c.fetchall()
 
-    c.execute("SELECT id, english, oromo FROM phrases WHERE status='pending' ORDER BY id DESC")
+    c.execute("SELECT id, english, oromo FROM phrases WHERE status='pending' ORDER BY id DESC LIMIT 100")
     pending_phrases = c.fetchall()
 
     c.execute("""
@@ -9396,21 +9539,37 @@ def dashboard():
         FROM audio
         WHERE status='pending'
         ORDER BY id DESC
+        LIMIT 200
     """)
     pending_audio = c.fetchall()
 
-    c.execute("SELECT id, english, oromo FROM words WHERE status='approved'")
-    words_lookup = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+    pending_word_ids = sorted({int(r[2] or 0) for r in (pending_audio or []) if normalize_text(r[1] or "") == "word" and int(r[2] or 0) > 0})
+    pending_phrase_ids = sorted({int(r[2] or 0) for r in (pending_audio or []) if normalize_text(r[1] or "") == "phrase" and int(r[2] or 0) > 0})
 
-    c.execute("SELECT id, english, oromo FROM phrases WHERE status='approved'")
-    phrases_lookup = {row[0]: (row[1], row[2]) for row in c.fetchall()}
+    words_lookup = {}
+    if pending_word_ids:
+        marks = ",".join("?" for _ in pending_word_ids)
+        c.execute(
+            f"SELECT id, english, oromo FROM words WHERE status='approved' AND id IN ({marks})",
+            tuple(pending_word_ids),
+        )
+        words_lookup = {int(row[0]): (row[1], row[2]) for row in c.fetchall()}
+
+    phrases_lookup = {}
+    if pending_phrase_ids:
+        marks = ",".join("?" for _ in pending_phrase_ids)
+        c.execute(
+            f"SELECT id, english, oromo FROM phrases WHERE status='approved' AND id IN ({marks})",
+            tuple(pending_phrase_ids),
+        )
+        phrases_lookup = {int(row[0]): (row[1], row[2]) for row in c.fetchall()}
 
     conn.close()
 
-    phrase_audio_missing = _dashboard_missing_audio("phrase")
-    word_audio_missing = _dashboard_missing_audio("word")
     latest_phrase_audio_job = _latest_audio_job_result("phrase")
     latest_word_audio_job = _latest_audio_job_result("word")
+    phrase_audio_missing = _dashboard_missing_audio_from_latest("phrase", latest_phrase_audio_job)
+    word_audio_missing = _dashboard_missing_audio_from_latest("word", latest_word_audio_job)
 
     return render_template(
         "admin_dashboard.html",
@@ -9471,14 +9630,6 @@ def _queue_admin_audio_regen_response(entry_type: str):
     chunk_size = int(chunk_raw) if (chunk_raw and chunk_raw.isdigit()) else IMPORT_BATCH_SIZE
     chunk_size = max(1, min(int(chunk_size or IMPORT_BATCH_SIZE), 1000))
 
-    pre_scan = {}
-    try:
-        items = _fetch_approved_items_for_audio_regen(normalize_text(entry_type or "").lower(), limit=limit)
-        pre_scan = _scan_missing_audio_targets(normalize_text(entry_type or "").lower(), items)
-    except Exception:
-        app.logger.exception("admin_audio_regen_prescan_failed entry_type=%s", entry_type)
-        pre_scan = {}
-
     queued_ok, job_id = trigger_admin_audio_regen_async(entry_type, limit=limit, chunk_size=chunk_size)
     queued_jobs = 1 if queued_ok else 0
     out = {
@@ -9488,11 +9639,11 @@ def _queue_admin_audio_regen_response(entry_type: str):
         "job_id": int(job_id or 0),
         "limit": int(limit or 0),
         "chunk_size": int(chunk_size or IMPORT_BATCH_SIZE),
-        "scanned_entries": int((pre_scan or {}).get("scanned_entries", 0) or 0),
-        "missing_entries": int(len((pre_scan or {}).get("target_items", []) or [])),
-        "audio_attempted": int((pre_scan or {}).get("audio_attempted", 0) or 0),
-        "audio_skipped_existing": int((pre_scan or {}).get("audio_skipped_existing", 0) or 0),
-        "audio_missing_voice": int((pre_scan or {}).get("audio_missing_voice", 0) or 0),
+        "scanned_entries": 0,
+        "missing_entries": 0,
+        "audio_attempted": 0,
+        "audio_skipped_existing": 0,
+        "audio_missing_voice": 0,
         "audio_generated": 0,
         "audio_failed": 0,
         "db_path": DB_NAME,
@@ -9713,18 +9864,30 @@ def admin_import_missing_phrase_audio():
     entry_id = _coerce_int((src or {}).get("entry_id"), default=0, minimum=0)
     dry_run = _coerce_bool((src or {}).get("dry_run"))
 
-    try:
-        summary = import_missing_phrase_audio_from_source(
-            limit=limit,
-            offset=offset,
-            entry_id=entry_id,
-            dry_run=dry_run,
-        )
-        status = 200 if summary.get("ok", True) else 400
-        return jsonify(summary), status
-    except Exception as e:
-        app.logger.exception("admin_import_missing_phrase_audio failed: %s", repr(e))
-        return jsonify({"ok": False, "error": "Import failed", "details": repr(e)}), 500
+    queued_ok, job_id = trigger_admin_import_missing_phrase_audio_async(
+        limit=limit,
+        offset=offset,
+        entry_id=entry_id,
+        dry_run=dry_run,
+    )
+    payload = {
+        "ok": bool(queued_ok),
+        "queued_jobs": 1 if queued_ok else 0,
+        "job_id": int(job_id or 0),
+        "entry_type": "phrase",
+        "limit": int(limit or 0),
+        "offset": int(offset or 0),
+        "entry_id": int(entry_id or 0),
+        "dry_run": bool(dry_run),
+        "queue_job_started": bool(queued_ok),
+    }
+    if request.is_json:
+        return jsonify(payload), (200 if queued_ok else 500)
+    if queued_ok:
+        msg = f"Phrase audio source import queued (Job #{int(job_id or 0)})."
+    else:
+        msg = "Failed to queue phrase audio source import."
+    return redirect(f"/dashboard?msg={quote(msg, safe='')}")
 
 @app.route("/admin/manage", methods=["GET", "POST"])
 def admin_manage():
@@ -10220,82 +10383,20 @@ def admin_repair_generated():
                 max_words = max(1, min(int(max_words_raw), 50000))
             else:
                 max_words = default_max_words
-
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            c.execute(
-                """
-                SELECT id, english
-                FROM words
-                WHERE status='approved'
-                ORDER BY id ASC
-                LIMIT ?
-                """,
-                (max_words,),
+            queued_ok, job_id = trigger_admin_repair_generated_async(
+                "word",
+                max_items=max_words,
+                chunk_size=IMPORT_BATCH_SIZE,
             )
-            rows = c.fetchall() or []
-
-            words_scanned = len(rows)
-            words_needing_repair = []
-            for row in rows:
-                if not row or len(row) < 2:
-                    continue
-                wid, en = row
-                wid_int = int(wid or 0)
-                en_norm = normalize_text(en or "")
-                if not wid_int or not en_norm:
-                    continue
-                missing = _count_missing_generated_langs(conn, wid_int)
-                if missing > 0:
-                    words_needing_repair.append((wid_int, en_norm))
-
-            conn.close()
-            conn = None
-
-            words_repair_count = len(words_needing_repair)
-            generated_saved = 0
-            merged_stats = {lang: {} for lang in EXTRA_GENERATED_LANGS}
-
-            for i in range(0, words_repair_count, IMPORT_BATCH_SIZE):
-                chunk = words_needing_repair[i:i + IMPORT_BATCH_SIZE]
-                if not chunk:
-                    continue
-                try:
-                    saved_count, stats = ensure_missing_generated_translations_for_words(
-                        chunk,
-                        langs=EXTRA_GENERATED_LANGS,
-                        chunk_size=IMPORT_BATCH_SIZE,
-                        log_context="admin_bulk_repair",
-                    )
-                    generated_saved += int(saved_count or 0)
-                    _merge_generated_stats(merged_stats, stats)
-                except Exception as e:
-                    app.logger.exception(f"admin bulk repair chunk failed: {repr(e)}")
-
-            failures_per_lang = {}
-            for lang in EXTRA_GENERATED_LANGS:
-                st = merged_stats.get(lang, {}) or {}
-                missing_before = int(st.get("missing_before", 0) or 0)
-                saved = int(st.get("saved", 0) or 0)
-                failed = missing_before - saved
-                failures_per_lang[lang] = failed if failed > 0 else 0
-
             summary = {
-                "words_scanned": words_scanned,
-                "words_needing_repair": words_repair_count,
-                "translations_generated": generated_saved,
-                "cached_reused": sum(int((merged_stats.get(lang, {}) or {}).get("already_cached", 0) or 0) for lang in EXTRA_GENERATED_LANGS),
-                "failures_per_lang": failures_per_lang,
-                "stats_by_lang": merged_stats,
-                "max_words": max_words,
+                "queued_jobs": 1 if queued_ok else 0,
+                "job_id": int(job_id or 0),
+                "max_words": int(max_words or default_max_words),
             }
-
-            msg = (
-                f"Repair done. Words scanned: {words_scanned} | "
-                f"Words needing repair: {words_repair_count} | "
-                f"Generated translations saved: {generated_saved}."
-            )
-            app.logger.info("admin bulk repair summary: %s", summary)
+            if queued_ok:
+                msg = f"Word language repair queued (Job #{int(job_id or 0)})."
+            else:
+                msg = "Failed to queue word language repair."
     except Exception as e:
         app.logger.exception(f"admin_repair_generated failed: {repr(e)}")
         msg = "Repair failed safely due to an internal error. Please try again."
@@ -10351,114 +10452,20 @@ def admin_repair_generated_phrases():
                 max_phrases = max(1, min(int(max_phrases_raw), 50000))
             else:
                 max_phrases = default_max_phrases
-
-            conn = sqlite3.connect(DB_NAME)
-            c = conn.cursor()
-            c.execute(
-                """
-                SELECT id, english, oromo
-                FROM phrases
-                WHERE status='approved'
-                ORDER BY id ASC
-                LIMIT ?
-                """,
-                (max_phrases,),
+            queued_ok, job_id = trigger_admin_repair_generated_async(
+                "phrase",
+                max_items=max_phrases,
+                chunk_size=IMPORT_BATCH_SIZE,
             )
-            rows = c.fetchall() or []
-
-            phrases_scanned = len(rows)
-            phrases_needing_repair = []
-            for row in rows:
-                if not row or len(row) < 2:
-                    continue
-                pid, en, om = (row[0], row[1], (row[2] if len(row) > 2 else ""))
-                pid_int = int(pid or 0)
-                en_norm = normalize_text(en or "")
-                om_norm = normalize_text(om or "")
-                if not pid_int or not en_norm:
-                    continue
-                missing_translations = _count_missing_generated_phrase_langs(conn, pid_int)
-                oromo_missing = bool(not om_norm)
-                treated_missing = bool(oromo_missing or (missing_translations > 0))
-                app.logger.info(
-                    "admin_repair_generated_phrases phrase_id=%s oromo_len=%s treated_as_missing=%s",
-                    pid_int,
-                    len(om_norm),
-                    treated_missing,
-                )
-                if treated_missing:
-                    phrases_needing_repair.append((pid_int, en_norm))
-
-            conn.close()
-            conn = None
-
-            phrases_repair_count = len(phrases_needing_repair)
-            generated_saved = 0
-            merged_stats = {lang: {} for lang in EXTRA_GENERATED_LANGS}
-
-            for i in range(0, phrases_repair_count, IMPORT_BATCH_SIZE):
-                chunk = phrases_needing_repair[i:i + IMPORT_BATCH_SIZE]
-                if not chunk:
-                    continue
-                try:
-                    saved_count, stats = ensure_missing_generated_translations_for_phrases(
-                        chunk,
-                        langs=EXTRA_GENERATED_LANGS,
-                        chunk_size=IMPORT_BATCH_SIZE,
-                        overwrite_existing=False,
-                        log_context="admin_bulk_repair_phrases",
-                    )
-                    generated_saved += int(saved_count or 0)
-                    _merge_generated_stats(merged_stats, stats)
-                except Exception as e:
-                    app.logger.exception(f"admin phrase bulk repair chunk failed: {repr(e)}")
-
-            failures_per_lang = {}
-            provider_errors_total = 0
-            missing_api_key_total = 0
-            request_failures_total = 0
-            fallback_errors_total = 0
-            for lang in EXTRA_GENERATED_LANGS:
-                st = merged_stats.get(lang, {}) or {}
-                missing_before = int(st.get("missing_before", 0) or 0)
-                saved = int(st.get("saved", 0) or 0)
-                failed = missing_before - saved
-                failures_per_lang[lang] = failed if failed > 0 else 0
-                provider_errors_total += int(st.get("provider_errors", 0) or 0)
-                missing_api_key_total += int(st.get("missing_api_key", 0) or 0)
-                request_failures_total += int(st.get("request_failures", 0) or 0)
-                fallback_errors_total += int(st.get("fallback_errors", 0) or 0)
-
             summary = {
-                "phrases_scanned": phrases_scanned,
-                "phrases_needing_repair": phrases_repair_count,
-                "translations_generated": generated_saved,
-                "cached_reused": sum(int((merged_stats.get(lang, {}) or {}).get("already_cached", 0) or 0) for lang in EXTRA_GENERATED_LANGS),
-                "failures_per_lang": failures_per_lang,
-                "provider_errors_total": provider_errors_total,
-                "provider_missing_api_key_total": missing_api_key_total,
-                "provider_request_failures_total": request_failures_total,
-                "provider_fallback_errors_total": fallback_errors_total,
-                "stats_by_lang": merged_stats,
-                "max_phrases": max_phrases,
+                "queued_jobs": 1 if queued_ok else 0,
+                "job_id": int(job_id or 0),
+                "max_phrases": int(max_phrases or default_max_phrases),
             }
-
-            msg = (
-                f"Phrase repair done. Phrases scanned: {phrases_scanned} | "
-                f"Phrases needing repair: {phrases_repair_count} | "
-                f"Generated translations saved: {generated_saved}."
-            )
-            app.logger.info("admin phrase bulk repair summary: %s", summary)
-            if phrases_repair_count > 0 and generated_saved == 0:
-                app.logger.error(
-                    "admin phrase repair generated zero results while phrases need repair. "
-                    "provider_errors_total=%s missing_api_key_total=%s request_failures_total=%s fallback_errors_total=%s key_source=%s",
-                    provider_errors_total,
-                    missing_api_key_total,
-                    request_failures_total,
-                    fallback_errors_total,
-                    (_google_key_source_name() or "missing"),
-                )
+            if queued_ok:
+                msg = f"Phrase language repair queued (Job #{int(job_id or 0)})."
+            else:
+                msg = "Failed to queue phrase language repair."
     except Exception as e:
         app.logger.exception(f"admin_repair_generated_phrases failed: {repr(e)}")
         msg = "Phrase repair failed safely due to an internal error. Please try again."
@@ -10598,30 +10605,21 @@ def admin_repair_missing_audio():
                 limit = default_limit
 
             selected_action = normalize_text(request.form.get("repair_action") or "import_only")
-            do_generate = (selected_action == "full_repair")
-            summary = run_repair_missing_audio(
+            queued_ok, job_id = trigger_admin_repair_missing_audio_async(
+                selected_action,
                 limit=limit,
-                generate_missing=do_generate,
-                source_dirs=safe_source_dirs,
             )
-            summary["mode"] = "full_repair" if do_generate else "import_only"
-            if do_generate:
-                msg = (
-                    f"Full audio repair done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
-                    f"Processed: {int(summary.get('processed_items', 0) or 0)} | "
-                    f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
-                    f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
-                    f"Failures: {int(summary.get('failures', 0) or 0)}."
-                )
+            summary = {
+                "mode": ("full_repair" if selected_action == "full_repair" else "import_only"),
+                "queued_jobs": 1 if queued_ok else 0,
+                "job_id": int(job_id or 0),
+                "max_items": int(limit or default_limit),
+            }
+            if queued_ok:
+                msg = f"Audio repair job queued (mode={summary['mode']}, Job #{int(job_id or 0)})."
             else:
-                msg = (
-                    f"Import/link done. Scanned: {int(summary.get('items_scanned', 0) or 0)} | "
-                    f"Processed: {int(summary.get('processed_items', 0) or 0)} | "
-                    f"Reused: {int(summary.get('audio_reused', 0) or 0)} | "
-                    f"Generated: {int(summary.get('audio_generated', 0) or 0)} | "
-                    f"Failures: {int(summary.get('failures', 0) or 0)}."
-                )
-            app.logger.info("admin repair missing audio summary mode=%s data=%s", selected_action, summary)
+                msg = "Failed to queue audio repair job."
+            app.logger.info("admin repair missing audio queued mode=%s data=%s", selected_action, summary)
     except Exception as e:
         app.logger.exception(f"admin_repair_missing_audio failed: {repr(e)}")
         msg = "Audio repair failed safely due to an internal error. Please try again."
@@ -11147,25 +11145,9 @@ def approve(word_id):
     en = normalize_text((row or [""])[0] or "")
     if wid and en:
         try:
-            ensure_missing_generated_translations_for_words(
-                [(wid, en)],
-                langs=EXTRA_GENERATED_LANGS,
-                chunk_size=len(EXTRA_GENERATED_LANGS),
-                log_context="approve_word",
-            )
+            trigger_post_import_pipeline_async([wid], [], chunk_size=1)
         except Exception as e:
-            app.logger.exception(f"approve word translation warmup failed word_id={wid}: {repr(e)}")
-
-        if TTS_GENERATE_ON_IMPORT:
-            try:
-                ensure_missing_tts_for_words(
-                    [(wid, en)],
-                    force_regenerate=False,
-                    chunk_size=1,
-                    log_context="approve_word_tts",
-                )
-            except Exception as e:
-                app.logger.exception(f"approve word tts warmup failed word_id={wid}: {repr(e)}")
+            app.logger.exception(f"approve word queue failed word_id={wid}: {repr(e)}")
     return redirect("/dashboard")
 
 
@@ -11194,6 +11176,12 @@ def approve_phrase(phrase_id):
     c.execute("UPDATE phrases SET status='approved' WHERE id=?", (phrase_id,))
     conn.commit()
     conn.close()
+    try:
+        pid = int(phrase_id or 0)
+        if pid > 0:
+            trigger_post_import_pipeline_async([], [pid], chunk_size=1)
+    except Exception as e:
+        app.logger.exception(f"approve phrase queue failed phrase_id={phrase_id}: {repr(e)}")
     return redirect("/dashboard")
 
 
