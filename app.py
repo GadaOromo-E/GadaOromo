@@ -720,18 +720,33 @@ def assetlinks():
 IS_RENDER_DISK = BASE_DIR in {"/var/data", "/data"}
 IS_PERSISTENT_STORAGE = bool(PERSISTENT_DATA_CONFIGURED)
 DEFAULT_UPLOAD_FOLDER = "/data/uploads" if IS_RAILWAY else os.path.join(BASE_DIR, "uploads")
-UPLOAD_FOLDER = (
+_UPLOAD_FOLDER_ENV_RAW = (
     os.environ.get("AUDIO_UPLOAD_DIR", "").strip()
     or os.environ.get("UPLOAD_FOLDER", "").strip()
-    or DEFAULT_UPLOAD_FOLDER
 )
-UPLOAD_FOLDER = os.path.abspath(UPLOAD_FOLDER)
+if IS_RAILWAY:
+    if _UPLOAD_FOLDER_ENV_RAW and _UPLOAD_FOLDER_ENV_RAW != "/data/uploads":
+        app.logger.warning(
+            "Railway upload folder override ignored env_value=%s forced_value=/data/uploads",
+            _UPLOAD_FOLDER_ENV_RAW,
+        )
+    UPLOAD_FOLDER = "/data/uploads"
+else:
+    UPLOAD_FOLDER = (_UPLOAD_FOLDER_ENV_RAW or DEFAULT_UPLOAD_FOLDER)
+UPLOAD_FOLDER = "/data/uploads" if IS_RAILWAY else os.path.abspath(UPLOAD_FOLDER)
 AUDIO_SOURCE_BASE_URL = (os.environ.get("AUDIO_SOURCE_BASE_URL") or "").strip().rstrip("/")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 # Static assets are always served from the app's code static folder.
 # Do not derive from BASE_DIR; app static is code assets, not persistent storage.
 STATIC_UPLOADS_FOLDER = os.path.join(app.static_folder, "uploads")
 os.makedirs(STATIC_UPLOADS_FOLDER, exist_ok=True)
+app.logger.info(
+    "Startup upload path resolved runtime=%s is_railway=%s upload_folder=%s uploads_route_prefix=%s",
+    APP_RUNTIME,
+    bool(IS_RAILWAY),
+    UPLOAD_FOLDER,
+    "/uploads/",
+)
 
 def _copy_static_uploads_to_persistent_startup():
     """
@@ -1438,6 +1453,34 @@ LEARN_TTS_LANGS = ("en", "am", "ar", "fr", "zh-CN", "om")
 AZURE_TTS_PROVIDER = "azure_speech"
 AZURE_BLOB_PROVIDER = "azure_blob"
 
+
+def _parse_lang_list_env(raw_value: str, allowed_langs, default_langs):
+    allowed = tuple(allowed_langs or ())
+    default = tuple(default_langs or ())
+    txt = normalize_text(raw_value or "")
+    if not txt:
+        return default
+    lowered = txt.casefold()
+    if lowered in ("all", "*"):
+        return allowed or default
+    requested = []
+    for token in txt.split(","):
+        t = normalize_text(token or "")
+        if not t:
+            continue
+        t_lower = t.casefold()
+        if t_lower == "zh-cn":
+            canon = "zh-CN"
+        else:
+            canon = None
+            for lang in allowed:
+                if normalize_text(lang or "").casefold() == t_lower:
+                    canon = lang
+                    break
+        if canon and canon not in requested:
+            requested.append(canon)
+    return tuple(requested) if requested else default
+
 # Env vars (production):
 # - GOOGLE_TRANSLATE_API_KEY
 # - AZURE_SPEECH_KEY
@@ -1475,15 +1518,20 @@ except Exception:
 LEARN_TTS_LAZY_MAX_ENTRIES = max(0, min(_learn_tts_lazy_max_raw, 50))
 TTS_GENERATE_ON_LOOKUP = (os.environ.get("TTS_GENERATE_ON_LOOKUP", "0").strip() == "1")
 TTS_GENERATE_ON_IMPORT = (os.environ.get("TTS_GENERATE_ON_IMPORT", "1").strip() == "1")
-TTS_JOB_CHUNK_SIZE = max(1, min(int((os.environ.get("TTS_JOB_CHUNK_SIZE") or "10").strip() or 10), 200))
-TTS_JOB_ENTRY_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_ENTRY_DELAY_MS") or "2000").strip() or 2000), 15000))
-TTS_JOB_LANGUAGE_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_LANGUAGE_DELAY_MS") or "700").strip() or 700), 5000))
+TTS_JOB_CHUNK_SIZE = max(1, min(int((os.environ.get("TTS_JOB_CHUNK_SIZE") or "1").strip() or 1), 200))
+TTS_JOB_ENTRY_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_ENTRY_DELAY_MS") or "3500").strip() or 3500), 15000))
+TTS_JOB_LANGUAGE_DELAY_MS = max(0, min(int((os.environ.get("TTS_JOB_LANGUAGE_DELAY_MS") or "1500").strip() or 1500), 15000))
+POST_IMPORT_TTS_LANGS = _parse_lang_list_env(
+    os.environ.get("POST_IMPORT_TTS_LANGS", "en"),
+    allowed_langs=LEARN_TTS_LANGS,
+    default_langs=("en",),
+)
 AZURE_TTS_429_MAX_RETRIES = max(0, min(int((os.environ.get("AZURE_TTS_429_MAX_RETRIES") or "2").strip() or 2), 6))
 AZURE_TTS_429_BASE_BACKOFF_MS = max(50, min(int((os.environ.get("AZURE_TTS_429_BASE_BACKOFF_MS") or "500").strip() or 500), 10000))
 AZURE_TTS_429_MAX_BACKOFF_MS = max(AZURE_TTS_429_BASE_BACKOFF_MS, min(int((os.environ.get("AZURE_TTS_429_MAX_BACKOFF_MS") or "4000").strip() or 4000), 60000))
 AZURE_TTS_429_JITTER_MS = max(0, min(int((os.environ.get("AZURE_TTS_429_JITTER_MS") or "250").strip() or 250), 5000))
 app.logger.info(
-    "Startup provider settings google_configured=%s azure_configured=%s azure_retry={max_retries:%s,base_backoff_ms:%s,max_backoff_ms:%s,jitter_ms:%s} tts_job_throttle={chunk_size:%s,entry_delay_ms:%s}",
+    "Startup provider settings google_configured=%s azure_configured=%s azure_retry={max_retries:%s,base_backoff_ms:%s,max_backoff_ms:%s,jitter_ms:%s} tts_job_throttle={chunk_size:%s,entry_delay_ms:%s,language_delay_ms:%s} post_import_tts_langs=%s",
     bool(_get_google_key()),
     bool((os.environ.get("AZURE_SPEECH_KEY") or "").strip() and (os.environ.get("AZURE_SPEECH_REGION") or "").strip()),
     int(AZURE_TTS_429_MAX_RETRIES),
@@ -1492,6 +1540,8 @@ app.logger.info(
     int(AZURE_TTS_429_JITTER_MS),
     int(TTS_JOB_CHUNK_SIZE),
     int(TTS_JOB_ENTRY_DELAY_MS),
+    int(TTS_JOB_LANGUAGE_DELAY_MS),
+    tuple(POST_IMPORT_TTS_LANGS or ("en",)),
 )
 
 AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
@@ -5592,8 +5642,11 @@ def run_backfill_existing_audio_linkage(
 def ensure_missing_tts_for_words(
     word_items,
     force_regenerate: bool = False,
+    langs=None,
     chunk_size: int = None,
     per_entry_delay_ms: int = 0,
+    per_language_delay_ms: int = 0,
+    stop_on_429: bool = False,
     log_context: str = "word_tts_backfill",
     cancel_check=None,
 ):
@@ -5610,6 +5663,7 @@ def ensure_missing_tts_for_words(
     if not word_items:
         return summary
 
+    selected_langs = tuple(langs or LEARN_TTS_LANGS)
     safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
     if safe_chunk < 1:
         safe_chunk = 50
@@ -5637,7 +5691,7 @@ def ensure_missing_tts_for_words(
             if not force_regenerate:
                 texts = _get_entry_texts_for_tts("word", wid)
                 missing_langs = []
-                for lang in LEARN_TTS_LANGS:
+                for lang in selected_langs:
                     text = normalize_text((texts or {}).get(lang, "") or "")
                     if not text:
                         continue
@@ -5660,7 +5714,14 @@ def ensure_missing_tts_for_words(
                 log_context,
                 wid,
             )
-            row = generate_tts_for_entry("word", wid, force_regenerate=force_regenerate)
+            row = generate_tts_for_entry(
+                "word",
+                wid,
+                force_regenerate=force_regenerate,
+                langs=selected_langs,
+                per_language_delay_ms=per_language_delay_ms,
+                stop_on_429=stop_on_429,
+            )
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
             if delay_s > 0:
@@ -5682,8 +5743,11 @@ def ensure_missing_tts_for_words(
 def ensure_missing_tts_for_phrases(
     phrase_items,
     force_regenerate: bool = False,
+    langs=None,
     chunk_size: int = None,
     per_entry_delay_ms: int = 0,
+    per_language_delay_ms: int = 0,
+    stop_on_429: bool = False,
     log_context: str = "phrase_tts_backfill",
     cancel_check=None,
 ):
@@ -5701,9 +5765,9 @@ def ensure_missing_tts_for_phrases(
     if not phrase_items:
         return summary
 
-    safe_chunk = int(chunk_size or IMPORT_BATCH_SIZE or 50)
-    if safe_chunk < 1:
-        safe_chunk = 50
+    selected_langs = tuple(langs or LEARN_TTS_LANGS)
+    # Phrase generation is intentionally serialized to reduce provider pressure.
+    safe_chunk = 1
     delay_s = max(0.0, float(int(per_entry_delay_ms or 0)) / 1000.0 )
     unique_items = []
     seen = set()
@@ -5729,7 +5793,7 @@ def ensure_missing_tts_for_phrases(
                 texts = _get_entry_texts_for_tts("phrase", pid)
                 missing_langs = []
                 lang_status = {}
-                for lang in LEARN_TTS_LANGS:
+                for lang in selected_langs:
                     text = normalize_text((texts or {}).get(lang, "") or "")
                     if not text:
                         lang_status[lang] = "missing_text"
@@ -5782,7 +5846,14 @@ def ensure_missing_tts_for_phrases(
                 log_context,
                 pid,
             )
-            row = generate_tts_for_entry("phrase", pid, force_regenerate=force_regenerate)
+            row = generate_tts_for_entry(
+                "phrase",
+                pid,
+                force_regenerate=force_regenerate,
+                langs=selected_langs,
+                per_language_delay_ms=per_language_delay_ms,
+                stop_on_429=stop_on_429,
+            )
             for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
             by_lang = (row or {}).get("by_language", {}) or {}
@@ -6096,12 +6167,26 @@ def _run_post_import_pipeline(
                     "phrases_summary": phrases_summary,
                 }
 
-        tts_chunk = max(1, min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE)))
+        # Keep import-time TTS conservative to avoid Azure 429 bursts.
+        tts_chunk = 1
+        tts_langs = tuple(POST_IMPORT_TTS_LANGS or ("en",))
+        tts_lang_delay_ms = int(TTS_JOB_LANGUAGE_DELAY_MS or 0)
+        app.logger.info(
+            "post_import_pipeline tts_strategy langs=%s chunk_size=%s entry_delay_ms=%s language_delay_ms=%s stop_on_429=%s",
+            tts_langs,
+            int(tts_chunk),
+            int(TTS_JOB_ENTRY_DELAY_MS),
+            int(tts_lang_delay_ms),
+            True,
+        )
         words_tts = ensure_missing_tts_for_words(
             word_items,
             force_regenerate=False,
             chunk_size=tts_chunk,
             per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
+            per_language_delay_ms=tts_lang_delay_ms,
+            langs=tts_langs,
+            stop_on_429=True,
             log_context="post_import_pipeline_tts_words",
             cancel_check=cancel_check,
         ) if word_items else {}
@@ -6110,6 +6195,9 @@ def _run_post_import_pipeline(
             force_regenerate=False,
             chunk_size=tts_chunk,
             per_entry_delay_ms=TTS_JOB_ENTRY_DELAY_MS,
+            per_language_delay_ms=tts_lang_delay_ms,
+            langs=tts_langs,
+            stop_on_429=True,
             log_context="post_import_pipeline_tts_phrases",
             cancel_check=cancel_check,
         ) if phrase_items else {}

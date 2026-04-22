@@ -6,6 +6,7 @@ import time
 
 
 logger = logging.getLogger(__name__)
+_railway_upload_override_logged = False
 
 
 def _int_env(name: str, default: int) -> int:
@@ -52,6 +53,10 @@ def _file_is_nonempty(path: str) -> bool:
         return bool(path and os.path.isfile(path) and (os.path.getsize(path) > 0))
     except Exception:
         return False
+
+
+def _is_railway_runtime() -> bool:
+    return bool((os.environ.get("RAILWAY_ENVIRONMENT") or "").strip()) or bool((os.environ.get("RAILWAY_PROJECT_ID") or "").strip())
 
 
 def azure_synthesize_mp3(
@@ -159,16 +164,28 @@ def generate_and_store_tts(
     output_filename="",
     voice_provider="azure_speech",
 ):
+    global _railway_upload_override_logged
     clean_text = (text or "").strip()
     if not clean_text:
         return ""
 
-    target_dir = (
+    requested_target_dir = (
         (upload_dir or "").strip()
         or (os.environ.get("AUDIO_UPLOAD_DIR", "").strip())
         or (os.environ.get("UPLOAD_FOLDER", "").strip())
         or "/data/uploads"
     )
+    if _is_railway_runtime():
+        target_dir = "/data/uploads"
+        if (not _railway_upload_override_logged) and requested_target_dir and requested_target_dir != target_dir:
+            _railway_upload_override_logged = True
+            logger.warning(
+                "tts_service railway upload dir override ignored requested=%s forced=%s",
+                requested_target_dir,
+                target_dir,
+            )
+    else:
+        target_dir = os.path.abspath(requested_target_dir)
 
     text_hash = hashlib.sha256(clean_text.encode("utf-8")).hexdigest()
     cur = db.cursor()
