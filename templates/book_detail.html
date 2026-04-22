@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="description"
+    content="{{ (book.title ~ ' book details in Library Store') if book else 'Book details in Library Store' }}"
+  />
+  <link
+    rel="canonical"
+    href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/book/' ~ (book.id if book else '') }}"
+  >
+  <meta name="robots" content="index,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ (book.title ~ ' | Library Store') if book else 'Book | Library Store' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Library Store</p>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    {% set current_path = request.path if request is defined else '' %}
+
+    <aside class="side-menu">
+      <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
+      <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
+      <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
+      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🎓 Learn</a>
+      <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store">📚 Library Store</a>
+      <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
+      <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
+      <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
+      <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
+      <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
+      <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    </aside>
+
+    <main class="content" id="main">
+      {% if load_error %}
+        <section class="result-box">
+          <div class="muted">{{ load_error }}</div>
+        </section>
+      {% endif %}
+
+      <section class="card">
+        <div class="library-actions" style="justify-content:space-between; align-items:center;">
+          <a class="btn" href="/library-store">← Back to Library Store</a>
+          {% if book.app_link %}
+            <a class="btn" href="{{ book.app_link }}" target="_blank" rel="noopener noreferrer">Download App</a>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="card book-hero">
+        <div class="book-hero-grid">
+          <div class="book-cover-wrap">
+            {% if book.cover_image %}
+              <img src="{{ book.cover_image }}" alt="{{ book.title }} cover" class="book-cover">
+            {% elif book.cover %}
+              <img src="{{ book.cover }}" alt="{{ book.title }} cover" class="book-cover">
+            {% else %}
+              <div class="book-cover-fallback">No Cover</div>
+            {% endif %}
+          </div>
+
+          <div class="book-meta">
+            <h2>{{ book.title }}</h2>
+
+            <div class="book-badges">
+              {% if book.access_label %}
+                <span class="book-badge free">{{ book.access_label }}</span>
+              {% elif book.is_free %}
+                <span class="book-badge free">Free</span>
+              {% else %}
+                <span class="book-badge free">Free</span>
+              {% endif %}
+
+              {% if book.language %}
+                <span class="book-badge language">{{ book.language }}</span>
+              {% endif %}
+
+              {% if book.type %}
+                <span class="book-badge language">{{ book.type|upper }}</span>
+              {% endif %}
+            </div>
+
+            {% if book.author %}
+              <p class="muted"><strong>Author:</strong> {{ book.author }}</p>
+            {% endif %}
+
+            {% if book.translator %}
+              <p class="muted"><strong>Translator:</strong> {{ book.translator }}</p>
+            {% endif %}
+
+            {% if book.category %}
+              <p class="muted"><strong>Category:</strong> {{ book.category }}</p>
+            {% endif %}
+
+            {% if book.summary %}
+              <p class="library-summary">{{ book.summary }}</p>
+            {% elif book.description %}
+              <p class="library-summary">{{ book.description }}</p>
+            {% else %}
+              <p class="library-summary">
+                Read this book online in Library Store or continue reading in the Android app.
+              </p>
+            {% endif %}
+
+            {% if book.formats %}
+              <p class="subtle"><strong>Format:</strong> {{ book.formats|join(', ') }}</p>
+            {% elif book.type %}
+              <p class="subtle"><strong>Format:</strong> {{ book.type|upper }}</p>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Start Reading</h2>
+        <p class="muted" style="margin-top:-4px;">
+          Open the book in the built-in reader or continue in the Android app.
+        </p>
+
+        <div class="library-actions">
+          {% if book.read_url %}
+            <a class="btn primary btn-read-strong" href="{{ book.read_url }}">Read Book</a>
+          {% elif book.type == 'pdf' %}
+            <a class="btn primary btn-read-strong" href="/read/pdf/{{ book.id|urlencode }}">Read Book</a>
+          {% elif book.type == 'epub' %}
+            <a class="btn primary btn-read-strong" href="/read/epub/{{ book.id|urlencode }}">Read Book</a>
+          {% elif book.type == 'webbook' %}
+            <a class="btn primary btn-read-strong" href="/read/webbook/{{ book.id|urlencode }}">Read Book</a>
+          {% else %}
+            <span class="muted">Read Book is unavailable for this item.</span>
+          {% endif %}
+
+          {% if book.app_link %}
+            <a class="btn" href="{{ book.app_link }}" target="_blank" rel="noopener noreferrer">Download App</a>
+          {% endif %}
+
+          <a class="btn" href="/library-store">Back to Library Store</a>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

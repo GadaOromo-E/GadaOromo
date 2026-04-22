@@ -821,6 +821,180 @@ header.topbar .copy-name{
   }
 }
 
+/* Library Store */
+.library-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.library-item{
+  border: 1px solid var(--border);
+  border-radius: var(--radiusSm);
+  background: #fff;
+  padding: 12px;
+}
+
+.library-summary{
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+.library-actions{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.reader-frame{
+  width: 100%;
+  min-height: 70vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radiusSm);
+  background: #fff;
+}
+
+.book-hero{
+  background: linear-gradient(180deg, #ffffff 0%, #fcfcfc 100%);
+}
+
+.book-hero-grid{
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.book-cover-wrap{
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.book-cover{
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: 0 14px 26px rgba(0,0,0,0.12);
+}
+
+.book-cover-fallback{
+  width: 220px;
+  height: 300px;
+  border-radius: 14px;
+  border: 1px dashed rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: #fff;
+}
+
+.book-meta h2{
+  margin-bottom: 8px;
+}
+
+.book-badges{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.book-badge{
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 12px;
+  border: 1px solid rgba(0,0,0,0.12);
+}
+
+.book-badge.free{
+  color: #fff;
+  background: linear-gradient(180deg, #cc0000 0%, #940000 100%);
+  border-color: rgba(148,0,0,0.5);
+}
+
+.book-badge.language{
+  color: #1c1c1c;
+  background: #f5f5f5;
+}
+
+.btn-read-strong{
+  min-width: 150px;
+  box-shadow: 0 8px 16px rgba(148,0,0,0.28);
+}
+
+.reader-shell{
+  background: linear-gradient(180deg, #ffffff 0%, #fbfbfb 100%);
+}
+
+.reader-toolbar{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.reader-toolbar-left{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.reader-toolbar-right{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reader-title-wrap{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.reader-title{
+  margin: 0;
+}
+
+.reader-stage{
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 10px;
+  border-radius: 14px;
+  background: #f7f7f7;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.reader-frame-premium{
+  min-height: 78vh;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.04);
+}
+
+.reader-actions{
+  justify-content: center;
+}
+
+@media (max-width: 900px){
+  .book-hero-grid{
+    grid-template-columns: 1fr;
+  }
+
+  .book-cover-wrap{
+    justify-content: flex-start;
+  }
+}
+
 /* =======================================================
    PREMIUM SIDEBAR OVERRIDE (shared, high-priority)
 ======================================================= */

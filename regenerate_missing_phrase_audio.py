@@ -1,10 +1,46 @@
 import sqlite3
 
-db = r"C:\data\gadaoromo.db"
-conn = sqlite3.connect(db)
-cur = conn.cursor()
+conn = sqlite3.connect(r"C:\data\gadaoromo.db")
+c = conn.cursor()
 
-cur.execute("DELETE FROM generated_tts_audio WHERE entry_type='phrase'")
-conn.commit()
+print("Phrase audio rows:", c.execute("""
+SELECT COUNT(*)
+FROM generated_tts_audio
+WHERE entry_type='phrase'
+""").fetchone()[0])
 
-print("Deleted phrase audio rows")
+print("Word audio rows:", c.execute("""
+SELECT COUNT(*)
+FROM generated_tts_audio
+WHERE entry_type='word'
+""").fetchone()[0])
+
+conn.close()
+
+import sqlite3
+
+conn = sqlite3.connect(r"C:\data\gadaoromo.db")
+c = conn.cursor()
+
+print("Unique phrases with audio:", c.execute("""
+SELECT COUNT(DISTINCT entry_id)
+FROM generated_tts_audio
+WHERE entry_type='phrase'
+""").fetchone()[0])
+
+conn.close()
+import sqlite3
+
+conn = sqlite3.connect(r"C:\data\gadaoromo.db")
+c = conn.cursor()
+
+for row in c.execute("""
+SELECT lang_code, COUNT(*)
+FROM generated_tts_audio
+WHERE entry_type='phrase'
+GROUP BY lang_code
+ORDER BY lang_code
+"""):
+    print(row)
+
+conn.close()

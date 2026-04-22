@@ -387,6 +387,7 @@ DONATE_URLS = {
 }
 
 APP_ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
+BOOKS_JSON_PATH = os.path.join(APP_ROOT_DIR, "data", "books.json")
 APP_RUNTIME = (
     "railway" if IS_RAILWAY
     else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
@@ -452,6 +453,120 @@ def _site_base_url() -> str:
         return (request.url_root or "").rstrip("/")
     except Exception:
         return "https://gadaadictionary.com"
+
+
+def _safe_book_asset_url(url_value: str) -> str:
+    """
+    Allow safe URLs for library assets:
+    - absolute http/https URLs
+    - site-relative paths starting with "/"
+    """
+    v = normalize_text(url_value or "").strip()
+    if not v:
+        return ""
+    if v.startswith(("https://", "http://", "/")):
+        return v
+    return ""
+
+
+def _normalize_library_book(raw: dict) -> dict:
+    if not isinstance(raw, dict):
+        return {}
+
+    book_id = normalize_text(raw.get("id", "")).strip()
+    title = normalize_text(raw.get("title", "")).strip()
+    if not book_id or not title:
+        return {}
+
+    author = normalize_text(raw.get("author", "")).strip()
+    translator = normalize_text(raw.get("translator", "")).strip()
+    language = normalize_text(raw.get("language", "")).strip()
+    category = normalize_text(raw.get("category", "")).strip()
+    book_type = normalize_text(raw.get("type", "")).strip().lower()
+    access = normalize_text(raw.get("access", "")).strip().lower()
+    page_label = normalize_text(raw.get("page_label", "")).strip()
+    summary = normalize_text(raw.get("summary", "")).strip()
+
+    pdf_url = _safe_book_asset_url(raw.get("pdf_url", ""))
+    epub_url = _safe_book_asset_url(raw.get("epub_url", ""))
+    webbook_url = _safe_book_asset_url(raw.get("webbook_url", ""))
+    cover_image = _safe_book_asset_url(raw.get("cover_image", ""))
+    app_link = _safe_book_asset_url(raw.get("app_link", ""))
+
+    formats = []
+    format_raw = normalize_text(raw.get("format", "")).strip().lower()
+    if book_type in ("pdf", "epub", "webbook") and not format_raw:
+        format_raw = book_type
+    if format_raw in ("pdf", "epub", "webbook"):
+        formats.append(format_raw)
+    if pdf_url and "pdf" not in formats:
+        formats.append("pdf")
+    if epub_url and "epub" not in formats:
+        formats.append("epub")
+    if webbook_url and "webbook" not in formats:
+        formats.append("webbook")
+
+    read_url = ""
+    if pdf_url:
+        read_url = f"/read/pdf/{quote(book_id, safe='')}"
+    elif epub_url:
+        read_url = f"/read/epub/{quote(book_id, safe='')}"
+    elif webbook_url:
+        read_url = f"/read/webbook/{quote(book_id, safe='')}"
+
+    return {
+        "id": book_id,
+        "title": title,
+        "author": author,
+        "translator": translator,
+        "language": language,
+        "category": category,
+        "type": book_type,
+        "access": access if access else "free",
+        "access_label": "Free" if access != "paid" else "Paid",
+        "summary": summary,
+        "is_free": (access != "paid"),
+        "format": (formats[0] if formats else ""),
+        "formats": formats,
+        "read_url": read_url,
+        "page_label": page_label,
+        "cover_image": cover_image,
+        "app_link": app_link,
+        "pdf_url": pdf_url,
+        "epub_url": epub_url,
+        "webbook_url": webbook_url,
+    }
+
+
+def _load_library_books():
+    books = []
+    load_error = ""
+    try:
+        if not os.path.isfile(BOOKS_JSON_PATH):
+            return [], "Library data file is missing."
+        with open(BOOKS_JSON_PATH, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, list):
+            return [], "Library data format is invalid."
+        for raw in payload:
+            book = _normalize_library_book(raw)
+            if book:
+                books.append(book)
+    except Exception as e:
+        app.logger.exception(f"/library-store load books failed: {repr(e)}")
+        load_error = "Library data is temporarily unavailable."
+    return books, load_error
+
+
+def _get_library_book_by_id(book_id: str):
+    needle = normalize_text(book_id or "").strip()
+    if not needle:
+        return None, ""
+    books, load_error = _load_library_books()
+    for book in books:
+        if normalize_text(book.get("id", "")).strip() == needle:
+            return book, load_error
+    return None, load_error
 
     
 @app.context_processor
@@ -8259,6 +8374,76 @@ def learn():
 
 
 # ------------------ SUPPORT ------------------
+
+@app.route("/library-store", methods=["GET"])
+def library_store():
+    books, load_error = _load_library_books()
+    return render_template(
+        "library_store.html",
+        books=books,
+        load_error=load_error,
+    )
+
+
+@app.route("/book/<id>", methods=["GET"])
+def book_detail_page(id):
+    book, load_error = _get_library_book_by_id(unquote(id or ""))
+    if not book:
+        abort(404)
+    return render_template(
+        "book_detail.html",
+        book=book,
+        load_error=load_error,
+    )
+
+
+@app.route("/read/pdf/<id>", methods=["GET"])
+def read_pdf_book(id):
+    book, load_error = _get_library_book_by_id(unquote(id or ""))
+    if not book:
+        abort(404)
+    pdf_url = book.get("pdf_url", "")
+    reader_error = "" if pdf_url else "PDF file is not available for this book."
+    return render_template(
+        "pdf_reader.html",
+        book=book,
+        pdf_url=pdf_url,
+        reader_error=reader_error,
+        load_error=load_error,
+    )
+
+
+@app.route("/read/epub/<id>", methods=["GET"])
+def read_epub_book(id):
+    book, load_error = _get_library_book_by_id(unquote(id or ""))
+    if not book:
+        abort(404)
+    epub_url = book.get("epub_url", "")
+    reader_error = "" if epub_url else "EPUB file is not available for this book."
+    return render_template(
+        "epub_reader.html",
+        book=book,
+        epub_url=epub_url,
+        reader_error=reader_error,
+        load_error=load_error,
+    )
+
+
+@app.route("/read/webbook/<id>", methods=["GET"])
+def read_webbook(id):
+    book, load_error = _get_library_book_by_id(unquote(id or ""))
+    if not book:
+        abort(404)
+    webbook_url = book.get("webbook_url", "")
+    reader_error = "" if webbook_url else "Web book source is not available for this book."
+    return render_template(
+        "web_book_reader.html",
+        book=book,
+        webbook_url=webbook_url,
+        reader_error=reader_error,
+        load_error=load_error,
+    )
+
 
 @app.route("/support", methods=["GET"])
 def support():

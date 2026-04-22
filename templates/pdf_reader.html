@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="description" content="{{ (book.title ~ ' PDF reader') if book else 'PDF reader' }}" />
+  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/read/pdf/' ~ (book.id if book else '') }}">
+  <meta name="robots" content="noindex,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ (book.title ~ ' | PDF Reader') if book else 'PDF Reader' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">PDF Reader</p>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    {% set current_path = request.path if request is defined else '' %}
+    <aside class="side-menu">
+      <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
+      <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
+      <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
+      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🎓 Learn</a>
+      <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> 📚Library Store</a>
+      <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
+      <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
+      <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
+      <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
+      <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
+      <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    </aside>
+
+    <main class="content" id="main">
+      <section class="card reader-shell">
+        <div class="reader-toolbar">
+          <div class="reader-toolbar-left">
+            <a class="btn" href="/book/{{ book.id|urlencode }}">Back</a>
+            <div class="reader-title-wrap">
+              <h2 class="reader-title">{{ book.title }}</h2>
+              {% if book.page_label %}
+                <span class="book-badge language">{{ book.page_label }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="reader-toolbar-right">
+            {% if book.app_link %}
+              <a class="btn" href="{{ book.app_link }}" target="_blank" rel="noopener noreferrer">Download App</a>
+            {% endif %}
+            <a class="btn" href="/library-store">Back to Library Store</a>
+          </div>
+        </div>
+      </section>
+
+      {% if load_error %}
+        <section class="result-box">
+          <div class="muted">{{ load_error }}</div>
+        </section>
+      {% endif %}
+
+      {% if reader_error %}
+        <section class="result-box">
+          <div class="muted">{{ reader_error }}</div>
+        </section>
+      {% else %}
+        <section class="card reader-shell">
+          <div class="reader-stage">
+            <iframe class="reader-frame reader-frame-premium" src="{{ pdf_url }}" title="PDF reader for {{ book.title }}"></iframe>
+          </div>
+          <div class="library-actions reader-actions">
+            <a class="btn primary btn-read-strong" href="{{ pdf_url }}" target="_blank" rel="noopener noreferrer">Read Book</a>
+          </div>
+        </section>
+      {% endif %}
+    </main>
+  </div>
+</div>
+</body>
+</html>

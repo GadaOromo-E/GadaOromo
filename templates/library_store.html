@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="description" content="Browse PDF, EPUB, and web books in the Gadaa Dictionary Library Store." />
+  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/library-store' }}">
+  <meta name="robots" content="index,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Library Store | {{ APP_NAME or "Gadaa Dictionary" }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Library Store</p>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    {% set current_path = request.path if request is defined else '' %}
+    <aside class="side-menu">
+      <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
+      <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
+      <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
+      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">📚 Learn</a>
+      <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> Library Store</a>
+      <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
+      <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
+      <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
+      <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
+      <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
+      <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    </aside>
+
+    <main class="content" id="main">
+      <section class="card">
+        <h2>Library Store</h2>
+        <div class="subtle">Discover books in PDF, EPUB, and web formats.</div>
+      </section>
+
+      {% if load_error %}
+        <section class="result-box">
+          <div class="muted">{{ load_error }}</div>
+        </section>
+      {% endif %}
+
+      <section class="card">
+        {% if books %}
+          <div class="library-grid">
+            {% for book in books %}
+              <article class="library-item">
+                <h3>{{ book.title }}</h3>
+                {% if book.author %}
+                  <p class="muted">Author: {{ book.author }}</p>
+                {% endif %}
+                {% if book.summary %}
+                  <p class="library-summary">{{ book.summary }}</p>
+                {% endif %}
+                <p class="subtle"><strong>Free</strong></p>
+                <p class="subtle">Formats: {{ book.formats|join(', ') if book.formats else 'N/A' }}</p>
+                <div class="library-actions">
+                  <a class="btn primary" href="/book/{{ book.id|urlencode }}">View Book</a>
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="muted">No books are available yet.</div>
+        {% endif %}
+      </section>
+    </main>
+  </div>
+</div>
+</body>
+</html>

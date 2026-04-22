@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="description" content="{{ (book.title ~ ' web book reader') if book else 'Web book reader' }}" />
+  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/read/webbook/' ~ (book.id if book else '') }}">
+  <meta name="robots" content="noindex,follow">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ (book.title ~ ' | Web Book Reader') if book else 'Web Book Reader' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+</head>
+<body>
+<div class="container">
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Web Book Reader</p>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    {% set current_path = request.path if request is defined else '' %}
+    <aside class="side-menu">
+      <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
+      <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
+      <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
+      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">📚 Learn</a>
+      <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> Library Store</a>
+      <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
+      <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
+      <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
+      <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
+      <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
+      <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    </aside>
+
+    <main class="content" id="main">
+      <section class="card">
+        <h2>{{ book.title }}</h2>
+        <div class="library-actions">
+          <a class="btn" href="/book/{{ book.id|urlencode }}">Back to Book</a>
+          <a class="btn" href="/library-store">Back to Library Store</a>
+        </div>
+      </section>
+
+      {% if load_error %}
+        <section class="result-box">
+          <div class="muted">{{ load_error }}</div>
+        </section>
+      {% endif %}
+
+      {% if reader_error %}
+        <section class="result-box">
+          <div class="muted">{{ reader_error }}</div>
+        </section>
+      {% else %}
+        <section class="card">
+          <iframe class="reader-frame" src="{{ webbook_url }}" title="Web reader for {{ book.title }}"></iframe>
+          <div class="library-actions">
+            <a class="btn primary" href="{{ webbook_url }}" target="_blank" rel="noopener noreferrer">Open Web Book in new tab</a>
+          </div>
+        </section>
+      {% endif %}
+    </main>
+  </div>
+</div>
+</body>
+</html>
