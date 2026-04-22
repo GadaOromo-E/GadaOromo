@@ -206,6 +206,16 @@
           <label for="regen-phrase-limit" class="subtle">How many phrases to process</label>
           <div class="row" style="margin-top:6px; align-items:flex-end; gap:10px;">
             <input id="regen-phrase-limit" type="number" name="limit" min="1" max="100000" value="100" placeholder="1, 10, 100" style="max-width:180px;">
+            <select name="language" aria-label="Phrase audio language" style="max-width:180px;">
+              <option value="en" selected>English (en)</option>
+              <option value="am">Amharic (am)</option>
+              <option value="ar">Arabic (ar)</option>
+              <option value="fr">French (fr)</option>
+              <option value="zh-CN">Chinese (zh-CN)</option>
+              {% if phrase_regen_allow_om %}
+              <option value="om">Oromo (om)</option>
+              {% endif %}
+            </select>
             <button type="submit" class="btn primary">Generate Phrase Audio</button>
           </div>
         </form>
@@ -234,6 +244,7 @@
           {% if (latest_phrase_audio_job or {}).get('status') == 'running' %}
             Running. Summary metrics will appear after the job finishes.
           {% else %}
+            Language: {{ ps.get('language', 'en') }},
             Scanned: {{ ps.get('scanned_entries', 0) }},
             Processed: {{ ps.get('processed_entries', 0) }},
             Generated: {{ ps.get('audio_generated', 0) }},

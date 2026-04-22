@@ -6358,12 +6358,13 @@ def _fetch_approved_items_for_audio_regen(entry_type: str, limit: int = 0):
     return [(eid, en) for eid, en in rows if eid > 0 and en]
 
 
-def _scan_missing_audio_targets(entry_type: str, items, cancel_check=None):
+def _scan_missing_audio_targets(entry_type: str, items, cancel_check=None, langs=None):
     scanned_entries = 0
     audio_attempted = 0
     audio_skipped_existing = 0
     audio_missing_voice = 0
     target_items = []
+    selected_langs = tuple(langs or LEARN_TTS_LANGS)
     for entry_id, english_text in (items or []):
         if callable(cancel_check) and bool(cancel_check()):
             return {
@@ -6380,7 +6381,7 @@ def _scan_missing_audio_targets(entry_type: str, items, cancel_check=None):
         scanned_entries += 1
         texts = _get_entry_texts_for_tts(entry_type, eid)
         has_missing_for_entry = False
-        for lang in LEARN_TTS_LANGS:
+        for lang in selected_langs:
             txt = normalize_text((texts or {}).get(lang, "") or "")
             if not txt:
                 continue
@@ -6404,19 +6405,45 @@ def _scan_missing_audio_targets(entry_type: str, items, cancel_check=None):
         "canceled": False,
     }
 
-def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int = None, cancel_check=None):
+
+def _parse_phrase_regen_language(raw_lang: str) -> str:
+    lang = normalize_text(raw_lang or "")
+    if not lang:
+        return "en"
+    if lang == "zh-cn":
+        return "zh-CN"
+    if lang == "om" and not _azure_voice_for_lang("om"):
+        return "en"
+    if lang in ("en", "am", "ar", "fr", "zh-CN", "om"):
+        return lang
+    return "en"
+
+def _run_admin_audio_regen_job(
+    entry_type: str,
+    limit: int = 0,
+    chunk_size: int = None,
+    language: str = "",
+    cancel_check=None,
+):
     et = normalize_text(entry_type or "").lower()
     if et not in ("word", "phrase"):
         return False, {"error": "invalid_entry_type"}
 
+    selected_language = "all"
+    selected_langs = tuple(LEARN_TTS_LANGS)
+    if et == "phrase":
+        selected_language = _parse_phrase_regen_language(language)
+        selected_langs = (selected_language,)
+
     # Strict hard cap for admin-run batch size to prevent overload.
     safe_limit = max(1, min(int(limit or 100), 100000))
     items = _fetch_approved_items_for_audio_regen(et, limit=safe_limit)
-    scan = _scan_missing_audio_targets(et, items, cancel_check=cancel_check)
+    scan = _scan_missing_audio_targets(et, items, cancel_check=cancel_check, langs=selected_langs)
     target_items = list((scan.get("target_items", []) or [])[:safe_limit])
     if bool(scan.get("canceled")):
         return False, {
             "entry_type": et,
+            "language": selected_language,
             "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
             "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
             "audio_generated": 0,
@@ -6433,13 +6460,17 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
     if safe_chunk < 1:
         safe_chunk = 50
     safe_chunk = min(int(safe_chunk), int(TTS_JOB_CHUNK_SIZE))
+    if et == "phrase":
+        safe_chunk = 1
 
     delay_s = max(0.0, float(int(TTS_JOB_ENTRY_DELAY_MS or 0)) / 1000.0)
     per_lang_delay_ms = int(TTS_JOB_LANGUAGE_DELAY_MS or 0)
 
     app.logger.info(
-        "admin_audio_regen_job provider_health=%s tts_job_chunk_size=%s tts_job_entry_delay_ms=%s tts_job_language_delay_ms=%s limit=%s",
+        "admin_audio_regen_job provider_health=%s entry_type=%s language=%s tts_job_chunk_size=%s tts_job_entry_delay_ms=%s tts_job_language_delay_ms=%s limit=%s",
         _provider_health_snapshot(),
+        et,
+        selected_language,
         int(safe_chunk),
         int(TTS_JOB_ENTRY_DELAY_MS),
         int(per_lang_delay_ms),
@@ -6455,6 +6486,7 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
         if callable(cancel_check) and bool(cancel_check()):
             summary = {
                 "entry_type": et,
+                "language": selected_language,
                 "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
                 "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
                 "audio_generated": int(generated),
@@ -6471,7 +6503,7 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
             et,
             int(entry_id),
             force_regenerate=False,
-            langs=LEARN_TTS_LANGS,
+            langs=selected_langs,
             per_language_delay_ms=per_lang_delay_ms,
             stop_on_429=True,
         )
@@ -6499,6 +6531,7 @@ def _run_admin_audio_regen_job(entry_type: str, limit: int = 0, chunk_size: int 
 
     summary = {
         "entry_type": et,
+        "language": selected_language,
         "scanned_entries": int(scan.get("scanned_entries", 0) or 0),
         "audio_attempted": int(scan.get("audio_attempted", 0) or 0),
         "audio_generated": int(generated),
@@ -6859,10 +6892,12 @@ def _post_import_worker_loop():
                 if job_type in ("admin_audio_regen_word", "admin_audio_regen_phrase"):
                     target_entry_type = "word" if job_type.endswith("_word") else "phrase"
                     limit = int((options or {}).get("limit") or 0)
+                    language = normalize_text((options or {}).get("language") or "")
                     run_ok, summary = _run_admin_audio_regen_job(
                         target_entry_type,
                         limit=limit,
                         chunk_size=chunk_size,
+                        language=language,
                         cancel_check=cancel_check,
                     )
                     if run_ok:
@@ -6974,11 +7009,12 @@ def trigger_post_import_pipeline_async(word_ids, phrase_ids, chunk_size: int = N
     return True
 
 
-def trigger_admin_audio_regen_async(entry_type: str, limit: int = 0, chunk_size: int = None):
+def trigger_admin_audio_regen_async(entry_type: str, limit: int = 0, chunk_size: int = None, language: str = ""):
     et = normalize_text(entry_type or "").lower()
     if et not in ("word", "phrase"):
         return False, 0
     safe_limit = max(0, int(limit or 0))
+    selected_language = _parse_phrase_regen_language(language) if et == "phrase" else ""
     job_type = f"admin_audio_regen_{et}"
     job_id = _enqueue_post_import_job(
         word_ids=[],
@@ -6986,7 +7022,7 @@ def trigger_admin_audio_regen_async(entry_type: str, limit: int = 0, chunk_size:
         chunk_size=chunk_size,
         import_summary={},
         job_type=job_type,
-        options={"entry_type": et, "limit": safe_limit},
+        options={"entry_type": et, "limit": safe_limit, "language": selected_language},
     )
     if not int(job_id or 0):
         return False, 0
@@ -10167,6 +10203,7 @@ def dashboard():
         word_audio_missing=word_audio_missing,
         latest_phrase_audio_job=latest_phrase_audio_job,
         latest_word_audio_job=latest_word_audio_job,
+        phrase_regen_allow_om=bool(_azure_voice_for_lang("om")),
     )
 
 
@@ -10209,16 +10246,28 @@ def _queue_admin_audio_regen_response(entry_type: str):
         if request.is_json
         else (request.form.get("chunk_size") or request.args.get("chunk_size") or "")
     )
+    language_raw = _norm_any(
+        (payload or {}).get("language")
+        if request.is_json
+        else (request.form.get("language") or request.args.get("language") or "")
+    )
     limit = int(limit_raw) if (limit_raw and limit_raw.isdigit()) else 0
     limit = max(0, min(limit, 100000))
     chunk_size = int(chunk_raw) if (chunk_raw and chunk_raw.isdigit()) else IMPORT_BATCH_SIZE
     chunk_size = max(1, min(int(chunk_size or IMPORT_BATCH_SIZE), 1000))
+    selected_language = _parse_phrase_regen_language(language_raw) if normalize_text(entry_type or "") == "phrase" else ""
 
-    queued_ok, job_id = trigger_admin_audio_regen_async(entry_type, limit=limit, chunk_size=chunk_size)
+    queued_ok, job_id = trigger_admin_audio_regen_async(
+        entry_type,
+        limit=limit,
+        chunk_size=chunk_size,
+        language=selected_language,
+    )
     queued_jobs = 1 if queued_ok else 0
     out = {
         "ok": bool(queued_ok),
         "entry_type": normalize_text(entry_type or ""),
+        "language": (selected_language if normalize_text(entry_type or "") == "phrase" else "all"),
         "queued_jobs": int(queued_jobs),
         "job_id": int(job_id or 0),
         "limit": int(limit or 0),
@@ -10789,6 +10838,64 @@ def admin_manage():
 
     conn.close()
 
+    def _latest_audio_job_result_for_manage(entry_type: str):
+        jt = f"admin_audio_regen_{entry_type}"
+        conn2 = None
+        try:
+            conn2 = sqlite3.connect(DB_NAME)
+            c2 = conn2.cursor()
+            c2.execute(
+                """
+                SELECT id, status, result_json, last_error, created_at, finished_at
+                FROM post_import_jobs
+                WHERE job_type=?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (jt,),
+            )
+            row = c2.fetchone()
+            if not row:
+                return {}
+            payload = {}
+            try:
+                payload = json.loads((row[2] or "{}"))
+            except Exception:
+                payload = {}
+            return {
+                "job_id": int(row[0] or 0),
+                "status": normalize_text(row[1] or ""),
+                "summary": payload or {},
+                "error": normalize_text(row[3] or ""),
+                "created_at": normalize_text(row[4] or ""),
+                "finished_at": normalize_text(row[5] or ""),
+            }
+        except Exception:
+            app.logger.exception("admin_manage latest audio job failed entry_type=%s", entry_type)
+            return {}
+        finally:
+            if conn2 is not None:
+                try:
+                    conn2.close()
+                except Exception:
+                    pass
+
+    def _missing_audio_from_latest_for_manage(entry_type: str, latest_job: dict):
+        summary = (latest_job or {}).get("summary", {}) if isinstance(latest_job, dict) else {}
+        return {
+            "entry_type": entry_type,
+            "scanned_entries": int((summary or {}).get("scanned_entries", 0) or 0),
+            "missing_entries": int((summary or {}).get("target_entries", 0) or 0),
+            "audio_attempted": int((summary or {}).get("audio_attempted", 0) or 0),
+            "audio_skipped_existing": int((summary or {}).get("audio_skipped_existing", 0) or 0),
+            "audio_missing_voice": int((summary or {}).get("audio_missing_voice", 0) or 0),
+        }
+
+    latest_phrase_audio_job = _latest_audio_job_result_for_manage("phrase")
+    latest_word_audio_job = _latest_audio_job_result_for_manage("word")
+    phrase_audio_missing = _missing_audio_from_latest_for_manage("phrase", latest_phrase_audio_job)
+    word_audio_missing = _missing_audio_from_latest_for_manage("word", latest_word_audio_job)
+
     return render_template(
         "admin_manage.html",
         msg=msg,
@@ -10800,6 +10907,11 @@ def admin_manage():
         word_q=word_q,
         phrase_q=phrase_q,
         running_jobs=running_jobs,
+        phrase_audio_missing=phrase_audio_missing,
+        word_audio_missing=word_audio_missing,
+        latest_phrase_audio_job=latest_phrase_audio_job,
+        latest_word_audio_job=latest_word_audio_job,
+        phrase_regen_allow_om=bool(_azure_voice_for_lang("om")),
     )
 
 # ------------------ CHANGE PASSWORD ------------------

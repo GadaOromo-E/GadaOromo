@@ -47,8 +47,21 @@
         <h3 style="margin-top:0;">Phrase Audio</h3>
         <div class="result-box">Missing phrase audio: <b>{{ (phrase_audio_missing or {}).get('missing_entries', 0) }}</b></div>
         <form method="POST" action="/admin/queue-regenerate-missing-phrase-audio" style="margin-top:10px;">
-          <input type="hidden" name="limit" value="0">
-          <button type="submit" class="btn primary">Generate Missing Phrase Audio</button>
+          <label for="dashboard-regen-phrase-limit" class="subtle">How many phrases to process</label>
+          <div class="row" style="margin-top:6px; align-items:flex-end; gap:10px;">
+            <input id="dashboard-regen-phrase-limit" type="number" name="limit" min="1" max="100000" value="100" style="max-width:180px;">
+            <select name="language" aria-label="Phrase audio language" style="max-width:180px;">
+              <option value="en" selected>English (en)</option>
+              <option value="am">Amharic (am)</option>
+              <option value="ar">Arabic (ar)</option>
+              <option value="fr">French (fr)</option>
+              <option value="zh-CN">Chinese (zh-CN)</option>
+              {% if phrase_regen_allow_om %}
+              <option value="om">Oromo (om)</option>
+              {% endif %}
+            </select>
+            <button type="submit" class="btn primary">Generate Missing Phrase Audio</button>
+          </div>
         </form>
       </div>
 
@@ -72,7 +85,9 @@
           {% if (latest_phrase_audio_job or {}).get('status') == 'running' %}
             Running. Summary metrics will appear after the job finishes.
           {% else %}
+            Language: {{ ps.get('language', 'en') }},
             Scanned: {{ ps.get('scanned_entries', 0) }},
+            Processed: {{ ps.get('processed_entries', 0) }},
             Generated: {{ ps.get('audio_generated', 0) }},
             Skipped existing: {{ ps.get('audio_skipped_existing', 0) }},
             Missing voice: {{ ps.get('audio_missing_voice', 0) }},
