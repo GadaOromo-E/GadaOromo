@@ -634,22 +634,77 @@ def _resolve_private_pdf_path(book: dict):
     if not protected_file_name.lower().endswith(".pdf"):
         return "", "Protected PDF file must end with .pdf."
 
-    private_root = os.path.abspath(PRIVATE_BOOKS_DIR)
-    candidate = os.path.abspath(os.path.join(private_root, protected_file_name))
-    try:
-        if os.path.commonpath([private_root, candidate]) != private_root:
-            return "", "Invalid protected PDF file path."
-    except Exception:
-        return "", "Invalid protected PDF path."
+    configured_private_dir = _normalize_book_text(os.environ.get("PRIVATE_BOOKS_DIR", "")).strip()
+    persistent_data_dir = _normalize_book_text(os.environ.get("PERSISTENT_DATA_DIR", "")).strip()
+    data_dir = _normalize_book_text(os.environ.get("DATA_DIR", "")).strip()
 
-    if not os.path.isfile(candidate):
-        app.logger.warning(
-            "library-store protected_pdf_missing file=%s candidate=%s",
-            protected_file_name,
-            candidate,
-        )
-        return "", "Protected PDF file is not available."
-    return candidate, ""
+    candidate_roots = []
+    if configured_private_dir:
+        candidate_roots.append(configured_private_dir)
+    candidate_roots.append(PRIVATE_BOOKS_DIR)
+    if BASE_DIR:
+        candidate_roots.append(os.path.join(BASE_DIR, "private_books"))
+    if LIBRARY_BASE_DIR:
+        candidate_roots.append(os.path.join(LIBRARY_BASE_DIR, "private_books"))
+    if persistent_data_dir:
+        candidate_roots.append(os.path.join(persistent_data_dir, "private_books"))
+    if data_dir:
+        candidate_roots.append(os.path.join(data_dir, "private_books"))
+
+    seen_roots = set()
+    search_roots = []
+    for root in candidate_roots:
+        abs_root = os.path.abspath(root)
+        if abs_root in seen_roots:
+            continue
+        seen_roots.add(abs_root)
+        search_roots.append(abs_root)
+
+    app.logger.info(
+        "library-store protected_pdf_resolve_start file=%s PRIVATE_BOOKS_DIR=%s search_roots=%s",
+        protected_file_name,
+        PRIVATE_BOOKS_DIR,
+        search_roots,
+    )
+
+    path_checks = []
+    for private_root in search_roots:
+        candidate = os.path.abspath(os.path.join(private_root, protected_file_name))
+        try:
+            if os.path.commonpath([private_root, candidate]) != private_root:
+                app.logger.warning(
+                    "library-store protected_pdf_path_rejected file=%s root=%s candidate=%s",
+                    protected_file_name,
+                    private_root,
+                    candidate,
+                )
+                continue
+        except Exception:
+            app.logger.warning(
+                "library-store protected_pdf_path_error file=%s root=%s candidate=%s",
+                protected_file_name,
+                private_root,
+                candidate,
+            )
+            continue
+
+        exists = os.path.isfile(candidate)
+        path_checks.append({"root": private_root, "candidate": candidate, "exists": exists})
+        if exists:
+            app.logger.info(
+                "library-store protected_pdf_resolve_success file=%s resolved_path=%s exists=%s",
+                protected_file_name,
+                candidate,
+                exists,
+            )
+            return candidate, ""
+
+    app.logger.warning(
+        "library-store protected_pdf_resolve_failed file=%s checks=%s",
+        protected_file_name,
+        path_checks,
+    )
+    return "", "Protected PDF file is not available."
 
     
 @app.context_processor
@@ -8487,6 +8542,13 @@ def read_pdf_book(id):
         abort(404)
     book_id = _normalize_book_text(book.get("id", "")).strip()
     protected_pdf_path, protected_pdf_error = _resolve_private_pdf_path(book)
+    app.logger.info(
+        "library-store read_pdf_book id=%s protected_file_name=%s resolved_pdf_path=%s exists=%s",
+        book_id,
+        _normalize_book_text(book.get("protected_file_name", "")),
+        protected_pdf_path,
+        bool(protected_pdf_path and os.path.isfile(protected_pdf_path)),
+    )
 
     pdf_stream_url = ""
     if protected_pdf_path and book_id:
@@ -8535,6 +8597,12 @@ def library_store_pdf_stream(id):
     response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0"
     response.headers["Pragma"] = "no-cache"
     response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    app.logger.info(
+        "library-store protected_pdf_stream_success id=%s path=%s exists=%s",
+        _normalize_book_text((book or {}).get("id", "")),
+        pdf_path,
+        os.path.isfile(pdf_path),
+    )
     return response
 
 
