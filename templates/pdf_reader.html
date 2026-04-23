@@ -226,9 +226,11 @@
       var touchStartX = 0;
       var touchStartY = 0;
       var touchActive = false;
-      var swipeThresholdX = 60;
-      var swipeMaxYDrift = 48;
-      var swipeEnabled = true;
+      var panActive = false;
+      var panMoved = false;
+      var panLastX = 0;
+      var panLastY = 0;
+      var panMoveThreshold = 8;
       var lastTapAt = 0;
       var lastTapX = 0;
       var lastTapY = 0;
@@ -312,7 +314,8 @@
 
         if (event.touches.length === 2) {
           pinchActive = true;
-          swipeEnabled = false;
+          panActive = false;
+          panMoved = false;
           touchActive = false;
           pinchStartDistance = touchDistance(event.touches[0], event.touches[1]);
           pinchStartZoom = zoomScale;
@@ -325,7 +328,14 @@
           touchStartX = event.touches[0].clientX;
           touchStartY = event.touches[0].clientY;
           touchActive = true;
-          swipeEnabled = true;
+          panMoved = false;
+          if (zoomScale > 1) {
+            panActive = true;
+            panLastX = event.touches[0].clientX;
+            panLastY = event.touches[0].clientY;
+          } else {
+            panActive = false;
+          }
         }
       }, { passive: true });
 
@@ -335,7 +345,8 @@
         if (event.touches.length === 2) {
           if (!pinchActive) {
             pinchActive = true;
-            swipeEnabled = false;
+            panActive = false;
+            panMoved = false;
             touchActive = false;
             pinchStartDistance = touchDistance(event.touches[0], event.touches[1]);
             pinchStartZoom = zoomScale;
@@ -361,51 +372,63 @@
             }
           }
           event.preventDefault();
+          return;
+        }
+
+        if (event.touches.length === 1 && panActive && zoomScale > 1) {
+          var touch = event.touches[0];
+          var moveX = touch.clientX - panLastX;
+          var moveY = touch.clientY - panLastY;
+          canvasWrap.scrollLeft = canvasWrap.scrollLeft - moveX;
+          canvasWrap.scrollTop = canvasWrap.scrollTop - moveY;
+          panLastX = touch.clientX;
+          panLastY = touch.clientY;
+          if (!panMoved) {
+            if (Math.abs(touch.clientX - touchStartX) > panMoveThreshold || Math.abs(touch.clientY - touchStartY) > panMoveThreshold) {
+              panMoved = true;
+            }
+          }
+          event.preventDefault();
         }
       }, { passive: false });
 
       canvasWrap.addEventListener("touchend", function (event) {
         if (pinchActive && (!event.touches || event.touches.length < 2)) {
           pinchActive = false;
-          swipeEnabled = false;
+          panActive = false;
+          panMoved = false;
           touchActive = false;
           commitPinchZoom();
           return;
         }
 
-        if (isMobileReader() && touchActive && event.changedTouches && event.changedTouches.length === 1) {
-          if (handleDoubleTap(event.changedTouches[0])) {
-            touchActive = false;
-            swipeEnabled = false;
+        if (panActive) {
+          panActive = false;
+          touchActive = false;
+          if (panMoved) {
+            panMoved = false;
+            lastTapAt = 0;
             return;
           }
         }
 
-        if (isMobileReader()) {
-          touchActive = false;
-          swipeEnabled = false;
-          return;
+        if (isMobileReader() && touchActive && event.changedTouches && event.changedTouches.length === 1) {
+          if (handleDoubleTap(event.changedTouches[0])) {
+            touchActive = false;
+            panMoved = false;
+            return;
+          }
         }
-
-        if (!swipeEnabled || !touchActive || !event.changedTouches || event.changedTouches.length !== 1) return;
-        var endX = event.changedTouches[0].clientX;
-        var endY = event.changedTouches[0].clientY;
-        var deltaX = endX - touchStartX;
-        var deltaY = endY - touchStartY;
         touchActive = false;
-
-        if (Math.abs(deltaY) > swipeMaxYDrift || Math.abs(deltaX) < swipeThresholdX) return;
-        if (deltaX < 0) {
-          goNext();
-        } else {
-          goPrev();
-        }
+        panMoved = false;
       }, { passive: true });
 
       canvasWrap.addEventListener("touchcancel", function () {
         touchActive = false;
+        panActive = false;
+        panMoved = false;
         pinchActive = false;
-        swipeEnabled = true;
+        lastTapAt = 0;
         if (pinchRenderTimer) {
           window.clearTimeout(pinchRenderTimer);
           pinchRenderTimer = null;
