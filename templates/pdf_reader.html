@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ (book.title ~ ' | PDF Reader') if book else 'PDF Reader' }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260423-1">
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="pdf-reader-page pdf-reader-native">
@@ -40,10 +40,10 @@
   {% if not reader_error %}
     <nav class="native-reader-bottom" aria-label="Reader controls">
       <div class="native-reader-bottom-row">
-        <a href="/book/{{ book.id|urlencode }}" class="native-back-btn" aria-label="Back to Book">‹</a>
-        <button class="native-nav-btn" id="native-prev-btn" type="button" aria-label="Previous page">‹</button>
-        <div class="native-page-chip" id="native-page-chip" aria-label="Page and zoom status">Page 1 • 100%</div>
-        <button class="native-nav-btn" id="native-next-btn" type="button" aria-label="Next page">›</button>
+        <a href="/book/{{ book.id|urlencode }}" class="native-back-btn" aria-label="Back to Book">Back to Book</a>
+        <button class="native-nav-btn" id="native-prev-btn" type="button" aria-label="Previous page">Previous</button>
+        <div class="native-page-chip" id="native-page-chip" aria-label="Current page">Page 1</div>
+        <button class="native-nav-btn" id="native-next-btn" type="button" aria-label="Next page">Next</button>
       </div>
     </nav>
   {% endif %}
@@ -80,11 +80,6 @@
       var pageNum = 1;
       var pendingPage = null;
       var isRendering = false;
-      var zoom = 1;
-      var minZoom = 0.85;
-      var maxZoom = 2.6;
-      var zoomStops = [1, 1.15, 1.3, 1.5, 1.75, 2];
-      var zoomStopIndex = 0;
 
       function showError(message) {
         if (loadingNode) loadingNode.hidden = true;
@@ -96,7 +91,7 @@
 
       function updateBottomBar() {
         if (!pdfDoc) return;
-        pageChip.textContent = "Page " + pageNum + " • " + Math.round(zoom * 100) + "%";
+        pageChip.textContent = "Page " + pageNum + " of " + pdfDoc.numPages;
         prevBtn.disabled = isRendering || pageNum <= 1;
         nextBtn.disabled = isRendering || pageNum >= pdfDoc.numPages;
       }
@@ -119,10 +114,9 @@
         try {
           var page = await pdfDoc.getPage(targetPage);
           var baseViewport = page.getViewport({ scale: 1 });
-          var availableWidth = Math.max(280, canvasWrap.clientWidth - 8);
+          var availableWidth = Math.max(280, canvasWrap.clientWidth - 18);
           var fitScale = availableWidth / baseViewport.width;
-          var effectiveScale = fitScale * zoom;
-          var viewport = page.getViewport({ scale: effectiveScale });
+          var viewport = page.getViewport({ scale: fitScale });
           var outputScale = Math.min(window.devicePixelRatio || 1, 2);
 
           canvas.width = Math.floor(viewport.width * outputScale);
@@ -163,21 +157,8 @@
         queueRender(pageNum + 1);
       }
 
-      function setZoom(nextZoom) {
-        if (!pdfDoc || isRendering) return;
-        zoom = Math.max(minZoom, Math.min(maxZoom, Math.round(nextZoom * 100) / 100));
-        queueRender(pageNum);
-        updateBottomBar();
-      }
-
-      function cycleZoomStop() {
-        zoomStopIndex = (zoomStopIndex + 1) % zoomStops.length;
-        setZoom(zoomStops[zoomStopIndex]);
-      }
-
       prevBtn.addEventListener("click", goPrev);
       nextBtn.addEventListener("click", goNext);
-      pageChip.addEventListener("click", cycleZoomStop);
 
       document.addEventListener("keydown", function (event) {
         if (!pdfDoc || isRendering) return;
