@@ -40,10 +40,19 @@
   {% if not reader_error %}
     <nav class="native-reader-bottom" aria-label="Reader controls">
       <div class="native-reader-bottom-row">
-        <a href="/book/{{ book.id|urlencode }}" class="native-back-btn" aria-label="Back to Book">Back to Book</a>
-        <button class="native-nav-btn" id="native-prev-btn" type="button" aria-label="Previous page">Previous</button>
+        <a href="/book/{{ book.id|urlencode }}" class="native-back-btn" aria-label="Back to Book">
+          <span class="control-label control-label-full">Back to Book</span>
+          <span class="control-label control-label-compact" aria-hidden="true">&larr;</span>
+        </a>
+        <button class="native-nav-btn" id="native-prev-btn" type="button" aria-label="Previous page">
+          <span class="control-label control-label-full">Previous</span>
+          <span class="control-label control-label-compact" aria-hidden="true">&lsaquo;</span>
+        </button>
         <div class="native-page-chip" id="native-page-chip" aria-label="Current page">Page 1</div>
-        <button class="native-nav-btn" id="native-next-btn" type="button" aria-label="Next page">Next</button>
+        <button class="native-nav-btn" id="native-next-btn" type="button" aria-label="Next page">
+          <span class="control-label control-label-full">Next</span>
+          <span class="control-label control-label-compact" aria-hidden="true">&rsaquo;</span>
+        </button>
       </div>
     </nav>
   {% endif %}
@@ -80,6 +89,7 @@
       var pageNum = 1;
       var pendingPage = null;
       var isRendering = false;
+      var compactBottomBar = window.matchMedia("(max-width: 768px)");
 
       function showError(message) {
         if (loadingNode) loadingNode.hidden = true;
@@ -91,7 +101,11 @@
 
       function updateBottomBar() {
         if (!pdfDoc) return;
-        pageChip.textContent = "Page " + pageNum + " of " + pdfDoc.numPages;
+        var compactLabel = pageNum + " / " + pdfDoc.numPages;
+        pageChip.textContent = compactBottomBar.matches
+          ? compactLabel
+          : ("Page " + pageNum + " of " + pdfDoc.numPages);
+        pageChip.setAttribute("aria-label", "Current page " + compactLabel);
         prevBtn.disabled = isRendering || pageNum <= 1;
         nextBtn.disabled = isRendering || pageNum >= pdfDoc.numPages;
       }

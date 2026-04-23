@@ -1036,6 +1036,10 @@ header.topbar .copy-name{
   cursor: default;
 }
 
+.pdf-reader-native .control-label-compact{
+  display: none;
+}
+
 .pdf-reader-native .native-reader-fallback{
   margin-top: 7px;
   text-align: center;
@@ -1098,6 +1102,76 @@ header.topbar .copy-name{
     grid-column: 1 / -1;
     font-size: 0.86rem;
     padding: 9px 10px;
+  }
+}
+
+@media (max-width: 768px){
+  .pdf-reader-native .native-reader-shell{
+    padding: 10px 8px 8px;
+  }
+
+  .pdf-reader-native .native-reader-stage{
+    min-height: clamp(380px, 74vh, 760px);
+    padding: 8px 8px 12px;
+  }
+
+  .pdf-reader-native .native-canvas-wrap{
+    min-height: clamp(350px, 68vh, 700px);
+    max-height: clamp(380px, 72vh, 740px);
+    padding: 20px 6px 8px;
+  }
+
+  .pdf-reader-native .native-reader-bottom{
+    margin-top: 8px;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
+    border-radius: 10px;
+  }
+
+  .pdf-reader-native .native-reader-bottom-row{
+    grid-template-columns: 36px 36px 1fr 36px;
+    gap: 6px;
+  }
+
+  .pdf-reader-native .native-back-btn,
+  .pdf-reader-native .native-nav-btn{
+    min-height: 34px;
+    height: 34px;
+    width: 36px;
+    padding: 0;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    line-height: 1;
+    font-weight: 700;
+  }
+
+  .pdf-reader-native .native-back-btn,
+  .pdf-reader-native .native-page-chip{
+    grid-column: auto;
+  }
+
+  .pdf-reader-native .control-label-full{
+    display: none;
+  }
+
+  .pdf-reader-native .control-label-compact{
+    display: inline;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .pdf-reader-native .native-page-chip{
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
   }
 }
 
