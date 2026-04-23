@@ -8553,13 +8553,9 @@ def read_pdf_book(id):
     pdf_stream_url = ""
     if protected_pdf_path and book_id:
         pdf_stream_url = f"/library-store/pdf-stream/{quote(book_id, safe='')}"
-    else:
-        pdf_url = book.get("pdf_url", "")
-        if pdf_url:
-            pdf_stream_url = pdf_url
 
     reader_error = "" if pdf_stream_url else (
-        protected_pdf_error or "PDF file is not available for this book."
+        protected_pdf_error or "Protected PDF file is not available for this book."
     )
     return render_template(
         "pdf_reader.html",

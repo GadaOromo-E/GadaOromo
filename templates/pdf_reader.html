@@ -8,8 +8,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ (book.title ~ ' | PDF Reader') if book else 'PDF Reader' }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
 </head>
-<body>
+<body class="pdf-reader-page">
 <div class="container">
   <header class="topbar">
     <div class="brand">
@@ -20,7 +21,7 @@
 
   <div class="app-shell">
     {% set current_path = request.path if request is defined else '' %}
-    <aside class="side-menu">
+    <aside class="side-menu" id="reader-side-menu">
       <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
       <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
       <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
@@ -35,6 +36,9 @@
     </aside>
 
     <main class="content" id="main">
+      <div class="mobile-reader-nav">
+        <button class="btn mobile-menu-toggle" type="button" aria-controls="reader-side-menu" aria-expanded="false">Menu</button>
+      </div>
       <section class="card reader-shell">
         <div class="reader-toolbar">
           <div class="reader-toolbar-left">
@@ -67,10 +71,32 @@
         </section>
       {% else %}
         <section class="card reader-shell">
-          <div class="reader-stage reader-deterrent" oncontextmenu="return false;">
-            <iframe class="reader-frame reader-frame-premium" src="{{ pdf_stream_url }}#toolbar=0&navpanes=0&scrollbar=1" title="PDF reader for {{ book.title }}"></iframe>
+          <div class="pdfjs-toolbar" role="toolbar" aria-label="PDF reader controls">
+            <a class="btn" href="/book/{{ book.id|urlencode }}">Back to Book</a>
+            <div class="pdfjs-toolbar-group">
+              <button class="btn" id="pdf-prev" type="button">Previous</button>
+              <span class="pdf-page-indicator" id="pdf-page-indicator">Page 1 / 1</span>
+              <button class="btn" id="pdf-next" type="button">Next</button>
+            </div>
+            <div class="pdfjs-toolbar-group">
+              <button class="btn" id="pdf-zoom-out" type="button" aria-label="Zoom out">A-</button>
+              <span class="pdf-page-indicator" id="pdf-zoom-level">100%</span>
+              <button class="btn" id="pdf-zoom-in" type="button" aria-label="Zoom in">A+</button>
+            </div>
           </div>
-          <p class="subtle" style="text-align:center;margin-top:10px;">Reading is available inside this page.</p>
+          <div class="reader-stage reader-deterrent pdfjs-stage" oncontextmenu="return false;">
+            <div class="pdfjs-loading subtle" id="pdfjs-loading">Loading PDF...</div>
+            <div class="pdfjs-error muted" id="pdfjs-error" hidden></div>
+            <div class="pdf-canvas-wrap" id="pdf-canvas-wrap">
+              <canvas id="pdf-canvas" class="pdf-canvas" aria-label="PDF page canvas"></canvas>
+            </div>
+          </div>
+          <p class="mobile-embed-fallback subtle">
+            If your browser blocks embedded rendering, <a href="{{ pdf_stream_url }}" target="_blank" rel="noopener noreferrer">open the protected PDF stream in a new tab</a>.
+          </p>
+          <noscript>
+            <p class="subtle" style="text-align:center;margin-top:10px;">This reader requires JavaScript. <a href="{{ pdf_stream_url }}" target="_blank" rel="noopener noreferrer">Open PDF</a>.</p>
+          </noscript>
         </section>
       {% endif %}
     </main>
@@ -83,6 +109,245 @@
     readerStage.addEventListener("contextmenu", function (event) {
       event.preventDefault();
     });
+  });
+  document.addEventListener("DOMContentLoaded", function () {
+    var toggle = document.querySelector(".mobile-menu-toggle");
+    var sideMenu = document.getElementById("reader-side-menu");
+    if (!toggle || !sideMenu) return;
+    toggle.addEventListener("click", function () {
+      var nextOpen = !sideMenu.classList.contains("mobile-open");
+      sideMenu.classList.toggle("mobile-open", nextOpen);
+      toggle.setAttribute("aria-expanded", nextOpen ? "true" : "false");
+    });
+  });
+  document.addEventListener("DOMContentLoaded", function () {
+    var pdfUrl = {{ pdf_stream_url|tojson }};
+    if (!pdfUrl) return;
+
+    var loadingNode = document.getElementById("pdfjs-loading");
+    var errorNode = document.getElementById("pdfjs-error");
+    var canvasWrap = document.getElementById("pdf-canvas-wrap");
+    var canvas = document.getElementById("pdf-canvas");
+    var pageIndicator = document.getElementById("pdf-page-indicator");
+    var zoomLevel = document.getElementById("pdf-zoom-level");
+    var prevBtn = document.getElementById("pdf-prev");
+    var nextBtn = document.getElementById("pdf-next");
+    var zoomInBtn = document.getElementById("pdf-zoom-in");
+    var zoomOutBtn = document.getElementById("pdf-zoom-out");
+
+    if (!canvasWrap || !canvas || !pageIndicator || !zoomLevel || !prevBtn || !nextBtn || !zoomInBtn || !zoomOutBtn) {
+      return;
+    }
+
+    var pdfDoc = null;
+    var pageNum = 1;
+    var pendingPage = null;
+    var isRendering = false;
+    var zoom = 1;
+    var minZoom = 0.65;
+    var maxZoom = 3;
+    var zoomStep = 0.2;
+    var defaultZoom = 1;
+
+    function showError(message) {
+      if (loadingNode) loadingNode.hidden = true;
+      if (errorNode) {
+        errorNode.hidden = false;
+        errorNode.textContent = message;
+      }
+    }
+
+    function updateToolbar() {
+      if (!pdfDoc) return;
+      pageIndicator.textContent = "Page " + pageNum + " / " + pdfDoc.numPages;
+      zoomLevel.textContent = Math.round(zoom * 100) + "%";
+      prevBtn.disabled = pageNum <= 1 || isRendering;
+      nextBtn.disabled = pageNum >= pdfDoc.numPages || isRendering;
+      zoomOutBtn.disabled = zoom <= minZoom || isRendering;
+      zoomInBtn.disabled = zoom >= maxZoom || isRendering;
+    }
+
+    function queueRender(num) {
+      if (isRendering) {
+        pendingPage = num;
+        return;
+      }
+      renderPage(num);
+    }
+
+    async function renderPage(num) {
+      if (!pdfDoc) return;
+      isRendering = true;
+      updateToolbar();
+      if (loadingNode) loadingNode.hidden = false;
+      if (errorNode) errorNode.hidden = true;
+      try {
+        var page = await pdfDoc.getPage(num);
+        var baseViewport = page.getViewport({ scale: 1 });
+        var availableWidth = Math.max(260, canvasWrap.clientWidth - 8);
+        var fitScale = availableWidth / baseViewport.width;
+        var effectiveScale = fitScale * zoom;
+        var viewport = page.getViewport({ scale: effectiveScale });
+        var outputScale = Math.min(window.devicePixelRatio || 1, 2);
+
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = Math.floor(viewport.width) + "px";
+        canvas.style.height = Math.floor(viewport.height) + "px";
+
+        var context = canvas.getContext("2d", { alpha: false });
+        context.setTransform(outputScale, 0, 0, outputScale, 0, 0);
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+
+        pageNum = num;
+      } catch (_err) {
+        showError("Could not render this PDF in the in-site reader.");
+      } finally {
+        isRendering = false;
+        if (loadingNode) loadingNode.hidden = true;
+        updateToolbar();
+        if (pendingPage !== null) {
+          var nextPending = pendingPage;
+          pendingPage = null;
+          renderPage(nextPending);
+        }
+      }
+    }
+
+    function goPrev() {
+      if (!pdfDoc || pageNum <= 1 || isRendering) return;
+      queueRender(pageNum - 1);
+    }
+
+    function goNext() {
+      if (!pdfDoc || pageNum >= pdfDoc.numPages || isRendering) return;
+      queueRender(pageNum + 1);
+    }
+
+    function changeZoom(direction) {
+      if (!pdfDoc || isRendering) return;
+      var nextZoom = zoom + (direction * zoomStep);
+      zoom = Math.min(maxZoom, Math.max(minZoom, Math.round(nextZoom * 100) / 100));
+      queueRender(pageNum);
+    }
+
+    function resetZoom() {
+      if (!pdfDoc || isRendering) return;
+      zoom = defaultZoom;
+      queueRender(pageNum);
+    }
+
+    prevBtn.addEventListener("click", goPrev);
+    nextBtn.addEventListener("click", goNext);
+    zoomOutBtn.addEventListener("click", function () { changeZoom(-1); });
+    zoomInBtn.addEventListener("click", function () { changeZoom(1); });
+
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      if (!pdfDoc) return;
+      if (resizeTimer) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(function () {
+        queueRender(pageNum);
+      }, 150);
+    });
+
+    function isTypingTarget(target) {
+      if (!target) return false;
+      var tag = (target.tagName || "").toLowerCase();
+      return tag === "input" || tag === "textarea" || target.isContentEditable;
+    }
+
+    document.addEventListener("keydown", function (event) {
+      if (!pdfDoc || isRendering) return;
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (isTypingTarget(event.target)) return;
+
+      var key = event.key;
+      if (key === "ArrowLeft") {
+        event.preventDefault();
+        goPrev();
+        return;
+      }
+      if (key === "ArrowRight") {
+        event.preventDefault();
+        goNext();
+        return;
+      }
+      if (key === "-" || key === "_") {
+        event.preventDefault();
+        changeZoom(-1);
+        return;
+      }
+      if (key === "+" || key === "=") {
+        event.preventDefault();
+        changeZoom(1);
+        return;
+      }
+      if (key === "0") {
+        event.preventDefault();
+        resetZoom();
+      }
+    });
+
+    var touchStartX = 0;
+    var touchStartY = 0;
+    var touchActive = false;
+    var swipeThresholdX = 55;
+    var swipeMaxYDrift = 50;
+    canvasWrap.addEventListener("touchstart", function (event) {
+      if (!event.touches || event.touches.length !== 1) return;
+      touchStartX = event.touches[0].clientX;
+      touchStartY = event.touches[0].clientY;
+      touchActive = true;
+    }, { passive: true });
+
+    canvasWrap.addEventListener("touchend", function (event) {
+      if (!touchActive || !event.changedTouches || event.changedTouches.length !== 1) return;
+      var endX = event.changedTouches[0].clientX;
+      var endY = event.changedTouches[0].clientY;
+      var deltaX = endX - touchStartX;
+      var deltaY = endY - touchStartY;
+      touchActive = false;
+      if (Math.abs(deltaX) < swipeThresholdX) return;
+      if (Math.abs(deltaY) > swipeMaxYDrift) return;
+      if (deltaX < 0) {
+        goNext();
+      } else {
+        goPrev();
+      }
+    }, { passive: true });
+
+    canvasWrap.addEventListener("touchcancel", function () {
+      touchActive = false;
+    }, { passive: true });
+
+    function initPdfReader() {
+      if (!window.pdfjsLib) {
+        showError("PDF engine failed to load. Please use the fallback link below.");
+        return;
+      }
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+      var loadingTask = window.pdfjsLib.getDocument({
+        url: pdfUrl,
+        withCredentials: true
+      });
+
+      loadingTask.promise.then(function (doc) {
+        pdfDoc = doc;
+        pageNum = 1;
+        pendingPage = null;
+        updateToolbar();
+        queueRender(pageNum);
+      }).catch(function () {
+        showError("Unable to open this PDF inside the reader. Use the fallback link below.");
+      });
+    }
+
+    initPdfReader();
   });
 </script>
 </body>
