@@ -387,7 +387,9 @@ DONATE_URLS = {
 }
 
 APP_ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
-BOOKS_JSON_PATH = os.path.join(APP_ROOT_DIR, "data", "books.json")
+LIBRARY_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BOOKS_FILE = os.path.join(LIBRARY_BASE_DIR, "data", "books.json")
+BOOKS_JSON_PATH = BOOKS_FILE
 APP_RUNTIME = (
     "railway" if IS_RAILWAY
     else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
@@ -461,7 +463,7 @@ def _safe_book_asset_url(url_value: str) -> str:
     - absolute http/https URLs
     - site-relative paths starting with "/"
     """
-    v = normalize_text(url_value or "").strip()
+    v = _normalize_book_text(url_value).strip()
     if not v:
         return ""
     if v.startswith(("https://", "http://", "/")):
@@ -469,36 +471,73 @@ def _safe_book_asset_url(url_value: str) -> str:
     return ""
 
 
+def _normalize_book_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return normalize_text(value)
+    return normalize_text(str(value))
+
+
 def _normalize_library_book(raw: dict) -> dict:
     if not isinstance(raw, dict):
         return {}
 
-    book_id = normalize_text(raw.get("id", "")).strip()
-    title = normalize_text(raw.get("title", "")).strip()
+    book_id = _normalize_book_text(raw.get("id", "")).strip()
+    title = _normalize_book_text(raw.get("title", "")).strip()
     if not book_id or not title:
         return {}
 
-    author = normalize_text(raw.get("author", "")).strip()
-    translator = normalize_text(raw.get("translator", "")).strip()
-    language = normalize_text(raw.get("language", "")).strip()
-    category = normalize_text(raw.get("category", "")).strip()
-    book_type = normalize_text(raw.get("type", "")).strip().lower()
-    access = normalize_text(raw.get("access", "")).strip().lower()
-    page_label = normalize_text(raw.get("page_label", "")).strip()
-    summary = normalize_text(raw.get("summary", "")).strip()
+    author = _normalize_book_text(raw.get("author", "")).strip()
+    translator = _normalize_book_text(raw.get("translator", "")).strip()
+    language = _normalize_book_text(raw.get("language", "")).strip()
+    category = _normalize_book_text(raw.get("category", "")).strip()
+    book_type = _normalize_book_text(raw.get("type", "")).strip().lower()
+    page_label = _normalize_book_text(raw.get("page_label", "")).strip()
+    summary = _normalize_book_text(raw.get("summary", raw.get("description", ""))).strip()
 
     pdf_url = _safe_book_asset_url(raw.get("pdf_url", ""))
     epub_url = _safe_book_asset_url(raw.get("epub_url", ""))
     webbook_url = _safe_book_asset_url(raw.get("webbook_url", ""))
-    cover_image = _safe_book_asset_url(raw.get("cover_image", ""))
+    cover_image = _safe_book_asset_url(raw.get("cover_image", raw.get("cover", "")))
+    cover = _safe_book_asset_url(raw.get("cover", ""))
+    file_path = _safe_book_asset_url(raw.get("file_path", ""))
+    read_url_raw = _safe_book_asset_url(raw.get("read_url", ""))
     app_link = _safe_book_asset_url(raw.get("app_link", ""))
 
+    formats_input = raw.get("formats", [])
     formats = []
-    format_raw = normalize_text(raw.get("format", "")).strip().lower()
+    if isinstance(formats_input, list):
+        for entry in formats_input:
+            fmt = _normalize_book_text(entry).strip().lower()
+            if fmt in ("pdf", "epub", "webbook") and fmt not in formats:
+                formats.append(fmt)
+
+    format_raw = _normalize_book_text(raw.get("format", "")).strip().lower()
     if book_type in ("pdf", "epub", "webbook") and not format_raw:
         format_raw = book_type
     if format_raw in ("pdf", "epub", "webbook"):
-        formats.append(format_raw)
+        if format_raw not in formats:
+            formats.append(format_raw)
+
+    if file_path and file_path.lower().endswith(".pdf") and not pdf_url:
+        pdf_url = file_path
+    if file_path and file_path.lower().endswith(".epub") and not epub_url:
+        epub_url = file_path
+
+    if not book_type:
+        if "pdf" in formats:
+            book_type = "pdf"
+        elif "epub" in formats:
+            book_type = "epub"
+        elif "webbook" in formats:
+            book_type = "webbook"
+
+    access = _normalize_book_text(raw.get("access", raw.get("access_label", ""))).strip().lower()
+    if access not in ("free", "paid"):
+        is_free_input = raw.get("is_free", True)
+        access = "paid" if (isinstance(is_free_input, bool) and not is_free_input) else "free"
+
     if pdf_url and "pdf" not in formats:
         formats.append("pdf")
     if epub_url and "epub" not in formats:
@@ -506,13 +545,13 @@ def _normalize_library_book(raw: dict) -> dict:
     if webbook_url and "webbook" not in formats:
         formats.append("webbook")
 
-    read_url = ""
+    read_url = read_url_raw
     if pdf_url:
-        read_url = f"/read/pdf/{quote(book_id, safe='')}"
+        read_url = read_url or f"/read/pdf/{quote(book_id, safe='')}"
     elif epub_url:
-        read_url = f"/read/epub/{quote(book_id, safe='')}"
+        read_url = read_url or f"/read/epub/{quote(book_id, safe='')}"
     elif webbook_url:
-        read_url = f"/read/webbook/{quote(book_id, safe='')}"
+        read_url = read_url or f"/read/webbook/{quote(book_id, safe='')}"
 
     return {
         "id": book_id,
@@ -531,7 +570,9 @@ def _normalize_library_book(raw: dict) -> dict:
         "read_url": read_url,
         "page_label": page_label,
         "cover_image": cover_image,
+        "cover": cover,
         "app_link": app_link,
+        "file_path": file_path,
         "pdf_url": pdf_url,
         "epub_url": epub_url,
         "webbook_url": webbook_url,
@@ -542,18 +583,27 @@ def _load_library_books():
     books = []
     load_error = ""
     try:
-        if not os.path.isfile(BOOKS_JSON_PATH):
+        app.logger.info("library-store books_file=%s exists=%s", BOOKS_FILE, os.path.isfile(BOOKS_FILE))
+        if not os.path.isfile(BOOKS_FILE):
+            app.logger.warning("library-store books_file_missing path=%s", BOOKS_FILE)
             return [], "Library data file is missing."
-        with open(BOOKS_JSON_PATH, "r", encoding="utf-8") as f:
+        with open(BOOKS_FILE, "r", encoding="utf-8") as f:
             payload = json.load(f)
+
+        if isinstance(payload, dict):
+            payload = payload.get("books", [])
         if not isinstance(payload, list):
+            app.logger.warning("library-store invalid_payload_type=%s", type(payload).__name__)
             return [], "Library data format is invalid."
+
+        app.logger.info("library-store json_load_success item_count=%s", len(payload))
         for raw in payload:
             book = _normalize_library_book(raw)
             if book:
                 books.append(book)
+        app.logger.info("library-store normalized_books_count=%s", len(books))
     except Exception as e:
-        app.logger.exception(f"/library-store load books failed: {repr(e)}")
+        app.logger.exception("/library-store load books failed: %r", e)
         load_error = "Library data is temporarily unavailable."
     return books, load_error
 
