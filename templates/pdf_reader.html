@@ -7,7 +7,7 @@
   <meta name="robots" content="noindex,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ (book.title ~ ' | PDF Reader') if book else 'PDF Reader' }}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260423-1">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260423-2">
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" crossorigin="anonymous"></script>
 </head>
 <body class="pdf-reader-page pdf-reader-native">
@@ -40,9 +40,16 @@
   {% if not reader_error %}
     <nav class="native-reader-bottom" aria-label="Reader controls">
       <div class="native-reader-bottom-row">
-        <a href="/book/{{ book.id|urlencode }}" class="native-back-btn" aria-label="Back to Book">
-          <span class="control-label control-label-full">Back to Book</span>
-          <span class="control-label control-label-compact" aria-hidden="true">&larr;</span>
+        <a
+          href="/book/{{ book.id|urlencode }}"
+          class="native-back-btn native-library-btn"
+          id="native-exit-link"
+          aria-label="Back to Book"
+          data-desktop-href="/book/{{ book.id|urlencode }}"
+          data-mobile-href="/library-store"
+        >
+          <span class="control-label control-label-full" id="native-exit-label">Back to Book</span>
+          <span class="control-label control-label-compact" aria-hidden="true">Lib</span>
         </a>
         <button class="native-nav-btn" id="native-prev-btn" type="button" aria-label="Previous page">
           <span class="control-label control-label-full">Previous</span>
@@ -70,6 +77,8 @@
       var prevBtn = document.getElementById("native-prev-btn");
       var nextBtn = document.getElementById("native-next-btn");
       var pageChip = document.getElementById("native-page-chip");
+      var exitLink = document.getElementById("native-exit-link");
+      var exitLabel = document.getElementById("native-exit-label");
 
       if (!stage || !canvasWrap || !canvas || !prevBtn || !nextBtn || !pageChip) return;
 
@@ -90,6 +99,27 @@
       var pendingPage = null;
       var isRendering = false;
       var compactBottomBar = window.matchMedia("(max-width: 768px)");
+      var zoomScale = 1;
+      var minZoomScale = 0.75;
+      var maxZoomScale = 3;
+      var pinchActive = false;
+      var pinchStartDistance = 0;
+      var pinchStartZoom = 1;
+      var pinchRenderTimer = null;
+      var lastPinchCommitAt = 0;
+
+      function syncExitControl() {
+        if (!exitLink || !exitLabel) return;
+        if (compactBottomBar.matches) {
+          exitLink.href = exitLink.getAttribute("data-mobile-href") || "/library-store";
+          exitLink.setAttribute("aria-label", "Library");
+          exitLabel.textContent = "Library";
+        } else {
+          exitLink.href = exitLink.getAttribute("data-desktop-href") || "#";
+          exitLink.setAttribute("aria-label", "Back to Book");
+          exitLabel.textContent = "Back to Book";
+        }
+      }
 
       function showError(message) {
         if (loadingNode) loadingNode.hidden = true;
@@ -101,11 +131,12 @@
 
       function updateBottomBar() {
         if (!pdfDoc) return;
-        var compactLabel = pageNum + " / " + pdfDoc.numPages;
+        var zoomPercent = Math.round(zoomScale * 100);
+        var compactLabel = pageNum + " / " + pdfDoc.numPages + " | " + zoomPercent + "%";
         pageChip.textContent = compactBottomBar.matches
           ? compactLabel
           : ("Page " + pageNum + " of " + pdfDoc.numPages);
-        pageChip.setAttribute("aria-label", "Current page " + compactLabel);
+        pageChip.setAttribute("aria-label", "Current page " + pageNum + " of " + pdfDoc.numPages + ", zoom " + zoomPercent + " percent");
         prevBtn.disabled = isRendering || pageNum <= 1;
         nextBtn.disabled = isRendering || pageNum >= pdfDoc.numPages;
       }
@@ -128,9 +159,10 @@
         try {
           var page = await pdfDoc.getPage(targetPage);
           var baseViewport = page.getViewport({ scale: 1 });
-          var availableWidth = Math.max(280, canvasWrap.clientWidth - 18);
+          var sideInset = compactBottomBar.matches ? 6 : 18;
+          var availableWidth = Math.max(280, canvasWrap.clientWidth - sideInset);
           var fitScale = availableWidth / baseViewport.width;
-          var viewport = page.getViewport({ scale: fitScale });
+          var viewport = page.getViewport({ scale: fitScale * zoomScale });
           var outputScale = Math.min(window.devicePixelRatio || 1, 2);
 
           canvas.width = Math.floor(viewport.width * outputScale);
@@ -194,16 +226,93 @@
       var touchActive = false;
       var swipeThresholdX = 60;
       var swipeMaxYDrift = 48;
+      var swipeEnabled = true;
+
+      function touchDistance(touchA, touchB) {
+        var dx = touchA.clientX - touchB.clientX;
+        var dy = touchA.clientY - touchB.clientY;
+        return Math.sqrt((dx * dx) + (dy * dy));
+      }
+
+      function clampZoom(scale) {
+        return Math.max(minZoomScale, Math.min(maxZoomScale, scale));
+      }
+
+      function commitPinchZoom() {
+        if (!pdfDoc) return;
+        if (pinchRenderTimer) {
+          window.clearTimeout(pinchRenderTimer);
+          pinchRenderTimer = null;
+        }
+        queueRender(pageNum);
+      }
 
       canvasWrap.addEventListener("touchstart", function (event) {
-        if (!event.touches || event.touches.length !== 1) return;
-        touchStartX = event.touches[0].clientX;
-        touchStartY = event.touches[0].clientY;
-        touchActive = true;
+        if (!event.touches) return;
+
+        if (event.touches.length === 2) {
+          pinchActive = true;
+          swipeEnabled = false;
+          touchActive = false;
+          pinchStartDistance = touchDistance(event.touches[0], event.touches[1]);
+          pinchStartZoom = zoomScale;
+          return;
+        }
+
+        if (event.touches.length === 1) {
+          if (pinchActive) return;
+          touchStartX = event.touches[0].clientX;
+          touchStartY = event.touches[0].clientY;
+          touchActive = true;
+          swipeEnabled = true;
+        }
       }, { passive: true });
 
+      canvasWrap.addEventListener("touchmove", function (event) {
+        if (!event.touches) return;
+
+        if (event.touches.length === 2) {
+          if (!pinchActive) {
+            pinchActive = true;
+            swipeEnabled = false;
+            touchActive = false;
+            pinchStartDistance = touchDistance(event.touches[0], event.touches[1]);
+            pinchStartZoom = zoomScale;
+          }
+
+          var newDistance = touchDistance(event.touches[0], event.touches[1]);
+          if (pinchStartDistance > 0) {
+            var nextZoom = clampZoom(pinchStartZoom * (newDistance / pinchStartDistance));
+            if (Math.abs(nextZoom - zoomScale) >= 0.02) {
+              zoomScale = nextZoom;
+              updateBottomBar();
+              var now = Date.now();
+              if ((now - lastPinchCommitAt) > 120) {
+                lastPinchCommitAt = now;
+                commitPinchZoom();
+              } else {
+                if (pinchRenderTimer) window.clearTimeout(pinchRenderTimer);
+                pinchRenderTimer = window.setTimeout(function () {
+                  lastPinchCommitAt = Date.now();
+                  commitPinchZoom();
+                }, 120);
+              }
+            }
+          }
+          event.preventDefault();
+        }
+      }, { passive: false });
+
       canvasWrap.addEventListener("touchend", function (event) {
-        if (!touchActive || !event.changedTouches || event.changedTouches.length !== 1) return;
+        if (pinchActive && (!event.touches || event.touches.length < 2)) {
+          pinchActive = false;
+          swipeEnabled = false;
+          touchActive = false;
+          commitPinchZoom();
+          return;
+        }
+
+        if (!swipeEnabled || !touchActive || !event.changedTouches || event.changedTouches.length !== 1) return;
         var endX = event.changedTouches[0].clientX;
         var endY = event.changedTouches[0].clientY;
         var deltaX = endX - touchStartX;
@@ -220,6 +329,12 @@
 
       canvasWrap.addEventListener("touchcancel", function () {
         touchActive = false;
+        pinchActive = false;
+        swipeEnabled = true;
+        if (pinchRenderTimer) {
+          window.clearTimeout(pinchRenderTimer);
+          pinchRenderTimer = null;
+        }
       }, { passive: true });
 
       var resizeTimer = null;
@@ -256,6 +371,12 @@
         });
       }
 
+      syncExitControl();
+      if (typeof compactBottomBar.addEventListener === "function") {
+        compactBottomBar.addEventListener("change", syncExitControl);
+      } else if (typeof compactBottomBar.addListener === "function") {
+        compactBottomBar.addListener(syncExitControl);
+      }
       initPdfReader();
     });
   </script>
