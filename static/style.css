@@ -1119,6 +1119,7 @@ header.topbar .copy-name{
     min-height: clamp(390px, 74dvh, 860px);
     max-height: clamp(420px, 78dvh, 900px);
     padding: 16px 2px 2px;
+    touch-action: pan-x pan-y;
   }
 
   .pdf-reader-native .native-reader-bottom{

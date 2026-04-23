@@ -44,7 +44,7 @@
           href="/book/{{ book.id|urlencode }}"
           class="native-back-btn native-library-btn"
           id="native-exit-link"
-          aria-label="Back to Book"
+          aria-label="Library"
           data-desktop-href="/book/{{ book.id|urlencode }}"
           data-mobile-href="/library-store"
         >
@@ -229,6 +229,11 @@
       var swipeThresholdX = 60;
       var swipeMaxYDrift = 48;
       var swipeEnabled = true;
+      var lastTapAt = 0;
+      var lastTapX = 0;
+      var lastTapY = 0;
+      var doubleTapWindowMs = 280;
+      var doubleTapMaxDrift = 26;
 
       function touchDistance(touchA, touchB) {
         var dx = touchA.clientX - touchB.clientX;
@@ -277,6 +282,31 @@
         queueRender(pageNum);
       }
 
+      function isMobileReader() {
+        return compactBottomBar.matches;
+      }
+
+      function handleDoubleTap(touchPoint) {
+        if (!isMobileReader() || !touchPoint) return false;
+        var now = Date.now();
+        var dx = touchPoint.clientX - lastTapX;
+        var dy = touchPoint.clientY - lastTapY;
+        var isCloseTap = (Math.abs(dx) <= doubleTapMaxDrift) && (Math.abs(dy) <= doubleTapMaxDrift);
+        var isDoubleTap = (now - lastTapAt) <= doubleTapWindowMs && isCloseTap;
+
+        lastTapAt = now;
+        lastTapX = touchPoint.clientX;
+        lastTapY = touchPoint.clientY;
+
+        if (!isDoubleTap) return false;
+
+        var targetZoom = zoomScale >= 1.7 ? loadPreferredZoom() : clampZoom(Math.max(1.9, loadPreferredZoom()));
+        zoomScale = targetZoom;
+        updateBottomBar();
+        commitPinchZoom();
+        return true;
+      }
+
       canvasWrap.addEventListener("touchstart", function (event) {
         if (!event.touches) return;
 
@@ -286,6 +316,7 @@
           touchActive = false;
           pinchStartDistance = touchDistance(event.touches[0], event.touches[1]);
           pinchStartZoom = zoomScale;
+          lastTapAt = 0;
           return;
         }
 
@@ -339,6 +370,20 @@
           swipeEnabled = false;
           touchActive = false;
           commitPinchZoom();
+          return;
+        }
+
+        if (isMobileReader() && touchActive && event.changedTouches && event.changedTouches.length === 1) {
+          if (handleDoubleTap(event.changedTouches[0])) {
+            touchActive = false;
+            swipeEnabled = false;
+            return;
+          }
+        }
+
+        if (isMobileReader()) {
+          touchActive = false;
+          swipeEnabled = false;
           return;
         }
 
