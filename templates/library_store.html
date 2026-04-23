@@ -40,6 +40,20 @@
         <div class="subtle">Discover books in PDF, EPUB, and web formats.</div>
       </section>
 
+      <section class="card">
+        <h3>Browse by Category</h3>
+        <div class="chips library-category-chips">
+          <a class="chip{% if not selected_category %} active{% endif %}" href="{{ url_for('library_store') }}">
+            All Books ({{ total_book_count or 0 }})
+          </a>
+          {% for category in all_categories %}
+            <a class="chip{% if selected_category == category %} active{% endif %}" href="{{ url_for('library_store', category=category) }}">
+              {{ category }} ({{ category_counts.get(category, 0) }})
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+
       {% if load_error %}
         <section class="result-box">
           <div class="muted">{{ load_error }}</div>
@@ -57,6 +71,9 @@
                 {% endif %}
                 {% if book.summary %}
                   <p class="library-summary">{{ book.summary }}</p>
+                {% endif %}
+                {% if book.display_category %}
+                  <p class="subtle">Category: {{ book.display_category }}</p>
                 {% endif %}
                 <p class="subtle"><strong>Free</strong></p>
                 <p class="subtle">Formats: {{ book.formats|join(', ') if book.formats else 'N/A' }}</p>

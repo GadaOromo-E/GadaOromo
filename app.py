@@ -391,6 +391,24 @@ LIBRARY_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOOKS_FILE = os.path.join(LIBRARY_BASE_DIR, "data", "books.json")
 BOOKS_JSON_PATH = BOOKS_FILE
 PRIVATE_BOOKS_DIR = os.path.join(LIBRARY_BASE_DIR, "private_books")
+LIBRARY_STORE_CATEGORIES = [
+    "Religious Books",
+    "Educational Books",
+    "Story Books",
+    "History & Culture",
+]
+LIBRARY_STORE_CATEGORY_ALIASES = {
+    "religious books": "Religious Books",
+    "islamic book": "Religious Books",
+    "educational books": "Educational Books",
+    "education": "Educational Books",
+    "story books": "Story Books",
+    "stories": "Story Books",
+    "history & culture": "History & Culture",
+    "history and culture": "History & Culture",
+    "history": "History & Culture",
+    "culture": "History & Culture",
+}
 APP_RUNTIME = (
     "railway" if IS_RAILWAY
     else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
@@ -8516,9 +8534,41 @@ def learn():
 @app.route("/library-store", methods=["GET"])
 def library_store():
     books, load_error = _load_library_books()
+    selected_category_raw = _normalize_book_text(request.args.get("category", "")).strip()
+    selected_category = LIBRARY_STORE_CATEGORY_ALIASES.get(
+        normalize_text(selected_category_raw).strip().lower(),
+        "",
+    )
+
+    books_with_categories = []
+    category_counts = {label: 0 for label in LIBRARY_STORE_CATEGORIES}
+    for book in books:
+        book_row = dict(book)
+        raw_title = normalize_text(book_row.get("title", "")).strip().lower()
+        raw_category = normalize_text(book_row.get("category", "")).strip().lower()
+        display_category = LIBRARY_STORE_CATEGORY_ALIASES.get(raw_category, "")
+        if raw_title in {"minhaajul-muslim", "minhaajul muslim"}:
+            display_category = "Religious Books"
+        if display_category:
+            category_counts[display_category] += 1
+        book_row["display_category"] = display_category
+        books_with_categories.append(book_row)
+
+    if selected_category:
+        books_to_render = [
+            b for b in books_with_categories
+            if b.get("display_category", "") == selected_category
+        ]
+    else:
+        books_to_render = books_with_categories
+
     return render_template(
         "library_store.html",
-        books=books,
+        books=books_to_render,
+        all_categories=LIBRARY_STORE_CATEGORIES,
+        selected_category=selected_category,
+        total_book_count=len(books_with_categories),
+        category_counts=category_counts,
         load_error=load_error,
     )
 

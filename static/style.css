@@ -1244,6 +1244,20 @@ header.topbar .copy-name{
   margin-top: 12px;
 }
 
+.library-category-chips{
+  margin-top: 6px;
+}
+
+.library-category-chips .chip{
+  text-decoration: none;
+}
+
+.library-category-chips .chip.active{
+  background: var(--red);
+  border-color: rgba(179,0,0,0.35);
+  color: #fff;
+}
+
 .reader-frame{
   width: 100%;
   min-height: 70vh;
