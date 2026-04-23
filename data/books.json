@@ -13,7 +13,7 @@
     "description": "Free Islamic PDF book available to read online.",
     "cover": "/static/covers/minhaajul-muslim.png",
     "cover_image": "/static/covers/minhaajul-muslim.png",
-    "file_path": "/static/pdfs/minhaajul-muslim.pdf",
+    "protected_file_name": "minhaajul-muslim.pdf",
     "read_url": "/read/pdf/1",
     "formats": ["pdf"],
     "app_link": "https://play.google.com/store/apps/details?id=com.ad.minhaajulmuslim&pcampaignid=web_share"

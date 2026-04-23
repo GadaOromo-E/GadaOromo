@@ -390,6 +390,7 @@ APP_ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 LIBRARY_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOOKS_FILE = os.path.join(LIBRARY_BASE_DIR, "data", "books.json")
 BOOKS_JSON_PATH = BOOKS_FILE
+PRIVATE_BOOKS_DIR = os.path.join(LIBRARY_BASE_DIR, "private_books")
 APP_RUNTIME = (
     "railway" if IS_RAILWAY
     else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
@@ -502,6 +503,7 @@ def _normalize_library_book(raw: dict) -> dict:
     cover_image = _safe_book_asset_url(raw.get("cover_image", raw.get("cover", "")))
     cover = _safe_book_asset_url(raw.get("cover", ""))
     file_path = _safe_book_asset_url(raw.get("file_path", ""))
+    protected_file_name = _normalize_book_text(raw.get("protected_file_name", "")).strip()
     read_url_raw = _safe_book_asset_url(raw.get("read_url", ""))
     app_link = _safe_book_asset_url(raw.get("app_link", ""))
 
@@ -538,6 +540,9 @@ def _normalize_library_book(raw: dict) -> dict:
         is_free_input = raw.get("is_free", True)
         access = "paid" if (isinstance(is_free_input, bool) and not is_free_input) else "free"
 
+    if protected_file_name:
+        pdf_url = ""
+
     if pdf_url and "pdf" not in formats:
         formats.append("pdf")
     if epub_url and "epub" not in formats:
@@ -572,6 +577,7 @@ def _normalize_library_book(raw: dict) -> dict:
         "cover_image": cover_image,
         "cover": cover,
         "app_link": app_link,
+        "protected_file_name": protected_file_name,
         "file_path": file_path,
         "pdf_url": pdf_url,
         "epub_url": epub_url,
@@ -617,6 +623,33 @@ def _get_library_book_by_id(book_id: str):
         if normalize_text(book.get("id", "")).strip() == needle:
             return book, load_error
     return None, load_error
+
+
+def _resolve_private_pdf_path(book: dict):
+    protected_file_name = _normalize_book_text((book or {}).get("protected_file_name", "")).strip()
+    if not protected_file_name:
+        return "", "Protected PDF file is not configured for this book."
+    if protected_file_name != os.path.basename(protected_file_name):
+        return "", "Invalid protected PDF file name."
+    if not protected_file_name.lower().endswith(".pdf"):
+        return "", "Protected PDF file must end with .pdf."
+
+    private_root = os.path.abspath(PRIVATE_BOOKS_DIR)
+    candidate = os.path.abspath(os.path.join(private_root, protected_file_name))
+    try:
+        if os.path.commonpath([private_root, candidate]) != private_root:
+            return "", "Invalid protected PDF file path."
+    except Exception:
+        return "", "Invalid protected PDF path."
+
+    if not os.path.isfile(candidate):
+        app.logger.warning(
+            "library-store protected_pdf_missing file=%s candidate=%s",
+            protected_file_name,
+            candidate,
+        )
+        return "", "Protected PDF file is not available."
+    return candidate, ""
 
     
 @app.context_processor
@@ -8452,15 +8485,57 @@ def read_pdf_book(id):
     book, load_error = _get_library_book_by_id(unquote(id or ""))
     if not book:
         abort(404)
-    pdf_url = book.get("pdf_url", "")
-    reader_error = "" if pdf_url else "PDF file is not available for this book."
+    book_id = _normalize_book_text(book.get("id", "")).strip()
+    protected_pdf_path, protected_pdf_error = _resolve_private_pdf_path(book)
+
+    pdf_stream_url = ""
+    if protected_pdf_path and book_id:
+        pdf_stream_url = f"/library-store/pdf-stream/{quote(book_id, safe='')}"
+    else:
+        pdf_url = book.get("pdf_url", "")
+        if pdf_url:
+            pdf_stream_url = pdf_url
+
+    reader_error = "" if pdf_stream_url else (
+        protected_pdf_error or "PDF file is not available for this book."
+    )
     return render_template(
         "pdf_reader.html",
         book=book,
-        pdf_url=pdf_url,
+        pdf_stream_url=pdf_stream_url,
         reader_error=reader_error,
         load_error=load_error,
     )
+
+
+@app.route("/library-store/pdf-stream/<id>", methods=["GET"])
+def library_store_pdf_stream(id):
+    book, _load_error = _get_library_book_by_id(unquote(id or ""))
+    if not book:
+        abort(404)
+
+    pdf_path, pdf_error = _resolve_private_pdf_path(book)
+    if not pdf_path:
+        app.logger.warning(
+            "library-store protected_pdf_unavailable id=%s reason=%s",
+            _normalize_book_text((book or {}).get("id", "")),
+            pdf_error,
+        )
+        abort(404)
+
+    download_name = os.path.basename(pdf_path)
+    response = send_file(
+        pdf_path,
+        mimetype="application/pdf",
+        as_attachment=False,
+        conditional=True,
+        download_name=download_name,
+    )
+    response.headers["Content-Disposition"] = f'inline; filename="{download_name}"'
+    response.headers["Cache-Control"] = "private, no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
 
 
 @app.route("/read/epub/<id>", methods=["GET"])

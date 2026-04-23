@@ -67,16 +67,23 @@
         </section>
       {% else %}
         <section class="card reader-shell">
-          <div class="reader-stage">
-            <iframe class="reader-frame reader-frame-premium" src="{{ pdf_url }}" title="PDF reader for {{ book.title }}"></iframe>
+          <div class="reader-stage reader-deterrent" oncontextmenu="return false;">
+            <iframe class="reader-frame reader-frame-premium" src="{{ pdf_stream_url }}#toolbar=0&navpanes=0&scrollbar=1" title="PDF reader for {{ book.title }}"></iframe>
           </div>
-          <div class="library-actions reader-actions">
-            <a class="btn primary btn-read-strong" href="{{ pdf_url }}" target="_blank" rel="noopener noreferrer">Read Book</a>
-          </div>
+          <p class="subtle" style="text-align:center;margin-top:10px;">Reading is available inside this page.</p>
         </section>
       {% endif %}
     </main>
   </div>
 </div>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var readerStage = document.querySelector(".reader-deterrent");
+    if (!readerStage) return;
+    readerStage.addEventListener("contextmenu", function (event) {
+      event.preventDefault();
+    });
+  });
+</script>
 </body>
 </html>

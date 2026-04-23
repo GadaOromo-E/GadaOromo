@@ -985,6 +985,11 @@ header.topbar .copy-name{
   justify-content: center;
 }
 
+.reader-deterrent{
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 @media (max-width: 900px){
   .book-hero-grid{
     grid-template-columns: 1fr;
