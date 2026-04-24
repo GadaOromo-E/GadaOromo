@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="description" content="Browse PDF, EPUB, and web books in the Gadaa Dictionary Library Store." />
-  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/library-store' }}">
+  <meta name="description" content="Browse free Islamic, educational, and cultural books in PDF and EPUB formats. Read online with Gadaa Dictionary.">
+  <link rel="canonical" href="{{ request.url }}">
   <meta name="robots" content="index,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Library Store | {{ APP_NAME or "Gadaa Dictionary" }}</title>
+  <title>Library Store | Free PDF & EPUB Books - Gadaa Dictionary</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 </head>
 <body>
@@ -64,7 +64,7 @@
         {% if books %}
           <div class="library-grid">
             {% for book in books %}
-              <article class="library-item">
+              <article class="library-item book-card">
                 <h3>{{ book.title }}</h3>
                 {% if book.author %}
                   <p class="muted">Author: {{ book.author }}</p>
@@ -90,5 +90,20 @@
     </main>
   </div>
 </div>
+<script>
+  document.querySelectorAll('.book-card').forEach(card => {
+    card.addEventListener('touchstart', () => {
+      card.classList.add('active-touch');
+    }, { passive: true });
+
+    card.addEventListener('touchend', () => {
+      setTimeout(() => card.classList.remove('active-touch'), 150);
+    }, { passive: true });
+
+    card.addEventListener('touchcancel', () => {
+      card.classList.remove('active-touch');
+    }, { passive: true });
+  });
+</script>
 </body>
 </html>

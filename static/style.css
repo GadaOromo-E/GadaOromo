@@ -1232,6 +1232,47 @@ header.topbar .copy-name{
   padding: 12px;
 }
 
+.book-card{
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .18s ease, box-shadow .22s ease, background .18s ease, color .18s ease;
+}
+
+.book-card:hover{
+  transform: translateY(-4px);
+}
+
+.book-card:active{
+  background: #000;
+  color: #fff;
+  transform: scale(0.98);
+  background: linear-gradient(135deg, #000 70%, #c40000 100%);
+}
+
+.book-card:active .book-badge{
+  background: #c40000;
+  color: #fff;
+}
+
+.book-card:active h3,
+.book-card:active p{
+  color: #fff;
+}
+
+.book-card.active-touch{
+  background: linear-gradient(135deg, #000 70%, #c40000 100%);
+  color: #fff;
+}
+
+.book-card.active-touch .book-badge{
+  background: #c40000;
+  color: #fff;
+}
+
+.book-card.active-touch h3,
+.book-card.active-touch p{
+  color: #fff;
+}
+
 .library-summary{
   margin-top: 8px;
   line-height: 1.45;

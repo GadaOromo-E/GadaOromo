@@ -2,17 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="description"
-    content="{{ (book.title ~ ' book details in Library Store') if book else 'Book details in Library Store' }}"
-  />
-  <link
-    rel="canonical"
-    href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/book/' ~ (book.id if book else '') }}"
-  >
+  <meta name="description" content="Read {{ book.title }} by {{ book.author }}. {{ book.summary }} Free online PDF reader.">
+  <meta property="og:title" content="{{ book.title }}">
+  <meta property="og:description" content="{{ book.summary }}">
+  <meta property="og:type" content="book">
+  <meta property="og:image" content="{{ book.cover_image }}">
+  <meta property="og:url" content="{{ request.url }}">
+  <link rel="canonical" href="{{ request.url }}">
   <meta name="robots" content="index,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ (book.title ~ ' | Library Store') if book else 'Book | Library Store' }}</title>
+  <title>{{ book.title }} | Read Free Book Online</title>
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Book",
+      "name": "{{ book.title }}",
+      "author": "{{ book.author }}",
+      "inLanguage": "{{ book.language }}",
+      "bookFormat": "EBook",
+      "url": "{{ request.url }}"
+    }
+  </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
 </head>
 <body>
