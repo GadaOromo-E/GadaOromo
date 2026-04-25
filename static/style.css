@@ -1233,44 +1233,67 @@ header.topbar .copy-name{
 }
 
 .book-card{
+  position: relative;
+  overflow: hidden;
   -webkit-tap-highlight-color: transparent;
-  transition: transform .18s ease, box-shadow .22s ease, background .18s ease, color .18s ease;
+  background: linear-gradient(180deg, #ffffff 0%, #fcfcfc 100%);
+  transition:
+    transform .16s ease,
+    box-shadow .2s ease,
+    border-color .2s ease,
+    background-color .2s ease;
+}
+
+.book-card::after{
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 3px;
+  background: linear-gradient(90deg, #0b0b0b 0 50%, #b30000 50% 100%);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform .18s ease;
 }
 
 .book-card:hover{
-  transform: translateY(-4px);
+  background: linear-gradient(180deg, #ffffff 0%, #fffafa 100%);
+  border-color: rgba(179,0,0,0.34);
+  box-shadow: 0 12px 22px rgba(0,0,0,0.10), 0 0 0 1px rgba(179,0,0,0.10);
+  transform: translateY(-1px);
+}
+
+.book-card:focus-within{
+  border-color: rgba(179,0,0,0.52);
+  box-shadow: 0 12px 22px rgba(0,0,0,0.10), 0 0 0 2px rgba(179,0,0,0.16);
+  background: linear-gradient(180deg, #ffffff 0%, #fff5f5 100%);
 }
 
 .book-card:active{
-  background: #000;
-  color: #fff;
-  transform: scale(0.98);
-  background: linear-gradient(135deg, #000 70%, #c40000 100%);
+  background: linear-gradient(180deg, #ffffff 0%, #fff3f3 100%);
+  border-color: rgba(179,0,0,0.55);
+  box-shadow: 0 6px 12px rgba(0,0,0,0.08), 0 0 0 2px rgba(179,0,0,0.18);
+  transform: translateY(1px);
 }
 
-.book-card:active .book-badge{
-  background: #c40000;
-  color: #fff;
+.book-card:hover::after,
+.book-card:focus-within::after,
+.book-card:active::after,
+.book-card.active-touch::after{
+  transform: scaleX(1);
 }
 
-.book-card:active h3,
-.book-card:active p{
-  color: #fff;
+.book-card:active .book-badge,
+.book-card.active-touch .book-badge{
+  border-color: rgba(179,0,0,0.4);
 }
 
 .book-card.active-touch{
-  background: linear-gradient(135deg, #000 70%, #c40000 100%);
-  color: #fff;
-}
-
-.book-card.active-touch .book-badge{
-  background: #c40000;
-  color: #fff;
-}
-
-.book-card.active-touch h3,
-.book-card.active-touch p{
-  color: #fff;
+  background: linear-gradient(180deg, #ffffff 0%, #fff3f3 100%);
+  border-color: rgba(179,0,0,0.55);
+  box-shadow: 0 8px 16px rgba(0,0,0,0.10), 0 0 0 2px rgba(179,0,0,0.18);
+  transform: translateY(1px);
 }
 
 .library-summary{
