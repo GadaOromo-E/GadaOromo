@@ -74,6 +74,14 @@ except Exception:
     BlobServiceClient = None
     ContentSettings = None
     ResourceExistsError = Exception
+try:
+    import boto3
+except Exception:
+    boto3 = None
+try:
+    from botocore.config import Config as BotoCoreConfig
+except Exception:
+    BotoCoreConfig = None
 
 import os
 import shutil
@@ -1819,6 +1827,28 @@ AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") o
 AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
 AZURE_BLOB_PREFIX = (os.environ.get("AZURE_BLOB_PREFIX") or "tts").strip().strip("/")
 REQUIRE_BLOB_FOR_GENERATED_TTS = (os.environ.get("REQUIRE_BLOB_FOR_GENERATED_TTS", "1" if IS_PROD else "0").strip() == "1")
+R2_ACCOUNT_ID = (os.environ.get("R2_ACCOUNT_ID") or "").strip()
+R2_ACCESS_KEY_ID = (os.environ.get("R2_ACCESS_KEY_ID") or "").strip()
+R2_SECRET_ACCESS_KEY = (os.environ.get("R2_SECRET_ACCESS_KEY") or "").strip()
+R2_BUCKET_NAME = (os.environ.get("R2_BUCKET_NAME") or "").strip()
+R2_PUBLIC_BASE_URL = (os.environ.get("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+R2_ENDPOINT = (os.environ.get("R2_ENDPOINT") or "").strip().rstrip("/")
+app.logger.info(
+    "Startup R2 audio config r2_enabled=%s bucket_set=%s endpoint_set=%s public_base_set=%s account_id_set=%s",
+    bool(
+        R2_ACCOUNT_ID
+        and R2_ACCESS_KEY_ID
+        and R2_SECRET_ACCESS_KEY
+        and R2_BUCKET_NAME
+        and R2_PUBLIC_BASE_URL
+        and R2_ENDPOINT
+        and boto3
+    ),
+    bool(R2_BUCKET_NAME),
+    bool(R2_ENDPOINT),
+    bool(R2_PUBLIC_BASE_URL),
+    bool(R2_ACCOUNT_ID),
+)
 GENERATED_TTS_FILENAME_RE = re.compile(
     r"^tts_(word|phrase)_(\d+)_([A-Za-z0-9-]+)_([0-9a-f]{12})_(.+)\.mp3$"
 )
@@ -1829,6 +1859,8 @@ RELAXED_TTS_FILENAME_RE = re.compile(
 
 _blob_client_cache = None
 _blob_client_error_logged = False
+_r2_client_cache = None
+_r2_client_error_logged = False
 
 def _is_supported_lang(lang_code: str) -> bool:
     return lang_code in LANGUAGE_OPTIONS
@@ -2442,6 +2474,138 @@ def _has_usable_audio_ref(file_path: str) -> bool:
         return bool(os.path.getsize(abs_path) > 0)
     except Exception:
         return False
+
+
+def r2_enabled() -> bool:
+    return bool(
+        R2_ACCOUNT_ID
+        and R2_ACCESS_KEY_ID
+        and R2_SECRET_ACCESS_KEY
+        and R2_BUCKET_NAME
+        and R2_PUBLIC_BASE_URL
+        and R2_ENDPOINT
+        and boto3
+    )
+
+
+def build_r2_audio_url(object_key: str) -> str:
+    key = normalize_text(object_key or "").lstrip("/")
+    if not key:
+        return ""
+    base = normalize_text(R2_PUBLIC_BASE_URL or "").rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/{quote(key, safe='/')}"
+
+
+def _get_r2_client():
+    global _r2_client_cache, _r2_client_error_logged
+    if _r2_client_cache is not None:
+        return _r2_client_cache
+    if not r2_enabled():
+        return None
+    try:
+        kwargs = {
+            "service_name": "s3",
+            "endpoint_url": R2_ENDPOINT,
+            "aws_access_key_id": R2_ACCESS_KEY_ID,
+            "aws_secret_access_key": R2_SECRET_ACCESS_KEY,
+            "region_name": "auto",
+        }
+        if BotoCoreConfig is not None:
+            kwargs["config"] = BotoCoreConfig(signature_version="s3v4")
+        _r2_client_cache = boto3.client(**kwargs)
+        return _r2_client_cache
+    except Exception:
+        if not _r2_client_error_logged:
+            app.logger.exception("Failed to initialize Cloudflare R2 client for audio uploads.")
+            _r2_client_error_logged = True
+        return None
+
+
+def upload_audio_to_r2(local_bytes_or_path, object_key: str, content_type: str = "audio/mpeg") -> str:
+    key = normalize_text(object_key or "").lstrip("/")
+    uploaded = False
+    public_url = ""
+    payload = b""
+    if isinstance(local_bytes_or_path, (bytes, bytearray)):
+        payload = bytes(local_bytes_or_path or b"")
+    elif isinstance(local_bytes_or_path, str):
+        src = local_bytes_or_path.strip()
+        try:
+            with open(src, "rb") as f:
+                payload = f.read()
+        except Exception:
+            payload = b""
+    client = _get_r2_client()
+    if client and key and payload:
+        try:
+            client.put_object(
+                Bucket=R2_BUCKET_NAME,
+                Key=key,
+                Body=payload,
+                ContentType=(content_type or "audio/mpeg"),
+            )
+            uploaded = True
+            public_url = build_r2_audio_url(key)
+        except Exception:
+            app.logger.exception("R2 upload failed object_key=%s bucket=%s", key, R2_BUCKET_NAME)
+    app.logger.info(
+        "r2_upload_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s",
+        bool(r2_enabled()),
+        key,
+        bool(uploaded),
+        public_url,
+    )
+    return public_url if uploaded else ""
+
+
+def _maybe_promote_generated_tts_ref_to_r2(file_ref: str, object_key: str) -> str:
+    ref = normalize_text(file_ref or "")
+    key = normalize_text(object_key or "").lstrip("/")
+    if not ref:
+        app.logger.info(
+            "r2_tts_ref_promotion r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+            bool(r2_enabled()),
+            key,
+            False,
+            "",
+            "",
+        )
+        return ""
+    if not r2_enabled() or _is_remote_audio_ref(ref):
+        public_url = _public_audio_url(ref)
+        app.logger.info(
+            "r2_tts_ref_promotion r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+            bool(r2_enabled()),
+            key,
+            False,
+            public_url,
+            ref,
+        )
+        return ref
+    abs_path = _audio_abs_path(ref)
+    uploaded_url = upload_audio_to_r2(abs_path, key or os.path.basename(ref), content_type="audio/mpeg")
+    if uploaded_url:
+        app.logger.info(
+            "r2_tts_ref_promotion r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+            bool(r2_enabled()),
+            key,
+            True,
+            uploaded_url,
+            uploaded_url,
+        )
+        return uploaded_url
+    public_url = _public_audio_url(ref)
+    app.logger.info(
+        "r2_tts_ref_promotion r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+        bool(r2_enabled()),
+        key,
+        False,
+        public_url,
+        ref,
+    )
+    return ref
 
 
 def _azure_blob_enabled() -> bool:
@@ -4906,6 +5070,39 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     Persist generated TTS bytes and return (stored_ref, public_url).
     stored_ref is what we write to generated_tts_audio.file_path.
     """
+    key = normalize_text(file_name or "").lstrip("/")
+    r2_on = bool(r2_enabled())
+    if not audio_bytes:
+        app.logger.warning(
+            "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s reason=empty_audio_bytes",
+            r2_on,
+            key,
+            False,
+            "",
+            "",
+        )
+        return "", ""
+    if r2_on:
+        remote_url = upload_audio_to_r2(audio_bytes, key, content_type="audio/mpeg")
+        if remote_url:
+            app.logger.info(
+                "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+                r2_on,
+                key,
+                True,
+                remote_url,
+                remote_url,
+            )
+            return remote_url, remote_url
+        app.logger.warning(
+            "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s fallback=local_uploads",
+            r2_on,
+            key,
+            False,
+            "",
+            "",
+        )
+
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
     rel_path = f"uploads/{file_name}"
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -4914,13 +5111,16 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     exists_after_write = bool(os.path.isfile(abs_path) and (os.path.getsize(abs_path) > 0))
     playback_url = _public_audio_url(rel_path)
     app.logger.info(
-        "persist_generated_tts_audio file_name=%s abs_path=%s exists_after_write=%s file_size=%s db_file_path=%s playback_url=%s",
+        "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s file_name=%s abs_path=%s exists_after_write=%s file_size=%s public_url=%s db_saved_ref=%s",
+        r2_on,
+        key,
+        False,
         file_name,
         abs_path,
         exists_after_write,
         _safe_file_size(abs_path),
-        rel_path,
         playback_url,
+        rel_path,
     )
     if not exists_after_write:
         return "", ""
@@ -4977,6 +5177,8 @@ def _resolve_or_generate_tts_for_text(
             or ""
         )
         stored = _canonical_local_audio_ref(stored_raw)
+        object_key = _generated_tts_file_name(entry_type, int(entry_id), lang_code, _text_hash(txt), voice_name)
+        stored = _maybe_promote_generated_tts_ref_to_r2(stored, object_key)
         if stored:
             public_url = _public_audio_url(stored)
             if entry_type == "phrase":
@@ -5342,6 +5544,8 @@ def generate_tts_for_entry(
                 or ""
             )
             stored = _canonical_local_audio_ref(stored_raw)
+            object_key = _generated_tts_file_name(entry_type, int(entry_id), lang, _text_hash(text), voice_name)
+            stored = _maybe_promote_generated_tts_ref_to_r2(stored, object_key)
             if stored:
                 public_url = _public_audio_url(stored)
                 if entry_type == "phrase":

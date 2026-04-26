@@ -5,3 +5,4 @@ requests
 openpyxl
 azure-cognitiveservices-speech
 azure-storage-blob
+boto3
