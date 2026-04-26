@@ -82,6 +82,10 @@ try:
     from botocore.config import Config as BotoCoreConfig
 except Exception:
     BotoCoreConfig = None
+try:
+    from dotenv import load_dotenv
+except Exception:
+    load_dotenv = None
 
 import os
 import shutil
@@ -89,6 +93,38 @@ import shutil
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 BOOTSTRAP_DB_SOURCE = os.path.join(APP_ROOT, "gadaoromo.db")
 RAILWAY_DB_PATH = "/data/gadaoromo.db"
+DOTENV_PATH = os.path.join(APP_ROOT, ".env")
+DOTENV_FOUND = os.path.isfile(DOTENV_PATH)
+DOTENV_LOADED = False
+DOTENV_ERRORS = []
+
+
+def _scan_dotenv_parse_issues(path: str):
+    issues = []
+    if not path or (not os.path.isfile(path)):
+        return issues
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line_no, raw in enumerate(f, start=1):
+                s = (raw or "").strip()
+                if (not s) or s.startswith("#"):
+                    continue
+                probe = s[7:].strip() if s.lower().startswith("export ") else s
+                if "=" not in probe:
+                    issues.append({"line": line_no, "text": s})
+    except Exception as e:
+        issues.append({"line": 0, "text": f"read_error:{repr(e)}"})
+    return issues
+
+
+if load_dotenv and DOTENV_FOUND:
+    DOTENV_ERRORS = _scan_dotenv_parse_issues(DOTENV_PATH)
+    try:
+        DOTENV_LOADED = bool(load_dotenv(dotenv_path=DOTENV_PATH, override=False))
+    except Exception as e:
+        DOTENV_ERRORS.append({"line": 0, "text": f"load_error:{repr(e)}"})
+elif DOTENV_FOUND and (not load_dotenv):
+    DOTENV_ERRORS = [{"line": 0, "text": "python-dotenv not installed"}]
 
 
 
@@ -421,6 +457,16 @@ APP_RUNTIME = (
     "railway" if IS_RAILWAY
     else ("render" if bool(os.environ.get("RENDER")) else ("production" if IS_PROD else "local"))
 )
+app.logger.info(
+    "Startup runtime=%s dotenv_path=%s dotenv_found=%s dotenv_loaded=%s dotenv_parse_issue_count=%s",
+    APP_RUNTIME,
+    DOTENV_PATH,
+    bool(DOTENV_FOUND),
+    bool(DOTENV_LOADED),
+    int(len(DOTENV_ERRORS or [])),
+)
+if DOTENV_ERRORS:
+    app.logger.error("Dotenv parse/load issues=%s", DOTENV_ERRORS)
 PERSISTENT_DATA_CONFIGURED = bool(
     os.environ.get("PERSISTENT_DATA_DIR", "").strip()
     or os.environ.get("DATA_DIR", "").strip()
@@ -1833,22 +1879,48 @@ R2_SECRET_ACCESS_KEY = (os.environ.get("R2_SECRET_ACCESS_KEY") or "").strip()
 R2_BUCKET_NAME = (os.environ.get("R2_BUCKET_NAME") or "").strip()
 R2_PUBLIC_BASE_URL = (os.environ.get("R2_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 R2_ENDPOINT = (os.environ.get("R2_ENDPOINT") or "").strip().rstrip("/")
-app.logger.info(
-    "Startup R2 audio config r2_enabled=%s bucket_set=%s endpoint_set=%s public_base_set=%s account_id_set=%s",
-    bool(
-        R2_ACCOUNT_ID
-        and R2_ACCESS_KEY_ID
-        and R2_SECRET_ACCESS_KEY
-        and R2_BUCKET_NAME
-        and R2_PUBLIC_BASE_URL
-        and R2_ENDPOINT
-        and boto3
-    ),
-    bool(R2_BUCKET_NAME),
-    bool(R2_ENDPOINT),
-    bool(R2_PUBLIC_BASE_URL),
-    bool(R2_ACCOUNT_ID),
+_R2_CONFIG_FLAGS = {
+    "account_id_set": bool(R2_ACCOUNT_ID),
+    "access_key_set": bool(R2_ACCESS_KEY_ID),
+    "secret_key_set": bool(R2_SECRET_ACCESS_KEY),
+    "bucket_set": bool(R2_BUCKET_NAME),
+    "endpoint_set": bool(R2_ENDPOINT),
+    "public_base_set": bool(R2_PUBLIC_BASE_URL),
+}
+_R2_ENABLED_STARTUP = bool(
+    _R2_CONFIG_FLAGS["account_id_set"]
+    and _R2_CONFIG_FLAGS["access_key_set"]
+    and _R2_CONFIG_FLAGS["secret_key_set"]
+    and _R2_CONFIG_FLAGS["bucket_set"]
+    and _R2_CONFIG_FLAGS["public_base_set"]
+    and _R2_CONFIG_FLAGS["endpoint_set"]
+    and boto3
 )
+app.logger.info(
+    "Startup R2 audio config runtime=%s dotenv_path=%s dotenv_found=%s dotenv_loaded=%s account_id_set=%s access_key_set=%s secret_key_set=%s bucket_set=%s endpoint_set=%s public_base_set=%s boto3_available=%s r2_enabled=%s",
+    APP_RUNTIME,
+    DOTENV_PATH,
+    bool(DOTENV_FOUND),
+    bool(DOTENV_LOADED),
+    _R2_CONFIG_FLAGS["account_id_set"],
+    _R2_CONFIG_FLAGS["access_key_set"],
+    _R2_CONFIG_FLAGS["secret_key_set"],
+    _R2_CONFIG_FLAGS["bucket_set"],
+    _R2_CONFIG_FLAGS["endpoint_set"],
+    _R2_CONFIG_FLAGS["public_base_set"],
+    bool(boto3),
+    _R2_ENABLED_STARTUP,
+)
+if APP_RUNTIME == "local":
+    _missing_r2 = [k for k, is_set in _R2_CONFIG_FLAGS.items() if not is_set]
+    if _missing_r2:
+        app.logger.error(
+            "Local R2 config missing required flags=%s dotenv_path=%s",
+            _missing_r2,
+            DOTENV_PATH,
+        )
+    if not boto3:
+        app.logger.error("Local R2 dependency missing: boto3 not importable; install requirements to enable R2 uploads.")
 GENERATED_TTS_FILENAME_RE = re.compile(
     r"^tts_(word|phrase)_(\d+)_([A-Za-z0-9-]+)_([0-9a-f]{12})_(.+)\.mp3$"
 )
