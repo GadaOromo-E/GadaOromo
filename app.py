@@ -5041,29 +5041,39 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
     if (not txt) or (not fp):
         return False
 
-    # Ensure DB stores remote URL when R2 is enabled and upload succeeds,
-    # even if caller passed a local uploads/<name> ref.
-    if (not _is_remote_audio_ref(fp)) and r2_enabled():
-        object_key = os.path.basename(fp.replace("\\", "/"))
+    th = _text_hash(txt)
+    r2_on = bool(r2_enabled())
+    object_key = os.path.basename(fp.replace("\\", "/"))
+    r2_upload_success = False
+    expected_fp = fp if _is_remote_audio_ref(fp) else _canonical_local_audio_ref(fp)
+
+    # Authoritative storage decision:
+    # when R2 is enabled, attempt R2 first; fallback to local only on upload failure.
+    if r2_on and (not _is_remote_audio_ref(fp)):
         abs_local = _audio_abs_path(fp)
         promoted = upload_audio_to_r2(abs_local, object_key, content_type="audio/mpeg") if abs_local else ""
         if promoted:
-            fp = promoted
-
-    th = _text_hash(txt)
-    if _is_remote_audio_ref(fp):
-        expected_fp = fp
-    else:
-        expected_fp = _canonical_local_audio_ref(fp)
-        if not _has_usable_audio_ref(expected_fp):
+            expected_fp = promoted
+            r2_upload_success = True
+        else:
             app.logger.warning(
-                "save_generated_tts_row skipped_missing_file entry_type=%s entry_id=%s lang=%s expected_fp=%s",
-                entry_type,
-                entry_id,
-                lang_code,
+                "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s",
+                r2_on,
+                object_key,
+                False,
                 expected_fp,
             )
-            return False
+
+    if (not _is_remote_audio_ref(expected_fp)) and (not _has_usable_audio_ref(expected_fp)):
+        app.logger.warning(
+            "save_generated_tts_row skipped_missing_file entry_type=%s entry_id=%s lang=%s expected_fp=%s",
+            entry_type,
+            entry_id,
+            lang_code,
+            expected_fp,
+        )
+        return False
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     c.execute("""
@@ -5088,21 +5098,28 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
     conn.close()
     saved_fp_raw = normalize_text((row or [""])[0] or "")
     saved_fp = _canonical_local_audio_ref(saved_fp_raw)
+    db_file_path_final = saved_fp
     same_ref = bool(saved_fp and saved_fp == expected_fp)
     exists_ok = True if _is_remote_audio_ref(saved_fp) else bool(_has_usable_audio_ref(saved_fp))
     playback_url = _public_audio_url(saved_fp) if saved_fp else ""
+    https_ok_for_r2 = (not r2_upload_success) or saved_fp.startswith("https://")
     app.logger.info(
-        "save_generated_tts_row verify entry_type=%s entry_id=%s lang=%s expected_fp=%s saved_fp=%s same_ref=%s exists_ok=%s playback_url=%s",
+        "save_generated_tts_row verify entry_type=%s entry_id=%s lang=%s r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s expected_fp=%s saved_fp=%s same_ref=%s exists_ok=%s https_ok_for_r2=%s playback_url=%s",
         entry_type,
         entry_id,
         lang_code,
+        r2_on,
+        object_key,
+        r2_upload_success,
+        db_file_path_final,
         expected_fp,
         saved_fp,
         same_ref,
         exists_ok,
+        https_ok_for_r2,
         playback_url,
     )
-    return bool(same_ref and exists_ok)
+    return bool(same_ref and exists_ok and https_ok_for_r2)
 
 
 def _save_tts_url_to_translation_cache(entry_type: str, entry_id: int, lang_code: str, tts_url: str):
@@ -5168,21 +5185,19 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
         remote_url = upload_audio_to_r2(audio_bytes, key, content_type="audio/mpeg")
         if remote_url:
             app.logger.info(
-                "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s",
+                "persist_generated_tts_audio r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s",
                 r2_on,
                 key,
                 True,
                 remote_url,
-                remote_url,
             )
             return remote_url, remote_url
         app.logger.warning(
-            "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s public_url=%s db_saved_ref=%s fallback=local_uploads",
+            "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s fallback=local_uploads",
             r2_on,
             key,
             False,
-            "",
-            "",
+            f"uploads/{file_name}",
         )
 
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
@@ -5193,7 +5208,7 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
     exists_after_write = bool(os.path.isfile(abs_path) and (os.path.getsize(abs_path) > 0))
     playback_url = _public_audio_url(rel_path)
     app.logger.info(
-        "persist_generated_tts_audio r2_enabled=%s object_key=%s uploaded=%s file_name=%s abs_path=%s exists_after_write=%s file_size=%s public_url=%s db_saved_ref=%s",
+        "persist_generated_tts_audio r2_enabled=%s object_key=%s r2_upload_success=%s file_name=%s abs_path=%s exists_after_write=%s file_size=%s db_file_path_final=%s public_url=%s",
         r2_on,
         key,
         False,
@@ -5201,8 +5216,8 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
         abs_path,
         exists_after_write,
         _safe_file_size(abs_path),
-        playback_url,
         rel_path,
+        playback_url,
     )
     if not exists_after_write:
         return "", ""
