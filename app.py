@@ -4968,6 +4968,16 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
     fp = _canonical_local_audio_ref(fp_raw)
     if (not txt) or (not fp):
         return False
+
+    # Ensure DB stores remote URL when R2 is enabled and upload succeeds,
+    # even if caller passed a local uploads/<name> ref.
+    if (not _is_remote_audio_ref(fp)) and r2_enabled():
+        object_key = os.path.basename(fp.replace("\\", "/"))
+        abs_local = _audio_abs_path(fp)
+        promoted = upload_audio_to_r2(abs_local, object_key, content_type="audio/mpeg") if abs_local else ""
+        if promoted:
+            fp = promoted
+
     th = _text_hash(txt)
     if _is_remote_audio_ref(fp):
         expected_fp = fp
