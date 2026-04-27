@@ -425,7 +425,7 @@ WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 API_URL = os.environ.get("API_URL", "").strip()
 MINHAAJUL_MUSLIM_PDF_URL = (
     os.environ.get("MINHAAJUL_MUSLIM_PDF_URL", "").strip()
-    or "https://pub-efc918b71e20468e96d0f200f194a9fb.r2.dev/books/minhaajul-muslim.pdf"
+    or "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf"
 )
 
 SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
