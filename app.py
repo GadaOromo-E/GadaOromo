@@ -8751,30 +8751,35 @@ def _load_learn_rows():
 
     c.execute(
         """
-        SELECT p.id, p.english, p.oromo
+        SELECT p.id, p.english, p.oromo, elig.lang_count
         FROM phrases p
+        JOIN (
+            SELECT phrase_id, COUNT(DISTINCT lang_key) AS lang_count
+            FROM (
+                SELECT
+                    gta.entry_id AS phrase_id,
+                    LOWER(REPLACE(TRIM(gta.lang_code), '_', '-')) AS lang_key
+                FROM generated_tts_audio gta
+                WHERE gta.entry_type='phrase'
+                  AND gta.file_path LIKE 'https://%'
+                  AND gta.lang_code IS NOT NULL
+                  AND TRIM(gta.lang_code) != ''
+                UNION
+                SELECT
+                    gpt.phrase_id AS phrase_id,
+                    LOWER(REPLACE(TRIM(gpt.lang_code), '_', '-')) AS lang_key
+                FROM generated_phrase_translations gpt
+                WHERE gpt.tts_audio_url LIKE 'https://%'
+                  AND gpt.lang_code IS NOT NULL
+                  AND TRIM(gpt.lang_code) != ''
+            ) audio_langs
+            GROUP BY phrase_id
+            HAVING COUNT(DISTINCT lang_key) >= 2
+        ) elig ON elig.phrase_id = p.id
         WHERE p.status='approved'
-          AND p.english IS NOT NULL AND TRIM(p.english) != ''
-          AND (
-                EXISTS (
-                    SELECT 1
-                    FROM generated_tts_audio gta
-                    WHERE gta.entry_type='phrase'
-                      AND gta.entry_id=p.id
-                      AND gta.file_path IS NOT NULL
-                      AND TRIM(gta.file_path) != ''
-                      AND (gta.file_path LIKE 'https://%' OR gta.file_path LIKE 'http://%')
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM generated_phrase_translations gpt
-                    WHERE gpt.phrase_id=p.id
-                      AND gpt.tts_audio_url IS NOT NULL
-                      AND TRIM(gpt.tts_audio_url) != ''
-                      AND (gpt.tts_audio_url LIKE 'https://%' OR gpt.tts_audio_url LIKE 'http://%')
-                )
-              )
-        ORDER BY id DESC
+          AND p.english IS NOT NULL
+          AND TRIM(p.english) != ''
+        ORDER BY p.id DESC
         LIMIT ?
         """,
         (int(LEARN_RECENT_PHRASE_LIMIT),),
@@ -8801,7 +8806,7 @@ def _load_learn_rows():
     conn.close()
 
     phrase_text_by_key = {}
-    for pid, en, om in phrase_rows:
+    for pid, en, om, _lang_count in phrase_rows:
         pid_int = int(pid or 0)
         if pid_int <= 0:
             continue
@@ -8834,7 +8839,7 @@ def _load_learn_rows():
     rows = []
     phrases_with_missing_oromo_but_shown = 0
 
-    for pid, en, om in phrase_rows:
+    for pid, en, om, _lang_count in phrase_rows:
         pid_int = int(pid)
         tr = phrase_translations.get(pid_int, {})
         om_text = normalize_text(om or "")
@@ -8882,7 +8887,7 @@ def _load_learn_rows():
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
     phrases_checked = 0
-    phrases_with_remote_audio = 0
+    phrases_with_multi_lang_audio = 0
     phrases_with_local_only_audio = 0
     phrases_rendered = 0
     phrase_rows_visible = []
@@ -8909,7 +8914,7 @@ def _load_learn_rows():
         playback_urls = []
         for lang_code, u in audio.items():
             u_norm = normalize_text(u or "")
-            if not _is_usable_learn_audio_ref(u_norm):
+            if (not _is_usable_learn_audio_ref(u_norm)) or (not _is_https_audio_ref(u_norm)):
                 filtered_audio[lang_code] = ""
                 continue
             filtered_audio[lang_code] = u_norm
@@ -8928,7 +8933,7 @@ def _load_learn_rows():
         if entry_type == "phrase":
             phrases_checked += 1
             if row_has_remote_audio:
-                phrases_with_remote_audio += 1
+                phrases_with_multi_lang_audio += 1
             elif row_has_local_audio:
                 phrases_with_local_only_audio += 1
             if row_has_audio:
@@ -8944,7 +8949,7 @@ def _load_learn_rows():
     learn_visible_phrase_count = total_rows_loaded
 
     app.logger.info(
-        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_urls_attached=%s phrases_checked=%s phrases_with_remote_audio=%s phrases_with_local_only_audio=%s phrases_rendered=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
+        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_urls_attached=%s phrases_checked=%s phrases_with_multi_lang_audio=%s phrases_with_local_only_audio=%s phrases_rendered=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
         total_rows_loaded,
         phrases_loaded_with_audio,
         words_loaded_with_audio,
@@ -8960,7 +8965,7 @@ def _load_learn_rows():
         rows_rendered_with_audio_url,
         audio_attached_count,
         phrases_checked,
-        phrases_with_remote_audio,
+        phrases_with_multi_lang_audio,
         phrases_with_local_only_audio,
         phrases_rendered,
         phrases_with_missing_oromo_but_shown,
