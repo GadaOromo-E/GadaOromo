@@ -1287,6 +1287,13 @@ def google_verification():
 @app.route("/uploads/<path:filename>")
 def uploads(filename):
     safe_name = os.path.basename(filename)
+    if DISABLE_LOCAL_AUDIO_PLAYBACK and allowed_audio(safe_name):
+        app.logger.warning(
+            "uploads_audio_blocked file=%s requested=%s reason=disable_local_audio_playback",
+            safe_name,
+            filename,
+        )
+        return jsonify({"ok": False, "error": "Audio file unavailable", "file": safe_name}), 410
     full_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, safe_name))
     t0 = time.perf_counter()
 
@@ -1873,6 +1880,12 @@ AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") o
 AZURE_BLOB_CONTAINER = (os.environ.get("AZURE_BLOB_CONTAINER") or "").strip()
 AZURE_BLOB_PREFIX = (os.environ.get("AZURE_BLOB_PREFIX") or "tts").strip().strip("/")
 REQUIRE_BLOB_FOR_GENERATED_TTS = (os.environ.get("REQUIRE_BLOB_FOR_GENERATED_TTS", "1" if IS_PROD else "0").strip() == "1")
+ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE = (
+    os.environ.get("ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE", "0").strip() == "1"
+)
+DISABLE_LOCAL_AUDIO_PLAYBACK = (
+    os.environ.get("DISABLE_LOCAL_AUDIO_PLAYBACK", "0").strip() == "1"
+)
 R2_ACCOUNT_ID = (os.environ.get("R2_ACCOUNT_ID") or "").strip()
 R2_ACCESS_KEY_ID = (os.environ.get("R2_ACCESS_KEY_ID") or "").strip()
 R2_SECRET_ACCESS_KEY = (os.environ.get("R2_SECRET_ACCESS_KEY") or "").strip()
@@ -1897,7 +1910,7 @@ _R2_ENABLED_STARTUP = bool(
     and boto3
 )
 app.logger.info(
-    "Startup R2 audio config runtime=%s dotenv_path=%s dotenv_found=%s dotenv_loaded=%s account_id_set=%s access_key_set=%s secret_key_set=%s bucket_set=%s endpoint_set=%s public_base_set=%s boto3_available=%s r2_enabled=%s",
+    "Startup R2 audio config runtime=%s dotenv_path=%s dotenv_found=%s dotenv_loaded=%s account_id_set=%s access_key_set=%s secret_key_set=%s bucket_set=%s endpoint_set=%s public_base_set=%s boto3_available=%s r2_enabled=%s disable_local_audio_playback=%s",
     APP_RUNTIME,
     DOTENV_PATH,
     bool(DOTENV_FOUND),
@@ -1910,6 +1923,7 @@ app.logger.info(
     _R2_CONFIG_FLAGS["public_base_set"],
     bool(boto3),
     _R2_ENABLED_STARTUP,
+    bool(DISABLE_LOCAL_AUDIO_PLAYBACK),
 )
 if APP_RUNTIME == "local":
     _missing_r2 = [k for k, is_set in _R2_CONFIG_FLAGS.items() if not is_set]
@@ -2305,6 +2319,10 @@ def _is_remote_audio_ref(file_path: str) -> bool:
     fp = (file_path or "").strip().lower()
     return fp.startswith("https://") or fp.startswith("http://")
 
+def _is_https_audio_ref(file_path: str) -> bool:
+    fp = (file_path or "").strip().lower()
+    return fp.startswith("https://")
+
 
 def _canonical_tts_lang_code(lang_code: str) -> str:
     raw = normalize_text(lang_code or "")
@@ -2537,6 +2555,8 @@ def resolve_existing_audio_file(requested_ref: str, return_meta: bool = False):
 
 
 def _has_usable_audio_ref(file_path: str) -> bool:
+    if DISABLE_LOCAL_AUDIO_PLAYBACK:
+        return _is_https_audio_ref(file_path)
     if _is_remote_audio_ref(file_path):
         return True
     abs_path = _audio_abs_path(file_path)
@@ -2765,6 +2785,8 @@ def _public_audio_url(file_path: str) -> str:
     fp = (file_path or "").replace("\\", "/").strip()
     if not fp:
         return ""
+    if DISABLE_LOCAL_AUDIO_PLAYBACK:
+        return fp if _is_https_audio_ref(fp) else ""
     if _is_remote_audio_ref(fp):
         return fp
     name = _normalized_audio_basename(fp) or os.path.basename(fp)
@@ -2795,6 +2817,8 @@ def _normalize_cached_tts_url(tts_url: str) -> str:
     u = normalize_text(tts_url or "")
     if not u:
         return ""
+    if DISABLE_LOCAL_AUDIO_PLAYBACK:
+        return u if _is_https_audio_ref(u) else ""
     if _is_remote_audio_ref(u):
         return u
     name = os.path.basename(u.replace("\\", "/"))
@@ -2915,6 +2939,96 @@ def _collect_db_diagnostics():
     }
     conn.close()
     return out
+
+
+def _collect_audio_storage_audit():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    def _count_for(table: str, col: str, where_sql: str = "", params=()):
+        where = f" AND {where_sql}" if where_sql else ""
+        total = _sql_count(c, f"SELECT COUNT(*) FROM {table} WHERE 1=1{where}", params)
+        remote = _sql_count(
+            c,
+            f"SELECT COUNT(*) FROM {table} WHERE {col} LIKE 'https://%' {where}",
+            params,
+        )
+        local = _sql_count(
+            c,
+            f"SELECT COUNT(*) FROM {table} WHERE ({col} LIKE 'uploads/%' OR {col} LIKE '/uploads/%') {where}",
+            params,
+        )
+        blank = _sql_count(c, f"SELECT COUNT(*) FROM {table} WHERE ({col} IS NULL OR TRIM({col})='') {where}", params)
+        return {
+            "total": int(total),
+            "remote": int(remote),
+            "local": int(local),
+            "blank": int(blank),
+        }
+
+    gtts_all = _count_for("generated_tts_audio", "file_path")
+    gtr_all = _count_for("generated_translations", "tts_audio_url")
+    gptr_all = _count_for("generated_phrase_translations", "tts_audio_url")
+
+    word_gtts = _count_for("generated_tts_audio", "file_path", "entry_type='word'")
+    phrase_gtts = _count_for("generated_tts_audio", "file_path", "entry_type='phrase'")
+    word_gtr = _count_for("generated_translations", "tts_audio_url")
+    phrase_gptr = _count_for("generated_phrase_translations", "tts_audio_url")
+
+    c.execute(
+        """
+        SELECT id, entry_type, entry_id, lang_code, file_path, created_at
+        FROM generated_tts_audio
+        ORDER BY id DESC
+        LIMIT 10
+        """
+    )
+    latest_rows = [
+        {
+            "id": int(r[0] or 0),
+            "entry_type": normalize_text(r[1] or ""),
+            "entry_id": int(r[2] or 0),
+            "lang_code": normalize_text(r[3] or ""),
+            "file_path": normalize_text(r[4] or ""),
+            "created_at": normalize_text(r[5] or ""),
+        }
+        for r in (c.fetchall() or [])
+    ]
+    conn.close()
+
+    total_refs = int(gtts_all["total"] + gtr_all["total"] + gptr_all["total"])
+    remote_refs = int(gtts_all["remote"] + gtr_all["remote"] + gptr_all["remote"])
+    local_refs = int(gtts_all["local"] + gtr_all["local"] + gptr_all["local"])
+    blank_refs = int(gtts_all["blank"] + gtr_all["blank"] + gptr_all["blank"])
+
+    return {
+        "r2_enabled": bool(r2_enabled()),
+        "azure_configured": bool(_get_azure_speech_key() and _get_azure_speech_region()),
+        "google_configured": bool(_get_google_key()),
+        "allow_local_audio_fallback_on_r2_failure": bool(ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE),
+        "totals": {
+            "total_refs": total_refs,
+            "remote_refs": remote_refs,
+            "local_refs": local_refs,
+            "blank_refs": blank_refs,
+        },
+        "tables": {
+            "generated_tts_audio.file_path": gtts_all,
+            "generated_translations.tts_audio_url": gtr_all,
+            "generated_phrase_translations.tts_audio_url": gptr_all,
+        },
+        "word_counts": {
+            "remote": int(word_gtts["remote"] + word_gtr["remote"]),
+            "local": int(word_gtts["local"] + word_gtr["local"]),
+            "blank": int(word_gtts["blank"] + word_gtr["blank"]),
+        },
+        "phrase_counts": {
+            "remote": int(phrase_gtts["remote"] + phrase_gptr["remote"]),
+            "local": int(phrase_gtts["local"] + phrase_gptr["local"]),
+            "blank": int(phrase_gtts["blank"] + phrase_gptr["blank"]),
+        },
+        "latest_generated_tts_audio": latest_rows,
+    }
 
 
 def get_approved_audio(entry_type: str, entry_id: int) -> dict:
@@ -5057,12 +5171,15 @@ def _save_generated_tts_row(entry_type: str, entry_id: int, lang_code: str, text
             r2_upload_success = True
         else:
             app.logger.warning(
-                "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s",
+                "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s local_fallback_allowed=%s",
                 r2_on,
                 object_key,
                 False,
                 expected_fp,
+                bool(ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE),
             )
+            if not ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE:
+                return False
 
     if (not _is_remote_audio_ref(expected_fp)) and (not _has_usable_audio_ref(expected_fp)):
         app.logger.warning(
@@ -5193,12 +5310,21 @@ def _persist_generated_tts_audio(file_name: str, audio_bytes: bytes):
             )
             return remote_url, remote_url
         app.logger.warning(
-            "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s fallback=local_uploads",
+            "r2_upload_failed r2_enabled=%s object_key=%s r2_upload_success=%s db_file_path_final=%s local_fallback_allowed=%s fallback=local_uploads",
             r2_on,
             key,
             False,
             f"uploads/{file_name}",
+            bool(ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE),
         )
+        if not ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE:
+            app.logger.warning(
+                "r2_upload_failed_no_local_fallback r2_enabled=%s object_key=%s db_file_path_final=%s",
+                r2_on,
+                key,
+                "",
+            )
+            return "", ""
 
     abs_path = os.path.join(UPLOAD_FOLDER, file_name)
     rel_path = f"uploads/{file_name}"
@@ -5556,6 +5682,8 @@ def generate_tts_for_entry(
         "generated": 0,
         "cached": 0,
         "failed": 0,
+        "warnings": 0,
+        "r2_upload_fallbacks": 0,
         "skipped_missing_text": 0,
         "skipped_missing_voice": 0,
         "by_language": {},
@@ -5645,6 +5773,19 @@ def generate_tts_for_entry(
             stored = _maybe_promote_generated_tts_ref_to_r2(stored, object_key)
             if stored:
                 public_url = _public_audio_url(stored)
+                used_local_fallback = bool(r2_enabled()) and (not _is_remote_audio_ref(stored))
+                if used_local_fallback:
+                    result["warnings"] += 1
+                    result["r2_upload_fallbacks"] += 1
+                    app.logger.warning(
+                        "tts_local_fallback_used entry_type=%s entry_id=%s lang=%s r2_enabled=%s db_file_path_final=%s playback_url=%s",
+                        entry_type,
+                        entry_id,
+                        lang,
+                        True,
+                        stored,
+                        public_url,
+                    )
                 if entry_type == "phrase":
                     abs_save_path = os.path.join(UPLOAD_FOLDER, os.path.basename(stored))
                     exists_after_write = bool(os.path.isfile(abs_save_path))
@@ -5686,7 +5827,9 @@ def generate_tts_for_entry(
                 if lang in EXTRA_GENERATED_LANGS:
                     _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
                 result["generated"] += 1
-                result["by_language"][lang] = "generated"
+                result["by_language"][lang] = (
+                    "generated_with_r2_fallback_local" if used_local_fallback else "generated"
+                )
                 app.logger.info(
                     "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated generated_filename=%s abs_save_path=%s db_file_path=%s playback_url=%s",
                     entry_type,
@@ -5785,10 +5928,25 @@ def generate_tts_for_entry(
                 result["failed"] += 1
                 result["by_language"][lang] = "failed_persistence_check"
                 continue
+            used_local_fallback = bool(r2_enabled()) and (not _is_remote_audio_ref(stored_ref))
+            if used_local_fallback:
+                result["warnings"] += 1
+                result["r2_upload_fallbacks"] += 1
+                app.logger.warning(
+                    "tts_local_fallback_used entry_type=%s entry_id=%s lang=%s r2_enabled=%s db_file_path_final=%s playback_url=%s",
+                    entry_type,
+                    entry_id,
+                    lang,
+                    True,
+                    stored_ref,
+                    public_url,
+                )
             if lang in EXTRA_GENERATED_LANGS:
                 _save_tts_url_to_translation_cache(entry_type, entry_id, lang, public_url)
             result["generated"] += 1
-            result["by_language"][lang] = "generated"
+            result["by_language"][lang] = (
+                "generated_with_r2_fallback_local" if used_local_fallback else "generated"
+            )
             app.logger.info(
                 "tts lang_done entry_type=%s entry_id=%s lang=%s result=generated generated_filename=%s abs_save_path=%s db_file_path=%s playback_url=%s",
                 entry_type,
@@ -6229,6 +6387,8 @@ def ensure_missing_tts_for_words(
         "generated": 0,
         "cached": 0,
         "failed": 0,
+        "warnings": 0,
+        "r2_upload_fallbacks": 0,
         "skipped_missing_text": 0,
         "skipped_missing_voice": 0,
     }
@@ -6294,7 +6454,7 @@ def ensure_missing_tts_for_words(
                 per_language_delay_ms=per_language_delay_ms,
                 stop_on_429=stop_on_429,
             )
-            for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+            for key in ("generated", "cached", "failed", "warnings", "r2_upload_fallbacks", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
             if delay_s > 0:
                 time.sleep(delay_s)
@@ -6330,6 +6490,8 @@ def ensure_missing_tts_for_phrases(
         "generated": 0,
         "cached": 0,
         "failed": 0,
+        "warnings": 0,
+        "r2_upload_fallbacks": 0,
         "skipped_missing_text": 0,
         "skipped_missing_voice": 0,
         "generated_by_language": {lang: 0 for lang in LEARN_TTS_LANGS},
@@ -6426,7 +6588,7 @@ def ensure_missing_tts_for_phrases(
                 per_language_delay_ms=per_language_delay_ms,
                 stop_on_429=stop_on_429,
             )
-            for key in ("generated", "cached", "failed", "skipped_missing_text", "skipped_missing_voice"):
+            for key in ("generated", "cached", "failed", "warnings", "r2_upload_fallbacks", "skipped_missing_text", "skipped_missing_voice"):
                 summary[key] += int(row.get(key, 0) or 0)
             by_lang = (row or {}).get("by_language", {}) or {}
             for lang, state in by_lang.items():
@@ -6474,6 +6636,8 @@ def _new_pipeline_summary(entry_type: str):
         "audio_skipped_existing": 0,
         "audio_missing_voice": 0,
         "audio_failed": 0,
+        "audio_warnings": 0,
+        "audio_r2_upload_fallbacks": 0,
         "learn_ready_phrases_with_audio": 0,
         "learn_visible_phrase_count": 0,
     }
@@ -6777,6 +6941,8 @@ def _run_post_import_pipeline(
         words_summary["audio_skipped_existing"] = int((words_tts or {}).get("skipped_existing", 0) or 0)
         words_summary["audio_missing_voice"] = int((words_tts or {}).get("skipped_missing_voice", 0) or 0)
         words_summary["audio_failed"] = int((words_tts or {}).get("failed", 0) or 0)
+        words_summary["audio_warnings"] = int((words_tts or {}).get("warnings", 0) or 0)
+        words_summary["audio_r2_upload_fallbacks"] = int((words_tts or {}).get("r2_upload_fallbacks", 0) or 0)
         words_summary["audio_attempted"] = int(
             words_summary["audio_generated"] +
             int((words_tts or {}).get("cached", 0) or 0) +
@@ -6789,6 +6955,8 @@ def _run_post_import_pipeline(
         phrases_summary["audio_skipped_existing"] = int((phrases_tts or {}).get("skipped_existing", 0) or 0)
         phrases_summary["audio_missing_voice"] = int((phrases_tts or {}).get("skipped_missing_voice", 0) or 0)
         phrases_summary["audio_failed"] = int((phrases_tts or {}).get("failed", 0) or 0)
+        phrases_summary["audio_warnings"] = int((phrases_tts or {}).get("warnings", 0) or 0)
+        phrases_summary["audio_r2_upload_fallbacks"] = int((phrases_tts or {}).get("r2_upload_fallbacks", 0) or 0)
         phrases_summary["audio_attempted"] = int(
             phrases_summary["audio_generated"] +
             int((phrases_tts or {}).get("cached", 0) or 0) +
@@ -6817,10 +6985,14 @@ def _run_post_import_pipeline(
             "google_empty_result": int(words_google_empty_result + phrases_google_empty_result),
             "google_request_failures": int(words_google_request_failures + phrases_google_request_failures),
             "azure_tts_failures": int(words_summary.get("audio_failed", 0) + phrases_summary.get("audio_failed", 0)),
+            "r2_upload_fallback_warnings": int(
+                words_summary.get("audio_r2_upload_fallbacks", 0) + phrases_summary.get("audio_r2_upload_fallbacks", 0)
+            ),
         }
         completed_with_provider_failures = bool(
             int(provider_failure_summary.get("google_provider_errors", 0) or 0) > 0
             or int(provider_failure_summary.get("azure_tts_failures", 0) or 0) > 0
+            or int(provider_failure_summary.get("r2_upload_fallback_warnings", 0) or 0) > 0
         )
         if completed_with_provider_failures:
             app.logger.warning(
@@ -13401,6 +13573,67 @@ def cli_db_diagnostics():
         f"audio_total={d.get('tables', {}).get('audio', -1)} "
         f"post_import_jobs_total={d.get('tables', {}).get('post_import_jobs', -1)}"
     )
+
+
+@app.cli.command("audio-storage-audit")
+def cli_audio_storage_audit():
+    """
+    DB/config-only storage audit for generated audio references.
+    """
+    _log_db_context("cli:audio-storage-audit")
+    d = _collect_audio_storage_audit()
+    click.echo(f"R2_ENABLED={d.get('r2_enabled', False)}")
+    click.echo(f"AZURE_CONFIGURED={d.get('azure_configured', False)}")
+    click.echo(f"GOOGLE_CONFIGURED={d.get('google_configured', False)}")
+    click.echo(f"ALLOW_LOCAL_AUDIO_FALLBACK_ON_R2_FAILURE={d.get('allow_local_audio_fallback_on_r2_failure', False)}")
+    click.echo(
+        "TOTAL_REFS "
+        f"total_refs={d.get('totals', {}).get('total_refs', 0)} "
+        f"remote_refs={d.get('totals', {}).get('remote_refs', 0)} "
+        f"local_refs={d.get('totals', {}).get('local_refs', 0)} "
+        f"blank_refs={d.get('totals', {}).get('blank_refs', 0)}"
+    )
+    click.echo(
+        "WORD_REFS "
+        f"remote={d.get('word_counts', {}).get('remote', 0)} "
+        f"local={d.get('word_counts', {}).get('local', 0)} "
+        f"blank={d.get('word_counts', {}).get('blank', 0)}"
+    )
+    click.echo(
+        "PHRASE_REFS "
+        f"remote={d.get('phrase_counts', {}).get('remote', 0)} "
+        f"local={d.get('phrase_counts', {}).get('local', 0)} "
+        f"blank={d.get('phrase_counts', {}).get('blank', 0)}"
+    )
+    t = d.get("tables", {})
+    gtts = t.get("generated_tts_audio.file_path", {}) or {}
+    gtr = t.get("generated_translations.tts_audio_url", {}) or {}
+    gptr = t.get("generated_phrase_translations.tts_audio_url", {}) or {}
+    click.echo(
+        "TABLE_REFS "
+        f"generated_tts_audio_total={int(gtts.get('total', 0) or 0)} "
+        f"generated_tts_audio_remote={int(gtts.get('remote', 0) or 0)} "
+        f"generated_tts_audio_local={int(gtts.get('local', 0) or 0)} "
+        f"generated_tts_audio_blank={int(gtts.get('blank', 0) or 0)} "
+        f"generated_translations_total={int(gtr.get('total', 0) or 0)} "
+        f"generated_translations_remote={int(gtr.get('remote', 0) or 0)} "
+        f"generated_translations_local={int(gtr.get('local', 0) or 0)} "
+        f"generated_translations_blank={int(gtr.get('blank', 0) or 0)} "
+        f"generated_phrase_translations_total={int(gptr.get('total', 0) or 0)} "
+        f"generated_phrase_translations_remote={int(gptr.get('remote', 0) or 0)} "
+        f"generated_phrase_translations_local={int(gptr.get('local', 0) or 0)} "
+        f"generated_phrase_translations_blank={int(gptr.get('blank', 0) or 0)}"
+    )
+    click.echo("LATEST_10_GENERATED_TTS_AUDIO")
+    for row in (d.get("latest_generated_tts_audio", []) or []):
+        click.echo(
+            f"id={int(row.get('id', 0) or 0)} "
+            f"entry_type={row.get('entry_type', '')} "
+            f"entry_id={int(row.get('entry_id', 0) or 0)} "
+            f"lang_code={row.get('lang_code', '')} "
+            f"file_path={row.get('file_path', '')} "
+            f"created_at={row.get('created_at', '')}"
+        )
 
 
 @app.cli.command("audit-phrase-translations")
