@@ -423,6 +423,10 @@ ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 API_URL = os.environ.get("API_URL", "").strip()
+MINHAAJUL_MUSLIM_PDF_URL = (
+    os.environ.get("MINHAAJUL_MUSLIM_PDF_URL", "").strip()
+    or "https://pub-efc918b71e20468e96d0f200f194a9fb.r2.dev/books/minhaajul-muslim.pdf"
+)
 
 SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
 
@@ -542,6 +546,19 @@ def _safe_book_asset_url(url_value: str) -> str:
     if v.startswith(("https://", "http://", "/")):
         return v
     return ""
+
+
+def _is_minhaajul_muslim_book(book: dict) -> bool:
+    if not isinstance(book, dict):
+        return False
+    book_id = _normalize_book_text(book.get("id", "")).strip().lower()
+    title = _normalize_book_text(book.get("title", "")).strip().lower()
+    protected_file_name = _normalize_book_text(book.get("protected_file_name", "")).strip().lower()
+    return (
+        book_id in {"1", "minhaajul-muslim", "minhaajul muslim"}
+        or title in {"minhaajul-muslim", "minhaajul muslim"}
+        or protected_file_name == "minhaajul-muslim.pdf"
+    )
 
 
 def _normalize_book_text(value) -> str:
@@ -9193,6 +9210,13 @@ def read_pdf_book(id):
     book, load_error = _get_library_book_by_id(unquote(id or ""))
     if not book:
         abort(404)
+    if _is_minhaajul_muslim_book(book) and MINHAAJUL_MUSLIM_PDF_URL:
+        app.logger.info(
+            "pdf_redirect_to_r2 path=%s target_url=%s",
+            request.path,
+            MINHAAJUL_MUSLIM_PDF_URL,
+        )
+        return redirect(MINHAAJUL_MUSLIM_PDF_URL, code=302)
     book_id = _normalize_book_text(book.get("id", "")).strip()
     protected_pdf_path, protected_pdf_error = _resolve_private_pdf_path(book)
     app.logger.info(
@@ -9224,6 +9248,13 @@ def library_store_pdf_stream(id):
     book, _load_error = _get_library_book_by_id(unquote(id or ""))
     if not book:
         abort(404)
+    if _is_minhaajul_muslim_book(book) and MINHAAJUL_MUSLIM_PDF_URL:
+        app.logger.info(
+            "pdf_redirect_to_r2 path=%s target_url=%s",
+            request.path,
+            MINHAAJUL_MUSLIM_PDF_URL,
+        )
+        return redirect(MINHAAJUL_MUSLIM_PDF_URL, code=302)
 
     pdf_path, pdf_error = _resolve_private_pdf_path(book)
     if not pdf_path:
