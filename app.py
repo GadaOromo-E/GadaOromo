@@ -8615,11 +8615,15 @@ def _bulk_fetch_saved_tts_by_entry_lang(entry_type: str, entry_ids, langs=None, 
         expected_hash = expected_hash_by_key.get(key, "")
         if expected_hash and normalize_text(text_hash or "") != expected_hash:
             continue
-        if not normalize_text(file_path or ""):
+        raw_ref = normalize_text(file_path or "")
+        if not raw_ref:
             continue
-        if not _has_usable_audio_ref(file_path or ""):
+        if _is_remote_audio_ref(raw_ref):
+            out[key] = raw_ref
             continue
-        url = _public_audio_url(file_path or "")
+        if not _has_usable_audio_ref(raw_ref):
+            continue
+        url = _public_audio_url(raw_ref)
         if not url:
             continue
         out[key] = url
@@ -8677,7 +8681,13 @@ def _bulk_fetch_translation_cache_tts_urls(entry_type: str, entry_ids, langs=Non
         key = (int(entry_id or 0), lang_code)
         if key in out:
             continue
-        normalized = _normalize_cached_tts_url(tts_audio_url or "")
+        raw_ref = normalize_text(tts_audio_url or "")
+        if not raw_ref:
+            continue
+        if _is_remote_audio_ref(raw_ref):
+            out[key] = raw_ref
+            continue
+        normalized = _normalize_cached_tts_url(raw_ref)
         if not normalized:
             continue
         if not _has_usable_audio_ref(normalized):
@@ -8712,10 +8722,27 @@ def _bulk_fetch_approved_oromo_audio_urls(entry_type: str, entry_ids):
         eid = int(entry_id or 0)
         if eid in out:
             continue
-        if not _has_usable_audio_ref(file_path or ""):
+        raw_ref = normalize_text(file_path or "")
+        if not raw_ref:
             continue
-        out[eid] = _public_audio_url(file_path)
+        if _is_remote_audio_ref(raw_ref):
+            out[eid] = raw_ref
+            continue
+        if not _has_usable_audio_ref(raw_ref):
+            continue
+        out[eid] = _public_audio_url(raw_ref)
     return out
+
+
+def _is_usable_learn_audio_ref(ref: str) -> bool:
+    raw = normalize_text(ref or "")
+    if not raw:
+        return False
+    if _is_remote_audio_ref(raw):
+        return True
+    if DISABLE_LOCAL_AUDIO_PLAYBACK:
+        return False
+    return bool(_has_usable_audio_ref(raw))
 
 
 def _load_learn_rows():
@@ -8724,10 +8751,29 @@ def _load_learn_rows():
 
     c.execute(
         """
-        SELECT id, english, oromo
-        FROM phrases
-        WHERE status='approved'
-          AND english IS NOT NULL AND TRIM(english) != ''
+        SELECT p.id, p.english, p.oromo
+        FROM phrases p
+        WHERE p.status='approved'
+          AND p.english IS NOT NULL AND TRIM(p.english) != ''
+          AND (
+                EXISTS (
+                    SELECT 1
+                    FROM generated_tts_audio gta
+                    WHERE gta.entry_type='phrase'
+                      AND gta.entry_id=p.id
+                      AND gta.file_path IS NOT NULL
+                      AND TRIM(gta.file_path) != ''
+                      AND (gta.file_path LIKE 'https://%' OR gta.file_path LIKE 'http://%')
+                )
+                OR EXISTS (
+                    SELECT 1
+                    FROM generated_phrase_translations gpt
+                    WHERE gpt.phrase_id=p.id
+                      AND gpt.tts_audio_url IS NOT NULL
+                      AND TRIM(gpt.tts_audio_url) != ''
+                      AND (gpt.tts_audio_url LIKE 'https://%' OR gpt.tts_audio_url LIKE 'http://%')
+                )
+              )
         ORDER BY id DESC
         LIMIT ?
         """,
@@ -8776,7 +8822,12 @@ def _load_learn_rows():
         "phrase",
         phrase_ids,
         langs=("en", "am", "ar", "fr", "zh-CN", "om"),
-        text_by_key=phrase_text_by_key,
+        text_by_key=None,
+    )
+    phrase_cache_tts = _bulk_fetch_translation_cache_tts_urls(
+        "phrase",
+        phrase_ids,
+        langs=("en", "am", "ar", "fr", "zh-CN", "om"),
     )
     phrase_oromo_audio = _bulk_fetch_approved_oromo_audio_urls("phrase", phrase_ids)
 
@@ -8787,13 +8838,23 @@ def _load_learn_rows():
         pid_int = int(pid)
         tr = phrase_translations.get(pid_int, {})
         om_text = normalize_text(om or "")
+        en_audio = phrase_tts.get((pid_int, "en"), "") or phrase_cache_tts.get((pid_int, "en"), "")
+        am_audio = phrase_tts.get((pid_int, "am"), "") or phrase_cache_tts.get((pid_int, "am"), "")
+        ar_audio = phrase_tts.get((pid_int, "ar"), "") or phrase_cache_tts.get((pid_int, "ar"), "")
+        fr_audio = phrase_tts.get((pid_int, "fr"), "") or phrase_cache_tts.get((pid_int, "fr"), "")
+        zh_audio = phrase_tts.get((pid_int, "zh-CN"), "") or phrase_cache_tts.get((pid_int, "zh-CN"), "")
+        om_audio = (
+            phrase_oromo_audio.get(pid_int, "")
+            or phrase_tts.get((pid_int, "om"), "")
+            or phrase_cache_tts.get((pid_int, "om"), "")
+        )
         audio_map = {
-            "en": phrase_tts.get((pid_int, "en"), ""),
-            "am": phrase_tts.get((pid_int, "am"), ""),
-            "ar": phrase_tts.get((pid_int, "ar"), ""),
-            "fr": phrase_tts.get((pid_int, "fr"), ""),
-            "zh-CN": phrase_tts.get((pid_int, "zh-CN"), ""),
-            "oromo": phrase_oromo_audio.get(pid_int, "") or phrase_tts.get((pid_int, "om"), ""),
+            "en": en_audio,
+            "am": am_audio,
+            "ar": ar_audio,
+            "fr": fr_audio,
+            "zh-CN": zh_audio,
+            "oromo": om_audio,
         }
         if not om_text:
             phrases_with_missing_oromo_but_shown += 1
@@ -8812,7 +8873,7 @@ def _load_learn_rows():
     words_loaded_raw = 0
     phrases_loaded_raw = int(len(phrase_rows))
     word_audio_rows_found = 0
-    phrase_audio_rows_found = int(len(phrase_tts) + len(phrase_oromo_audio))
+    phrase_audio_rows_found = int(len(phrase_tts) + len(phrase_cache_tts) + len(phrase_oromo_audio))
     audio_rows_found = int(word_audio_rows_found + phrase_audio_rows_found)
     rows_with_audio_in_db_all = 0
     rows_with_audio_in_db_words_all = 0
@@ -8820,6 +8881,10 @@ def _load_learn_rows():
     rows_with_any_audio = 0
     rows_rendered_with_audio_url = 0
     audio_attached_count = 0
+    phrases_checked = 0
+    phrases_with_remote_audio = 0
+    phrases_with_local_only_audio = 0
+    phrases_rendered = 0
     phrase_rows_visible = []
     for r in rows:
         audio = (r or {}).get("audio") or {}
@@ -8827,14 +8892,33 @@ def _load_learn_rows():
         entry_id = int((r or {}).get("entry_id") or 0)
         has_audio_db = False
         if entry_type == "phrase":
-            has_audio_db = any((entry_id, lc) in phrase_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om")) or (entry_id in phrase_oromo_audio)
+            has_audio_db = (
+                any((entry_id, lc) in phrase_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om"))
+                or any((entry_id, lc) in phrase_cache_tts for lc in ("en", "am", "ar", "fr", "zh-CN", "om"))
+                or (entry_id in phrase_oromo_audio)
+            )
         if has_audio_db:
             rows_with_audio_in_db_all += 1
             if entry_type == "phrase":
                 rows_with_audio_in_db_phrases_all += 1
 
         row_has_audio = False
-        for u in audio.values():
+        row_has_remote_audio = False
+        row_has_local_audio = False
+        filtered_audio = {}
+        playback_urls = []
+        for lang_code, u in audio.items():
+            u_norm = normalize_text(u or "")
+            if not _is_usable_learn_audio_ref(u_norm):
+                filtered_audio[lang_code] = ""
+                continue
+            filtered_audio[lang_code] = u_norm
+            playback_urls.append(u_norm)
+            if _is_remote_audio_ref(u_norm):
+                row_has_remote_audio = True
+            else:
+                row_has_local_audio = True
+        for u in playback_urls:
             if normalize_text(u or ""):
                 audio_attached_count += 1
                 row_has_audio = True
@@ -8842,7 +8926,15 @@ def _load_learn_rows():
             rows_with_any_audio += 1
             rows_rendered_with_audio_url += 1
         if entry_type == "phrase":
-            phrase_rows_visible.append(r)
+            phrases_checked += 1
+            if row_has_remote_audio:
+                phrases_with_remote_audio += 1
+            elif row_has_local_audio:
+                phrases_with_local_only_audio += 1
+            if row_has_audio:
+                r["audio"] = filtered_audio
+                phrases_rendered += 1
+                phrase_rows_visible.append(r)
     rows = phrase_rows_visible
 
     newest_phrase_ids = [int((r or {}).get("entry_id") or 0) for r in rows]
@@ -8852,7 +8944,7 @@ def _load_learn_rows():
     learn_visible_phrase_count = total_rows_loaded
 
     app.logger.info(
-        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_attached_count=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
+        "/learn loader total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s audio_urls_attached=%s phrases_checked=%s phrases_with_remote_audio=%s phrases_with_local_only_audio=%s phrases_rendered=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
         total_rows_loaded,
         phrases_loaded_with_audio,
         words_loaded_with_audio,
@@ -8867,6 +8959,10 @@ def _load_learn_rows():
         rows_with_any_audio,
         rows_rendered_with_audio_url,
         audio_attached_count,
+        phrases_checked,
+        phrases_with_remote_audio,
+        phrases_with_local_only_audio,
+        phrases_rendered,
         phrases_with_missing_oromo_but_shown,
         learn_visible_phrase_count,
         int(LEARN_RECENT_PHRASE_LIMIT),
