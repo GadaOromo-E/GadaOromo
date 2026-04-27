@@ -13,8 +13,8 @@
     "description": "Free Islamic PDF book available to read online.",
     "cover": "/static/covers/minhaajul-muslim.png",
     "cover_image": "/static/covers/minhaajul-muslim.png",
-    "pdf_url": "https://pub-efc918b71e20468e96d0f200f194a9fb.r2.dev/books/minhaajul-muslim.pdf",
-    "read_url": "https://pub-efc918b71e20468e96d0f200f194a9fb.r2.dev/books/minhaajul-muslim.pdf",
+    "pdf_url": "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf",
+    "read_url": "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf",
     "formats": ["pdf"],
     "app_link": "https://play.google.com/store/apps/details?id=com.ad.minhaajulmuslim&pcampaignid=web_share"
   },
