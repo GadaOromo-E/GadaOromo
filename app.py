@@ -849,6 +849,42 @@ def log_route_duration(resp):
         pass
     return resp
 
+
+@app.after_request
+def log_large_response_egress_check(resp):
+    try:
+        path = request.path or ""
+        path_l = path.lower()
+        content_length = getattr(resp, "content_length", None)
+        path_markers = (
+            "/static/",
+            "/uploads/",
+            ".pdf",
+            ".mp3",
+            ".wav",
+            ".m4a",
+            ".ogg",
+            ".zip",
+            ".db",
+        )
+        has_path_marker = any(marker in path_l for marker in path_markers)
+        is_large = (content_length is not None) and (int(content_length) >= 50000)
+        if is_large or has_path_marker:
+            app.logger.info(
+                "large_response_egress_check method=%s path=%s status_code=%s content_length=%s mimetype=%s user_agent=%s referer=%s remote_addr=%s",
+                request.method,
+                path,
+                int(getattr(resp, "status_code", 0) or 0),
+                content_length,
+                getattr(resp, "mimetype", None),
+                request.user_agent.string,
+                request.referrer,
+                request.remote_addr,
+            )
+    except Exception:
+        pass
+    return resp
+
 # ------------------ SEO: ROBOTS + SITEMAP ------------------
 
 @app.route("/robots.txt")
