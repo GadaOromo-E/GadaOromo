@@ -1,4 +1,4 @@
-/* static/pwa-ui.js */
+﻿/* static/pwa-ui.js */
 (() => {
   const isStandalone =
     (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
@@ -86,10 +86,10 @@
           display:inline-flex; align-items:center; justify-content:center;
           margin-bottom:14px;
         ">
-          <span style="font-size:34px;">📘</span>
+          <span style="font-size:34px;">ðŸ“˜</span>
         </div>
         <div style="font-size:20px; font-weight:700;">${title}</div>
-        <div style="opacity:.9; font-size:13px; margin-top:6px;">Loading…</div>
+        <div style="opacity:.9; font-size:13px; margin-top:6px;">Loadingâ€¦</div>
       </div>
     `;
     document.body.appendChild(splash);
@@ -152,7 +152,7 @@ let deferredPrompt = null;
       vibrate(12);
       if (!deferredPrompt) {
         if (isIOS && !isStandalone) {
-          showToast("On iPhone: Share → Add to Home Screen", 10, 5500);
+          showToast("On iPhone: Share â†’ Add to Home Screen", 10, 5500);
         } else {
           showToast("Install not available yet. Try again later.", 10);
         }
@@ -162,7 +162,7 @@ let deferredPrompt = null;
       const choice = await deferredPrompt.userChoice;
       deferredPrompt = null;
       installBtn.style.display = "none";
-      if (choice && choice.outcome === "accepted") showToast("Installed ✅", 30);
+      if (choice && choice.outcome === "accepted") showToast("Installed âœ…", 30);
       else showToast("Install canceled", 10);
     });
   }
@@ -175,7 +175,7 @@ let deferredPrompt = null;
     const key = "gadaa_ios_a2hs_seen";
     if (!localStorage.getItem(key)) {
       setTimeout(() => {
-        showToast("On iPhone: Share → Add to Home Screen to install.", 0, 6500);
+        showToast("On iPhone: Share â†’ Add to Home Screen to install.", 0, 6500);
         localStorage.setItem(key, "1");
       }, 1200);
     }
@@ -183,10 +183,102 @@ let deferredPrompt = null;
 
   // ---------- Service Worker registration + update prompt ----------
   const updateBar = document.getElementById("pwaUpdateBar");
+  const PWA_ACTIVE_VERSION_KEY = "gadaa_pwa_active_version";
+  const PWA_LAST_PROMPTED_WAITING_VERSION_KEY = "gadaa_pwa_last_prompted_waiting_version";
+  const PWA_RELOAD_PENDING_KEY = "gadaa_pwa_reload_pending";
+  let pwaReloadTriggered = false;
+  let pwaControllerChangeBound = false;
+  let pwaUpdateUiBound = false;
 
-  function showUpdateBar(reg) {
+  function logPwa(eventName, payload) {
+    try {
+      if (payload === undefined) console.info(eventName);
+      else console.info(eventName, payload);
+    } catch (_) {}
+  }
+
+  function getStored(key) {
+    try {
+      return localStorage.getItem(key) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function setStored(key, value) {
+    try {
+      if (value) localStorage.setItem(key, String(value));
+    } catch (_) {}
+  }
+
+  function clearStored(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {}
+  }
+
+  function setSession(key, value) {
+    try {
+      if (value) sessionStorage.setItem(key, String(value));
+      else sessionStorage.removeItem(key);
+    } catch (_) {}
+  }
+
+  function getSession(key) {
+    try {
+      return sessionStorage.getItem(key) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function requestSwVersion(worker) {
+    return new Promise((resolve) => {
+      try {
+        if (!worker) {
+          resolve("");
+          return;
+        }
+        const channel = new MessageChannel();
+        const timer = setTimeout(() => resolve(""), 800);
+        channel.port1.onmessage = (event) => {
+          clearTimeout(timer);
+          const version = event && event.data && event.data.version ? String(event.data.version) : "";
+          resolve(version);
+        };
+        worker.postMessage({ type: "GET_VERSION" }, [channel.port2]);
+      } catch (_) {
+        resolve("");
+      }
+    });
+  }
+
+  async function getActiveSwVersion(reg) {
+    const fromController = await requestSwVersion(navigator.serviceWorker.controller || null);
+    if (fromController) return fromController;
+    return requestSwVersion((reg && reg.active) || null);
+  }
+
+  async function getWaitingSwVersion(reg) {
+    return requestSwVersion((reg && reg.waiting) || null);
+  }
+
+  function bindControllerChangeReload() {
+    if (pwaControllerChangeBound) return;
+    pwaControllerChangeBound = true;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (pwaReloadTriggered) return;
+      if (getSession(PWA_RELOAD_PENDING_KEY) !== "1") return;
+      pwaReloadTriggered = true;
+      setSession(PWA_RELOAD_PENDING_KEY, "");
+      clearStored(PWA_LAST_PROMPTED_WAITING_VERSION_KEY);
+      location.reload();
+    });
+  }
+
+  function showUpdateBar(reg, waitingVersion) {
     if (!updateBar) {
-      showToast("Update available — reload to get latest version.", 10, 5000);
+      showToast("Update available - reload to get latest version.", 10, 5000);
       return;
     }
 
@@ -195,25 +287,65 @@ let deferredPrompt = null;
     const reloadBtn = updateBar.querySelector("[data-reload]");
     const closeBtn = updateBar.querySelector("[data-close]");
 
-    if (reloadBtn) {
+    if (reloadBtn && !pwaUpdateUiBound) {
+      pwaUpdateUiBound = true;
       reloadBtn.onclick = () => {
         vibrate(15);
+        logPwa("PWA_UPDATE_ACCEPTED", { waiting_version: waitingVersion || "" });
+        setSession(PWA_RELOAD_PENDING_KEY, "1");
         try {
           reg.waiting?.postMessage({ type: "SKIP_WAITING" });
         } catch (_) {}
-        showToast("Updating…", 10, 1200);
-        setTimeout(() => location.reload(), 350);
+        showToast("Updating...", 10, 1200);
       };
     }
     if (closeBtn) closeBtn.onclick = () => (updateBar.style.display = "none");
   }
 
-  const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
+  async function maybeShowUpdateBar(reg, reason) {
+    if (!reg || !reg.waiting) return;
+    const waitingVersion = await getWaitingSwVersion(reg);
+    const activeVersion = await getActiveSwVersion(reg);
+    if (activeVersion) setStored(PWA_ACTIVE_VERSION_KEY, activeVersion);
+    if (!navigator.serviceWorker.controller && !activeVersion) {
+      return;
+    }
+
+    if (activeVersion && waitingVersion && activeVersion === waitingVersion) {
+      logPwa("PWA_UPDATE_SUPPRESSED_SAME_VERSION", {
+        reason: reason || "",
+        active_version: activeVersion,
+        waiting_version: waitingVersion,
+      });
+      return;
+    }
+
+    const waitingMarker = waitingVersion || ((reg.waiting && reg.waiting.scriptURL) || "unknown_waiting");
+    const lastPrompted = getStored(PWA_LAST_PROMPTED_WAITING_VERSION_KEY);
+    if (lastPrompted && lastPrompted === waitingMarker) {
+      logPwa("PWA_UPDATE_SUPPRESSED_SAME_VERSION", {
+        reason: "already_prompted_same_waiting",
+        active_version: activeVersion || "",
+        waiting_version: waitingVersion || "",
+      });
+      return;
+    }
+
+    setStored(PWA_LAST_PROMPTED_WAITING_VERSION_KEY, waitingMarker);
+    logPwa("PWA_UPDATE_AVAILABLE", {
+      reason: reason || "",
+      active_version: activeVersion || "",
+      waiting_version: waitingVersion || "",
+    });
+    showUpdateBar(reg, waitingVersion);
+  }
+const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
     || "/service-worker.js";
 
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
       try {
+        bindControllerChangeReload();
         const reg = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
         const marker = document.getElementById("pwaSwDebug");
         const swDebug = {
@@ -233,7 +365,7 @@ let deferredPrompt = null;
           console.info("PWA_SW_DEBUG", swDebug);
         } catch (_) {}
 
-        if (reg.waiting) showUpdateBar(reg);
+        if (reg.waiting) await maybeShowUpdateBar(reg, "registration_waiting");
 
         reg.addEventListener("updatefound", () => {
           const newWorker = reg.installing;
@@ -241,14 +373,14 @@ let deferredPrompt = null;
 
           newWorker.addEventListener("statechange", () => {
             if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-              showUpdateBar(reg);
-              showToast("New version ready ✅", 20);
+              maybeShowUpdateBar(reg, "updatefound_installed");
+              showToast("New version ready âœ…", 20);
             }
           });
         });
 
         navigator.serviceWorker.addEventListener("message", (event) => {
-          if (event?.data?.type === "OFFLINE_READY") showToast("Offline ready ✅", 10);
+          if (event?.data?.type === "OFFLINE_READY") showToast("Offline ready âœ…", 10);
         });
         navigator.serviceWorker.ready.then((readyReg) => {
           const marker2 = document.getElementById("pwaSwDebug");
@@ -268,6 +400,9 @@ let deferredPrompt = null;
           try {
             console.info("PWA_SW_READY_DEBUG", updated);
           } catch (_) {}
+          getActiveSwVersion(readyReg).then((version) => {
+            if (version) setStored(PWA_ACTIVE_VERSION_KEY, version);
+          }).catch(() => {});
         }).catch(() => {});
       } catch (_) {
         // ignore
@@ -279,7 +414,7 @@ let deferredPrompt = null;
     showToast("You are offline. Some uploads may fail.", 10, 3500);
   });
   window.addEventListener("online", () => {
-    showToast("Back online ✅", 10, 2500);
+    showToast("Back online âœ…", 10, 2500);
   });
 
   document.addEventListener(
@@ -297,4 +432,7 @@ let deferredPrompt = null;
   showSplashIfStandalone();
   enableTransitions();
 })();
+
+
+
 

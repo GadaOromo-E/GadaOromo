@@ -118,7 +118,16 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "SKIP_WAITING") {
+  if (!event || !event.data) return;
+  if (event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+  if (event.data.type === "GET_VERSION") {
+    try {
+      if (event.ports && event.ports[0]) {
+        event.ports[0].postMessage({ type: "SW_VERSION", version: CACHE_VERSION });
+      }
+    } catch (_) {}
   }
 });
