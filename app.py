@@ -427,6 +427,10 @@ MINHAAJUL_MUSLIM_PDF_URL = (
     os.environ.get("MINHAAJUL_MUSLIM_PDF_URL", "").strip()
     or "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf"
 )
+MINHAAJUL_MUSLIM_COVER_URL = (
+    os.environ.get("MINHAAJUL_MUSLIM_COVER_URL", "").strip()
+    or "https://cdn.gadaadictionary.com/covers/minhaajul-muslim.png"
+)
 
 SUPPORT_MIN_NOK = int(os.environ.get("SUPPORT_MIN_NOK", "200"))
 
@@ -589,6 +593,7 @@ def _normalize_library_book(raw: dict) -> dict:
     pdf_url = _safe_book_asset_url(raw.get("pdf_url", ""))
     epub_url = _safe_book_asset_url(raw.get("epub_url", ""))
     webbook_url = _safe_book_asset_url(raw.get("webbook_url", ""))
+    cover_url = _safe_book_asset_url(raw.get("cover_url", ""))
     cover_image = _safe_book_asset_url(raw.get("cover_image", raw.get("cover", "")))
     cover = _safe_book_asset_url(raw.get("cover", ""))
     file_path = _safe_book_asset_url(raw.get("file_path", ""))
@@ -632,6 +637,14 @@ def _normalize_library_book(raw: dict) -> dict:
     if protected_file_name:
         pdf_url = ""
 
+    # Force CDN-backed cover for the Minhaajul book to avoid large static egress from app hosting.
+    if _is_minhaajul_muslim_book(raw):
+        if MINHAAJUL_MUSLIM_COVER_URL:
+            cover_url = MINHAAJUL_MUSLIM_COVER_URL
+    if cover_url:
+        cover_image = cover_url
+        cover = cover_url
+
     if pdf_url and "pdf" not in formats:
         formats.append("pdf")
     if epub_url and "epub" not in formats:
@@ -665,6 +678,7 @@ def _normalize_library_book(raw: dict) -> dict:
         "page_label": page_label,
         "cover_image": cover_image,
         "cover": cover,
+        "cover_url": cover_url,
         "app_link": app_link,
         "protected_file_name": protected_file_name,
         "file_path": file_path,
@@ -1317,6 +1331,12 @@ def favicon():
         "favicon.ico",
         mimetype="image/vnd.microsoft.icon",
     )
+
+
+@app.route("/static/covers/minhaajul-muslim.png")
+def minhaajul_cover_cdn_redirect():
+    return redirect(MINHAAJUL_MUSLIM_COVER_URL, code=302)
+
 
 @app.errorhandler(404)
 def not_found_page(_err):
