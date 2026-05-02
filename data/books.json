@@ -16,6 +16,8 @@
     "cover_image": "https://cdn.gadaadictionary.com/covers/minhaajul-muslim.png",
     "pdf_url": "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf",
     "read_url": "https://cdn.gadaadictionary.com/books/minhaajul-muslim.pdf",
+    "requires_donation": true,
+    "donation_url_env": "STRIPE_DONATE_CUSTOM_URL",
     "formats": ["pdf"],
     "app_link": "https://play.google.com/store/apps/details?id=com.ad.minhaajulmuslim&pcampaignid=web_share"
   },

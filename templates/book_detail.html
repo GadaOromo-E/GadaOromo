@@ -138,7 +138,16 @@
         </p>
 
         <div class="library-actions">
-          {% if book.read_url %}
+          {% if book.requires_donation %}
+            <p class="library-summary" style="margin:0 0 10px 0;">
+              Your donation helps support the Gadaa Dictionary project and gives access to our free book resources.
+            </p>
+            {% if book.donation_target_url %}
+              <a class="btn primary btn-read-strong" href="{{ book.donation_target_url }}" target="_blank" rel="noopener noreferrer">Donate $20 and get free books</a>
+            {% else %}
+              <span class="muted">Donation link is currently unavailable.</span>
+            {% endif %}
+          {% elif book.read_url %}
             <a class="btn primary btn-read-strong" href="{{ book.read_url }}">Read Book</a>
           {% elif book.type == 'pdf' %}
             <a class="btn primary btn-read-strong" href="/read/pdf/{{ book.id|urlencode }}">Read Book</a>

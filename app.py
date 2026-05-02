@@ -565,6 +565,25 @@ def _is_minhaajul_muslim_book(book: dict) -> bool:
     )
 
 
+def _book_requires_donation(book: dict) -> bool:
+    if not isinstance(book, dict):
+        return False
+    raw = book.get("requires_donation", False)
+    if isinstance(raw, bool):
+        return raw
+    v = _normalize_book_text(raw).strip().lower()
+    return v in {"1", "true", "yes", "on"}
+
+
+def _book_donation_target_url(book: dict) -> str:
+    if not _book_requires_donation(book):
+        return ""
+    env_key = _normalize_book_text((book or {}).get("donation_url_env", "")).strip()
+    if not env_key:
+        return ""
+    return _safe_url(os.environ.get(env_key, "").strip())
+
+
 def _normalize_book_text(value) -> str:
     if value is None:
         return ""
@@ -600,6 +619,9 @@ def _normalize_library_book(raw: dict) -> dict:
     protected_file_name = _normalize_book_text(raw.get("protected_file_name", "")).strip()
     read_url_raw = _safe_book_asset_url(raw.get("read_url", ""))
     app_link = _safe_book_asset_url(raw.get("app_link", ""))
+    requires_donation = _book_requires_donation(raw)
+    donation_url_env = _normalize_book_text(raw.get("donation_url_env", "")).strip()
+    donation_target_url = _book_donation_target_url(raw)
 
     formats_input = raw.get("formats", [])
     formats = []
@@ -653,12 +675,17 @@ def _normalize_library_book(raw: dict) -> dict:
         formats.append("webbook")
 
     read_url = read_url_raw
-    if pdf_url:
-        read_url = read_url or f"/read/pdf/{quote(book_id, safe='')}"
-    elif epub_url:
-        read_url = read_url or f"/read/epub/{quote(book_id, safe='')}"
-    elif webbook_url:
-        read_url = read_url or f"/read/webbook/{quote(book_id, safe='')}"
+    if requires_donation:
+        # Donation-gated books must not expose direct read/download URLs in page HTML.
+        read_url = ""
+        pdf_url = ""
+    else:
+        if pdf_url:
+            read_url = read_url or f"/read/pdf/{quote(book_id, safe='')}"
+        elif epub_url:
+            read_url = read_url or f"/read/epub/{quote(book_id, safe='')}"
+        elif webbook_url:
+            read_url = read_url or f"/read/webbook/{quote(book_id, safe='')}"
 
     return {
         "id": book_id,
@@ -685,6 +712,9 @@ def _normalize_library_book(raw: dict) -> dict:
         "pdf_url": pdf_url,
         "epub_url": epub_url,
         "webbook_url": webbook_url,
+        "requires_donation": requires_donation,
+        "donation_url_env": donation_url_env,
+        "donation_target_url": donation_target_url,
     }
 
 
@@ -9266,6 +9296,23 @@ def read_pdf_book(id):
     book, load_error = _get_library_book_by_id(unquote(id or ""))
     if not book:
         abort(404)
+    if _book_requires_donation(book):
+        target_url = _book_donation_target_url(book)
+        app.logger.info(
+            "book_access_requires_donation book_id=%s path=%s target_url=%s",
+            _normalize_book_text((book or {}).get("id", "")),
+            request.path,
+            target_url,
+        )
+        if target_url:
+            return redirect(target_url, code=302)
+        return render_template(
+            "pdf_reader.html",
+            book=book,
+            pdf_stream_url="",
+            reader_error="Donation link is currently unavailable.",
+            load_error=load_error,
+        )
     if _is_minhaajul_muslim_book(book) and MINHAAJUL_MUSLIM_PDF_URL:
         app.logger.info(
             "pdf_redirect_to_r2 path=%s target_url=%s",
@@ -9303,6 +9350,17 @@ def read_pdf_book(id):
 def library_store_pdf_stream(id):
     book, _load_error = _get_library_book_by_id(unquote(id or ""))
     if not book:
+        abort(404)
+    if _book_requires_donation(book):
+        target_url = _book_donation_target_url(book)
+        app.logger.info(
+            "book_access_requires_donation book_id=%s path=%s target_url=%s",
+            _normalize_book_text((book or {}).get("id", "")),
+            request.path,
+            target_url,
+        )
+        if target_url:
+            return redirect(target_url, code=302)
         abort(404)
     if _is_minhaajul_muslim_book(book) and MINHAAJUL_MUSLIM_PDF_URL:
         app.logger.info(
