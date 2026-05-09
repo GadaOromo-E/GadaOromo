@@ -17,7 +17,7 @@
   {% set zh = ((zh_raw.get("text") if zh_raw is mapping else zh_raw) or "") %}
   {% set fr = ((fr_raw.get("text") if fr_raw is mapping else fr_raw) or "") %}
 
-  <title>{{ page_title or (english_phrase ~ " meaning in Oromo | " ~ (APP_NAME or "Gadaa Dictionary")) }}</title>
+  <title>{{ page_title or (english_phrase ~ " meaning in Oromo | " ~ (APP_NAME or "Gadaa")) }}</title>
   <meta name="description" content="{{ meta_description or '' }}">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="{{ canonical_url }}">

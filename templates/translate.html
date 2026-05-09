@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="description" content="Translate between Oromo, English, Amharic, Arabic, French, and Chinese using the Gada Dictionary pivot model.">
+  <meta name="description" content="Translate between Oromo, English, Amharic, Arabic, French, and Chinese using Gadaa's English-pivot dictionary model.">
   <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/translate' }}">
   <meta name="robots" content="{% if is_query_variant %}noindex,follow{% else %}index,follow{% endif %}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Translator | {{ APP_NAME or "Gadaa Dictionary" }}</title>
+  <title>Translator | {{ APP_NAME or "Gadaa" }}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
@@ -15,7 +15,7 @@
 <div class="container">
 <header class="topbar">
   <div class="brand">
-    <h1>Gada Translator</h1>
+    <h1>Gadaa Translator</h1>
     <p class="tagline">Selected: {{ language_options[source_lang].label }} -> {{ language_options[target_lang].label }}</p>
   </div>
 </header>

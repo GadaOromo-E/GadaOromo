@@ -3,7 +3,7 @@
 Created on Sun Jan 11 16:32:35 2026
 @author: ademo
 
-Gadaa Dictionary - Flask + SQLite + PWA-ready
+Gadaa - Flask + SQLite + PWA-ready
 
 Includes:
 - Dictionary search + translate pages
@@ -403,7 +403,7 @@ if IS_PROD and REQUIRE_EXPLICIT_DB_PATH and (not os.environ.get("DB_PATH", "").s
         "Set DB_PATH to your production database file path."
     )
 
-APP_NAME = os.environ.get("APP_NAME", "Gadaa Dictionary")
+APP_NAME = os.environ.get("APP_NAME", "Gadaa")
 APP_BUILD_TOKEN = (
     (os.environ.get("APP_BUILD_TOKEN") or "").strip()
     or (os.environ.get("RENDER_GIT_COMMIT") or "").strip()

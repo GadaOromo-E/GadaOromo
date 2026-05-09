@@ -21,7 +21,7 @@
   {% if oromo_word %}
     {% set page_title = page_title ~ " (" ~ oromo_word ~ ")" %}
   {% endif %}
-  {% set page_title = page_title ~ " | Amharic, Arabic, French & Chinese | " ~ (APP_NAME or "Gadaa Dictionary") %}
+  {% set page_title = page_title ~ " | Amharic, Arabic, French & Chinese | " ~ (APP_NAME or "Gadaa") %}
 
   {% set meta_desc = english_word ~ " means " ~ (oromo_word or "this Oromo translation") ~ ". Find translations in Oromo, Amharic, Arabic, French, and Chinese on " ~ APP_NAME ~ "." %}
   {% set canonical_href = canonical_url or ("https://gadaadictionary.com/word/" ~ (english_word|urlencode)) %}

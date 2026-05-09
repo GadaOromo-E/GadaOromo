@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ request.path }}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Learn | {{ APP_NAME or "Gadaa Dictionary" }}</title>
+  <title>Learn | {{ APP_NAME or "Gadaa" }}</title>
   <meta name="gadaa-build-token" content="{{ APP_BUILD_TOKEN }}">
   <meta name="gadaa-learn-template-version" content="{{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }}">
   <meta name="gadaa-sw-canonical-url" content="{{ (learn_debug or {}).get('sw_canonical_url', SW_CANONICAL_URL) }}">
@@ -250,7 +250,7 @@
     {% endif %}
 
     <footer class="footer">
-      <p>&copy; 2026 Gada - Open community dictionary</p>
+      <p>&copy; 2026 Gadaa - Open community dictionary</p>
     </footer>
   </main>
 </div>
