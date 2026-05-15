@@ -1,4 +1,4 @@
-name: Build iOS Gadaa Dictionary
+name: Build iOS Gadaa Wrapper
 
 on:
   workflow_dispatch:
@@ -7,23 +7,30 @@ jobs:
   build-ios:
     runs-on: macos-latest
 
+    defaults:
+      run:
+        working-directory: gadaa-ios-wrapper
+
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          channel: stable
+          node-version: 22
 
       - name: Install dependencies
-        run: flutter pub get
+        run: npm install
+
+      - name: Sync Capacitor
+        run: npx cap sync ios
 
       - name: Build iOS without signing
-        run: flutter build ios --release --no-codesign
+        run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO
 
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: ios-build
-          path: build/ios/iphoneos
+          name: gadaa-ios-wrapper-build
+          path: gadaa-ios-wrapper/ios/App/build
