@@ -27,7 +27,7 @@ jobs:
         run: node node_modules/@capacitor/cli/bin/capacitor sync ios
 
       - name: Build iOS without signing
-        run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO
+        run: xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO
 
       - name: Upload build
         uses: actions/upload-artifact@v4
