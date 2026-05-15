@@ -24,7 +24,7 @@ jobs:
         run: npm install
 
       - name: Sync Capacitor
-        run: npx cap sync ios
+        run: node node_modules/@capacitor/cli/bin/capacitor sync ios
 
       - name: Build iOS without signing
         run: xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO
