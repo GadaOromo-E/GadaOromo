@@ -107,7 +107,7 @@ jobs:
           APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
         run: |
           xcrun altool --upload-app \
-            -f $RUNNER_TEMP/ipa/App.ipa \
-            -t ios \
-            -u "$APPLE_ID" \
-            -p "$APP_SPECIFIC_PASSWORD"
+            --type ios \
+            --file $RUNNER_TEMP/ipa/App.ipa \
+            --username "$APPLE_ID" \
+            --password "$APP_SPECIFIC_PASSWORD"
