@@ -1,3 +1,4 @@
+cat > .github/workflows/ios-build.yml << 'EOF'
 name: Build & Upload iOS to TestFlight
 on:
   workflow_dispatch:
@@ -9,28 +10,22 @@ jobs:
         working-directory: gadaa-ios-wrapper
     steps:
       - uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Install dependencies
         run: npm install
-
       - name: Create www directory
         run: mkdir -p www
-
-     - name: Sync Capacitor
+      - name: Sync Capacitor
         run: |
           chmod +x node_modules/.bin/cap
           npx cap sync ios
-
       - name: Install CocoaPods dependencies
         run: |
           cd ios/App
           pod install --repo-update
-
       - name: Install Apple Certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
@@ -45,7 +40,6 @@ jobs:
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
-
       - name: Install Provisioning Profile
         env:
           BUILD_PROVISION_PROFILE_BASE64: ${{ secrets.BUILD_PROVISION_PROFILE_BASE64 }}
@@ -54,7 +48,6 @@ jobs:
           echo -n "$BUILD_PROVISION_PROFILE_BASE64" | base64 --decode -o $PP_PATH
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles
-
       - name: Build signed IPA
         run: |
           xcodebuild -workspace ios/App/App.xcworkspace \
@@ -69,7 +62,6 @@ jobs:
             -archivePath $RUNNER_TEMP/App.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
             -exportPath $RUNNER_TEMP/ipa
-
       - name: Upload to TestFlight
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -80,3 +72,4 @@ jobs:
             -t ios \
             -u "$APPLE_ID" \
             -p "$APP_SPECIFIC_PASSWORD"
+EOF
