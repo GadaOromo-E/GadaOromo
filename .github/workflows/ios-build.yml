@@ -57,6 +57,7 @@ jobs:
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="Gadaa AppStore"
+            DEVELOPMENT_TEAM=ZY6AQ9855R
           xcodebuild -exportArchive \
             -archivePath $RUNNER_TEMP/App.xcarchive \
             -exportOptionsPlist ExportOptions.plist \
