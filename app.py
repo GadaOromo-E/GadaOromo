@@ -9438,6 +9438,11 @@ def support():
     return render_template("support.html", trending=trending)
 
 
+@app.route("/privacy", methods=["GET"])
+def privacy():
+    return render_template("privacy.html")
+
+
 # ------------------ HOME ------------------
 
 @app.route("/", methods=["GET", "POST"])

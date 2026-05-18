@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy | {{ APP_NAME }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+  <meta name="theme-color" content="#0b5cff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="{{ APP_NAME }}">
+
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+</head>
+<body>
+
+<div class="container">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>{{ APP_NAME }}</h1>
+      <p class="tagline">Oromo ↔ English Community Dictionary</p>
+    </div>
+    <div class="mini-copy">
+      <span class="copy-year">© 2026</span>
+      <span class="copy-name">Gadaa</span>
+    </div>
+    <div class="small-actions">
+      <a class="btn" href="/">🏠 Home</a>
+      <a class="btn" href="/translate">🌍 Translate</a>
+      <a class="btn" href="/learn">📚 Learn</a>
+      <a class="btn primary" href="/support">❤️ Donate</a>
+    </div>
+  </header>
+
+  <nav class="nav">
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/translate">Translate</a>
+    <a class="nav-link" href="/learn">Learn</a>
+    <a class="nav-link" href="/support">Donate</a>
+    <a class="nav-link" href="/submit">Submit Word</a>
+    <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
+  </nav>
+
+  <section class="card">
+    <h2>Privacy Policy</h2>
+    <div class="muted" style="margin-top:4px;">Last updated: May 18, 2026</div>
+
+    <div class="divider"></div>
+
+    <p style="line-height:1.7;">
+      This Privacy Policy describes how Gadaa Dictionary
+      (<a href="https://gadaadictionary.com">gadaadictionary.com</a>) collects,
+      uses, and protects information when you use our website and mobile app.
+    </p>
+
+    <div class="divider"></div>
+
+    <h3>1. Information We Collect</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p><b>Submitted words and phrases</b><br>
+      When you voluntarily submit a word or phrase through the contribution form,
+      we collect the text content you provide (Oromo and/or English). Submissions
+      are reviewed by our team before being added to the public dictionary.</p>
+
+      <p style="margin-top:12px;"><b>Voice recordings</b><br>
+      When you use the in-app microphone to record a pronunciation, we store the
+      audio file on our servers. Recordings are linked to the word or phrase they
+      were submitted for, not to any personal account or identity.</p>
+
+      <p style="margin-top:12px;"><b>Usage data</b><br>
+      We collect anonymous, aggregated analytics such as which words are searched
+      most often, general geographic region (country level), browser type, and
+      device type. This data cannot be used to identify you personally.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>2. How We Use Your Data</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>• <b>Improving the dictionary</b> — submitted words, phrases, and
+      recordings are reviewed and, if approved, added to the community dictionary
+      to benefit all users learning Afaan Oromo and English.</p>
+      <p>• <b>Audio quality</b> — voice recordings are used solely to provide
+      native-speaker pronunciations within the app.</p>
+      <p>• <b>Product improvement</b> — anonymous analytics help us understand
+      which features are most useful and where to focus development effort.</p>
+      <p>• <b>Security and abuse prevention</b> — server logs may be reviewed
+      to detect and block malicious activity.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>3. We Do Not Sell Your Data</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>We do <b>not</b> sell, rent, trade, or share your personal data with
+      third-party advertisers or data brokers. Your contributions belong to the
+      community, not to any commercial entity.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>4. Anonymous Analytics</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>Any analytics we collect are anonymised before storage. We do not use
+      tracking cookies, fingerprinting, or cross-site tracking technologies.
+      Analytics are used only to understand aggregate usage patterns — for
+      example, the most-searched words or the most-used languages — and are
+      never tied to an individual user.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>5. Data Storage and Security</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>Data is stored on servers hosted by Render (render.com) and, for audio
+      files, cloud blob storage. We apply standard security practices including
+      HTTPS encryption for all data in transit. No system can guarantee absolute
+      security, but we take reasonable steps to protect your information.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>6. Data Retention</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>Approved dictionary entries and their associated recordings are kept
+      indefinitely as part of the public community database. Rejected submissions
+      may be deleted. Anonymous analytics data is retained in aggregate form with
+      no time limit.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>7. Children's Privacy</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>Gadaa Dictionary is a general-audience educational tool. We do not
+      knowingly collect personal information from children under 13. If you
+      believe a child has submitted personal information, please contact us and
+      we will delete it promptly.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>8. Changes to This Policy</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>We may update this Privacy Policy from time to time. The "Last updated"
+      date at the top of this page will reflect any changes. Continued use of
+      the app after changes are posted constitutes acceptance of the updated
+      policy.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <h3>9. Contact</h3>
+    <div style="margin-top:10px; line-height:1.8;">
+      <p>If you have questions or concerns about this Privacy Policy or your
+      data, please contact us at:</p>
+      <p style="margin-top:8px;">
+        <a href="mailto:jewargure1@gmail.com">jewargure1@gmail.com</a>
+      </p>
+    </div>
+
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 GadaOromo — Open community dictionary &nbsp;·&nbsp;
+      <a href="/privacy" style="color:inherit;">Privacy Policy</a>
+    </p>
+  </footer>
+
+</div>
+
+<script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
+
+</body>
+</html>
