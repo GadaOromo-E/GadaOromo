@@ -26,6 +26,9 @@ jobs:
           chmod +x node_modules/.bin/cap
           npx cap sync ios
 
+      - name: Debug iOS folder
+        run: find ios -name "*.xcworkspace" -o -name "*.xcodeproj" | head -20
+
       - name: Install Apple Certificate
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
