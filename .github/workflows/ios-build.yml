@@ -102,8 +102,15 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath $RUNNER_TEMP/ipa
       - name: Upload to TestFlight
-        uses: apple-actions/upload-testflight-build@v3
-        with:
-          app-path: ${{ runner.temp }}/ipa/App.ipa
-          apple-id: ${{ secrets.APPLE_ID }}
-          app-specific-password: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        env:
+          APPSTORE_ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+          APPSTORE_KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+          APPSTORE_PRIVATE_KEY: ${{ secrets.APPSTORE_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$APPSTORE_PRIVATE_KEY" > ~/.appstoreconnect/private_keys/AuthKey_$APPSTORE_KEY_ID.p8
+          xcrun altool --upload-app \
+            --type ios \
+            --file $RUNNER_TEMP/ipa/App.ipa \
+            --apiKey "$APPSTORE_KEY_ID" \
+            --apiIssuer "$APPSTORE_ISSUER_ID"
