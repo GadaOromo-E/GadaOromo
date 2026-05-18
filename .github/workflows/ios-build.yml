@@ -21,8 +21,10 @@ jobs:
       - name: Create www directory
         run: mkdir -p www
 
-      - name: Sync Capacitor
-        run: npx cap sync ios
+     - name: Sync Capacitor
+        run: |
+          chmod +x node_modules/.bin/cap
+          npx cap sync ios
 
       - name: Install CocoaPods dependencies
         run: |
