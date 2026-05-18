@@ -102,12 +102,8 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath $RUNNER_TEMP/ipa
       - name: Upload to TestFlight
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
-        run: |
-          xcrun altool --upload-app \
-            --type ios \
-            --file $RUNNER_TEMP/ipa/App.ipa \
-            --username "$APPLE_ID" \
-            --password "$APP_SPECIFIC_PASSWORD"
+        uses: apple-actions/upload-testflight-build@v3
+        with:
+          app-path: ${{ runner.temp }}/ipa/App.ipa
+          apple-id: ${{ secrets.APPLE_ID }}
+          app-specific-password: ${{ secrets.APP_SPECIFIC_PASSWORD }}
