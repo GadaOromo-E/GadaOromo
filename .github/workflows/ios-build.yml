@@ -3,12 +3,14 @@ on:
   workflow_dispatch:
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-15
     defaults:
       run:
         working-directory: gadaa-ios-wrapper
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
