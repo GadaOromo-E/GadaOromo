@@ -1,5 +1,9 @@
 {
   "appId": "com.gadaa.dictionary",
   "appName": "Gadaa Dictionary",
-  "webDir": "www"
+  "webDir": "www",
+  "server": {
+    "url": "https://www.gadaadictionary.com",
+    "cleartext": false
+  }
 }
