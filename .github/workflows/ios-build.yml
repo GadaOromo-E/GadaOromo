@@ -98,6 +98,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath $RUNNER_TEMP/App.xcarchive \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             archive
           xcodebuild -exportArchive \
             -archivePath $RUNNER_TEMP/App.xcarchive \
