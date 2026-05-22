@@ -556,8 +556,16 @@ def _read_review_demo_credentials():
     Read Apple review demo credentials from environment variables.
     Uses os.getenv for production hosts like Railway.
     """
-    raw_email = (os.getenv("APPLE_REVIEW_DEMO_EMAIL") or "").strip().strip('"').strip("'")
-    raw_password = (os.getenv("APPLE_REVIEW_DEMO_PASSWORD") or "").strip().strip('"').strip("'")
+    raw_email = (
+        os.getenv("APPLE_REVIEW_DEMO_EMAIL")
+        or "review@gadaadictionary.com"
+    )
+    raw_password = (
+        os.getenv("APPLE_REVIEW_DEMO_PASSWORD")
+        or "Review123!"
+    )
+    raw_email = (raw_email or "").strip().strip('"').strip("'")
+    raw_password = (raw_password or "").strip().strip('"').strip("'")
     email = raw_email.lower()
     password = raw_password
     return email, password
