@@ -215,7 +215,7 @@
       <span class="copy-year">© 2026</span>
       <span class="copy-name">Gadaa</span>
     </div>
-
+  {% if not HIDE_ANDROID_BRANDING %}
   <!-- Android: Play Store install -->
   <a id="playBtn"
      class="btn install-mini"
@@ -223,6 +223,8 @@
      style="display:none;">
      ⬇️ Android App
   </a>
+  {% endif %}
+
 
   <!-- PWA install (web app) -->
   <button id="installBtn" class="btn install-mini" type="button" style="display:none;">
@@ -293,7 +295,7 @@
     © 2026 Gadaa
   </div>
 </section>
-
+    {% if not HIDE_ANDROID_BRANDING %}
     <div style="margin-top:14px;">
       <h2 style="margin-bottom:8px;">Install on Android</h2>
       <div class="muted">Get the app from Google Play:</div>
@@ -301,6 +303,8 @@
         <a class="btn" href="https://play.google.com/store/apps/details?id=com.gadaoromo.app">Android App</a>
       </div>
     </div>
+    {% endif %}
+
 
     <div id="iosInstallHelp" class="card" style="margin-top:14px; padding:12px;">
       <b>Install on iPhone</b>
@@ -374,3 +378,4 @@
 
 </body>
 </html>
+

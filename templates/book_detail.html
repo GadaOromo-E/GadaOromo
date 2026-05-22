@@ -61,7 +61,7 @@
       <section class="card">
         <div class="library-actions" style="justify-content:space-between; align-items:center;">
           <a class="btn" href="/library-store">← Back to Library Store</a>
-          {% if book.app_link %}
+          {% if book.app_link and not HIDE_ANDROID_BRANDING %}
             <a class="btn" href="{{ book.app_link }}" target="_blank" rel="noopener noreferrer">Download App</a>
           {% endif %}
         </div>
@@ -118,7 +118,7 @@
               <p class="library-summary">{{ book.description }}</p>
             {% else %}
               <p class="library-summary">
-                Read this book online in Library Store or continue reading in the Android app.
+                Read this book online in Library Store or continue reading in the app.
               </p>
             {% endif %}
 
@@ -134,7 +134,7 @@
       <section class="card">
         <h2>Start Reading</h2>
         <p class="muted" style="margin-top:-4px;">
-          Open the book in the built-in reader or continue in the Android app.
+          Open the book in the built-in reader or continue in the app.
         </p>
 
         <div class="library-actions">
@@ -159,7 +159,7 @@
             <span class="muted">Read Book is unavailable for this item.</span>
           {% endif %}
 
-          {% if book.app_link %}
+          {% if book.app_link and not HIDE_ANDROID_BRANDING %}
             <a class="btn" href="{{ book.app_link }}" target="_blank" rel="noopener noreferrer">Download App</a>
           {% endif %}
 

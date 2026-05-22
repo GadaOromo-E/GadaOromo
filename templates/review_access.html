@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Review Access</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
+</head>
+<body>
+  <div class="container" style="max-width:560px;">
+    <section class="card" style="margin-top:24px; text-align:center;">
+      <h1 style="margin:0 0 8px 0;">Review Access</h1>
+      <p class="muted" style="margin:0 0 16px 0;">Choose an access mode.</p>
+      {% if demo_error %}
+        <div class="muted" style="margin:0 0 12px 0; color:#b00020;">{{ demo_error }}</div>
+      {% endif %}
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <a class="btn primary" href="/admin?review_demo=1">Apple Review Demo</a>
+        <a class="btn" href="/admin?review_admin=1">Admin Login</a>
+      </div>
+    </section>
+  </div>
+</body>
+</html>

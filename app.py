@@ -500,6 +500,55 @@ def _should_time_route(path: str) -> bool:
         or p.startswith("/admin")
     )
 
+ADMIN_REVIEW_GUARD_PATHS = {"/admin", "/wp-admin", "/dashboard", "/login"}
+
+
+def _is_ios_webview_request() -> bool:
+    """
+    Best-effort iOS app WebView detection.
+    Keep this conservative to avoid changing normal website behavior.
+    """
+    ua = (request.headers.get("User-Agent") or "").lower()
+    if not ua:
+        return False
+    is_ios = ("iphone" in ua) or ("ipad" in ua) or ("ipod" in ua)
+    if not is_ios:
+        return False
+    # Safari usually includes "safari"; WKWebView often omits it.
+    is_webview = "safari" not in ua
+    # Allow explicit override for app-controlled debugging/testing.
+    forced = (request.headers.get("X-Gadaa-IOS-App") or "").strip().lower() in {"1", "true", "yes"}
+    return bool(is_webview or forced)
+
+
+def _show_admin_review_gate() -> bool:
+    if not _is_ios_webview_request():
+        return False
+    req_path = (request.path or "").strip().lower()
+    if req_path not in ADMIN_REVIEW_GUARD_PATHS:
+        return False
+    if (request.args.get("review_admin") or "").strip() == "1":
+        return False
+    if (request.args.get("review_demo") or "").strip() == "1":
+        return False
+    return True
+
+
+def _admin_login_with_credentials(email: str, password: str):
+    email = (email or "").strip().lower()
+    password = password or ""
+    if (not email) or (not password):
+        return None
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute("SELECT id, password FROM admin WHERE email=?", (email,))
+    admin_row = c.fetchone()
+    conn.close()
+    if admin_row and check_password_hash(admin_row[1], password):
+        return int(admin_row[0])
+    return None
+
+
 @app.before_request
 def force_primary_domain():
     if request.path.startswith("/.well-known/"):
@@ -528,6 +577,13 @@ def mark_route_timing_start():
             g._route_timing_started = time.perf_counter()
     except Exception:
         pass
+
+
+@app.before_request
+def admin_review_route_guard():
+    if _show_admin_review_gate():
+        return render_template("review_access.html"), 200
+    return None
 
 def _site_base_url() -> str:
     if WEBSITE_URL:
@@ -854,6 +910,8 @@ def inject_globals():
         PWA_UI_JS_VERSION=PWA_UI_JS_VERSION,
         SW_JS_VERSION=SW_JS_VERSION,
         SW_CANONICAL_URL=SW_CANONICAL_URL,
+        IS_IOS_WEBVIEW_REQUEST=_is_ios_webview_request(),
+        HIDE_ANDROID_BRANDING=_is_ios_webview_request(),
     )
 
 @app.route("/debug-vars")
@@ -11217,18 +11275,24 @@ def upload_audio(entry_type, entry_id, lang):
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
+    if (request.args.get("review_demo") or "").strip() == "1":
+        demo_email = (os.environ.get("APPLE_REVIEW_DEMO_EMAIL") or "").strip().lower()
+        demo_password = (os.environ.get("APPLE_REVIEW_DEMO_PASSWORD") or "").strip()
+        demo_admin_id = _admin_login_with_credentials(demo_email, demo_password)
+        if demo_admin_id:
+            session["admin"] = demo_admin_id
+            return redirect("/dashboard")
+        return render_template(
+            "review_access.html",
+            demo_error="Demo access is not configured. Set APPLE_REVIEW_DEMO_EMAIL and APPLE_REVIEW_DEMO_PASSWORD.",
+        )
+
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-
-        conn = sqlite3.connect(DB_NAME)
-        c = conn.cursor()
-        c.execute("SELECT id, password FROM admin WHERE email=?", (email,))
-        admin_row = c.fetchone()
-        conn.close()
-
-        if admin_row and check_password_hash(admin_row[1], password):
-            session["admin"] = admin_row[0]
+        admin_id = _admin_login_with_credentials(email, password)
+        if admin_id:
+            session["admin"] = admin_id
             return redirect("/dashboard")
 
         return "Invalid login"
