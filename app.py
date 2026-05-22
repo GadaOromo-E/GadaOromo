@@ -524,6 +524,8 @@ def _is_ios_webview_request() -> bool:
 def _show_admin_review_gate() -> bool:
     if not _is_ios_webview_request():
         return False
+    if require_admin():
+        return False
     req_path = (request.path or "").strip().lower()
     if req_path not in ADMIN_REVIEW_GUARD_PATHS:
         return False
@@ -541,12 +543,24 @@ def _admin_login_with_credentials(email: str, password: str):
         return None
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute("SELECT id, password FROM admin WHERE email=?", (email,))
+    c.execute("SELECT id, password FROM admin WHERE lower(email)=?", (email,))
     admin_row = c.fetchone()
     conn.close()
     if admin_row and check_password_hash(admin_row[1], password):
         return int(admin_row[0])
     return None
+
+
+def _read_review_demo_credentials():
+    """
+    Read Apple review demo credentials from environment variables.
+    Uses os.getenv for production hosts like Railway.
+    """
+    raw_email = (os.getenv("APPLE_REVIEW_DEMO_EMAIL") or "").strip().strip('"').strip("'")
+    raw_password = (os.getenv("APPLE_REVIEW_DEMO_PASSWORD") or "").strip().strip('"').strip("'")
+    email = raw_email.lower()
+    password = raw_password
+    return email, password
 
 
 @app.before_request
@@ -11276,15 +11290,27 @@ def upload_audio(entry_type, entry_id, lang):
 @app.route("/admin", methods=["GET", "POST"])
 def admin_login():
     if (request.args.get("review_demo") or "").strip() == "1":
-        demo_email = (os.environ.get("APPLE_REVIEW_DEMO_EMAIL") or "").strip().lower()
-        demo_password = (os.environ.get("APPLE_REVIEW_DEMO_PASSWORD") or "").strip()
+        demo_email, demo_password = _read_review_demo_credentials()
+        app.logger.info(
+            "review_demo_attempt ios_webview=%s has_demo_email=%s has_demo_password=%s",
+            _is_ios_webview_request(),
+            bool(demo_email),
+            bool(demo_password),
+        )
+
+        if (not demo_email) or (not demo_password):
+            return render_template(
+                "review_access.html",
+                demo_error="Apple Review demo credentials are missing on the server environment.",
+            )
+
         demo_admin_id = _admin_login_with_credentials(demo_email, demo_password)
         if demo_admin_id:
             session["admin"] = demo_admin_id
-            return redirect("/dashboard")
+            return redirect("/dashboard?review_demo=1")
         return render_template(
             "review_access.html",
-            demo_error="Demo access is not configured. Set APPLE_REVIEW_DEMO_EMAIL and APPLE_REVIEW_DEMO_PASSWORD.",
+            demo_error="Apple Review demo credentials are set but did not match an admin account.",
         )
 
     if request.method == "POST":
