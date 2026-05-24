@@ -32,8 +32,12 @@
     <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
     <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
     <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
-    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
-    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">Donate</a>
+    {% endif %}
+    {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">Admin login</a>
+    {% endif %}
   </aside>
 
   <main class="content" id="main">
@@ -279,3 +283,6 @@ function startVoice(){
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1"></script>
 </body>
 </html>
+
+
+

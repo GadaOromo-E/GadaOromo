@@ -52,8 +52,12 @@
     <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">📚 Learn</a>
     <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> Library Store</a>
     <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
-    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
-    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+    {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">Donate</a>
+    {% endif %}
+    {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">Admin login</a>
+    {% endif %}
   </aside>
 
   <main class="main">
@@ -103,3 +107,6 @@
 <script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260120"></script>
 </body>
 </html>
+
+
+

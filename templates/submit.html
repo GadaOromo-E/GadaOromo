@@ -24,7 +24,7 @@
           <a class="btn" href="/">🏠 Home</a>
           <a class="btn" href="/translate">🌍 Translate</a>
           <a class="btn" href="/learn">📚 Learn</a>
-          <a class="btn danger" href="/support">❤️ Donate</a>
+          {% if not IS_IOS_WEBVIEW_REQUEST %}<a class="btn danger" href="/support">Donate</a>{% endif %}
         </div>
       </div>
     </div>
@@ -94,6 +94,7 @@
 
 </body>
 </html>
+
 
 
 

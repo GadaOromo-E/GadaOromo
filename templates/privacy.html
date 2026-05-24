@@ -34,7 +34,7 @@
       <a class="btn" href="/">🏠 Home</a>
       <a class="btn" href="/translate">🌍 Translate</a>
       <a class="btn" href="/learn">📚 Learn</a>
-      <a class="btn primary" href="/support">❤️ Donate</a>
+      {% if not IS_IOS_WEBVIEW_REQUEST %}<a class="btn primary" href="/support">Donate</a>{% endif %}
     </div>
   </header>
 
@@ -42,7 +42,7 @@
     <a class="nav-link" href="/">Home</a>
     <a class="nav-link" href="/translate">Translate</a>
     <a class="nav-link" href="/learn">Learn</a>
-    <a class="nav-link" href="/support">Donate</a>
+    {% if not IS_IOS_WEBVIEW_REQUEST %}<a class="nav-link" href="/support">Donate</a>{% endif %}
     <a class="nav-link" href="/submit">Submit Word</a>
     <a class="nav-link" href="/submit_phrase">Submit Phrase</a>
   </nav>
@@ -179,3 +179,4 @@
 
 </body>
 </html>
+

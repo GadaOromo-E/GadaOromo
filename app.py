@@ -9514,6 +9514,9 @@ def read_webbook(id):
 
 @app.route("/support", methods=["GET"])
 def support():
+    if _is_ios_webview_request():
+        # App Store iOS WebView path must not expose donation/payment UI.
+        return redirect(url_for("home"), code=302)
     trending = get_trending(limit=10)
     return render_template("support.html", trending=trending)
 

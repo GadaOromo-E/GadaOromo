@@ -8,6 +8,32 @@
   const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent);
   const isAndroid = /android/i.test(navigator.userAgent);
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isIOSWebView = isIOS && !isSafari;
+
+  function hideForIosAppReview() {
+    if (!isIOSWebView) return;
+    const supportLinkSelectors = [
+      'a[href="/support"]',
+      'a[href="/support/"]',
+      'a[href^="/support?"]',
+    ];
+    document.querySelectorAll(supportLinkSelectors.join(",")).forEach((el) => {
+      el.style.display = "none";
+    });
+    document.querySelectorAll('a[href*="play.google.com"]').forEach((el) => {
+      el.style.display = "none";
+    });
+    document.querySelectorAll('a[href="/admin"], a[href="/admin/"]').forEach((el) => {
+      if (window.location.pathname === "/") {
+        el.style.display = "none";
+      }
+    });
+    const installIds = ["installBtn", "installBtnQuick", "iosInstallHelp"];
+    installIds.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+  }
 
   // ---------- Small helpers ----------
   function vibrate(msOrPattern) {
@@ -140,6 +166,7 @@ const installBtn = document.getElementById("installBtn");
 let deferredPrompt = null;
 
   window.addEventListener("beforeinstallprompt", (e) => {
+    if (isIOSWebView) return;
     e.preventDefault();
     deferredPrompt = e;
 
@@ -149,6 +176,7 @@ let deferredPrompt = null;
 
   if (installBtn) {
     installBtn.addEventListener("click", async () => {
+      if (isIOSWebView) return;
       vibrate(12);
       if (!deferredPrompt) {
         if (isIOS && !isStandalone) {
@@ -169,9 +197,9 @@ let deferredPrompt = null;
 
   // ---------- iOS install helper ----------
   const iosHelp = document.getElementById("iosInstallHelp");
-  if (iosHelp && isIOS && isSafari && !isStandalone) {
+  if (iosHelp && isIOS && isSafari && !isStandalone && !isIOSWebView) {
     iosHelp.style.display = "block";
-  } else if (isIOS && !isStandalone) {
+  } else if (isIOS && !isStandalone && !isIOSWebView) {
     const key = "gadaa_ios_a2hs_seen";
     if (!localStorage.getItem(key)) {
       setTimeout(() => {
@@ -342,6 +370,7 @@ let deferredPrompt = null;
 const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
     || "/service-worker.js";
 
+  hideForIosAppReview();
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
       try {

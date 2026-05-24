@@ -47,8 +47,12 @@
       <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
       <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
       <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
-      <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">❤️ Donate</a>
-      <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">🔒 Admin login</a>
+      {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">Donate</a>
+    {% endif %}
+      {% if not IS_IOS_WEBVIEW_REQUEST %}
+    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">Admin login</a>
+    {% endif %}
     </aside>
 
     <main class="content" id="main">
@@ -138,7 +142,7 @@
         </p>
 
         <div class="library-actions">
-          {% if book.requires_donation %}
+          {% if book.requires_donation and not IS_IOS_WEBVIEW_REQUEST %}
             <p class="library-summary" style="margin:0 0 10px 0;">
               Your donation helps support the Gadaa project and gives access to our free book resources.
             </p>
@@ -147,6 +151,8 @@
             {% else %}
               <span class="muted">Donation link is currently unavailable.</span>
             {% endif %}
+          {% elif book.requires_donation and IS_IOS_WEBVIEW_REQUEST %}
+            <span class="muted">This title is not available in the iOS app build.</span>
           {% elif book.read_url %}
             <a class="btn primary btn-read-strong" href="{{ book.read_url }}">Read Book</a>
           {% elif book.type == 'pdf' %}
@@ -171,3 +177,6 @@
 </div>
 </body>
 </html>
+
+
+
