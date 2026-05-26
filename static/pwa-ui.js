@@ -179,11 +179,7 @@ let deferredPrompt = null;
       if (isIOSWebView) return;
       vibrate(12);
       if (!deferredPrompt) {
-        if (isIOS && !isStandalone) {
-          showToast("On iPhone: Share â†’ Add to Home Screen", 10, 5500);
-        } else {
-          showToast("Install not available yet. Try again later.", 10);
-        }
+        showToast("Install not available yet. Try again later.", 10);
         return;
       }
       deferredPrompt.prompt();
@@ -193,20 +189,6 @@ let deferredPrompt = null;
       if (choice && choice.outcome === "accepted") showToast("Installed âœ…", 30);
       else showToast("Install canceled", 10);
     });
-  }
-
-  // ---------- iOS install helper ----------
-  const iosHelp = document.getElementById("iosInstallHelp");
-  if (iosHelp && isIOS && isSafari && !isStandalone && !isIOSWebView) {
-    iosHelp.style.display = "block";
-  } else if (isIOS && !isStandalone && !isIOSWebView) {
-    const key = "gadaa_ios_a2hs_seen";
-    if (!localStorage.getItem(key)) {
-      setTimeout(() => {
-        showToast("On iPhone: Share â†’ Add to Home Screen to install.", 0, 6500);
-        localStorage.setItem(key, "1");
-      }, 1200);
-    }
   }
 
   // ---------- Service Worker registration + update prompt ----------
