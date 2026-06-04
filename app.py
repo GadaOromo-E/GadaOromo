@@ -15065,3 +15065,12 @@ if __name__ == "__main__":
 
 
 
+
+@app.route('/app-ads.txt')
+def app_ads_txt():
+    return app.send_static_file('app-ads.txt')
+
+@app.route('/ads.txt')
+def ads_txt():
+    return app.send_static_file('ads.txt')
+
