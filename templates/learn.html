@@ -33,31 +33,201 @@
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
 
   <style>
-    .learn-word-text {
-      vertical-align: middle;
-    }
+    /* existing audio-button styles */
+    .learn-word-text { vertical-align: middle; }
     .learn-audio-inline {
-      margin-left: 6px;
-      border: none;
-      background: transparent;
-      padding: 0;
-      font-size: 15px;
-      line-height: 1;
-      cursor: pointer;
-      vertical-align: middle;
-      opacity: 0.92;
+      margin-left: 6px; border: none; background: transparent;
+      padding: 0; font-size: 15px; line-height: 1; cursor: pointer;
+      vertical-align: middle; opacity: .92;
       transition: opacity .12s ease, transform .12s ease;
     }
-    .learn-audio-inline:hover {
-      opacity: 0.8;
+    .learn-audio-inline:hover { opacity: .8; }
+    .learn-audio-inline:focus-visible { outline: 2px solid rgba(0,0,0,.2); outline-offset: 2px; }
+    .learn-audio-inline.is-playing { transform: scale(1.08); }
+
+    /* ── 3-mode learn UI ── */
+    .lrn-tabs {
+      display: flex; gap: 6px; margin: 14px 0 0; flex-wrap: wrap;
     }
-    .learn-audio-inline:focus-visible {
-      outline: 2px solid rgba(0, 0, 0, 0.2);
-      outline-offset: 2px;
+    .lrn-tab {
+      flex: 1; min-width: 88px; padding: 10px 8px;
+      border-radius: var(--radiusSm); border: 2px solid var(--black);
+      background: #fff; color: var(--black); font-weight: 700;
+      font-size: .86rem; cursor: pointer; transition: all .15s;
     }
-    .learn-audio-inline.is-playing {
-      transform: scale(1.08);
+    .lrn-tab:hover { border-color: var(--red); color: var(--red); background: #fff; }
+    .lrn-tab.active { background: var(--red); color: #fff; border-color: var(--red); }
+    .lrn-tab.active:hover { background: var(--redHover); border-color: var(--redHover); }
+
+    .lrn-controls-row {
+      display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
     }
+    .lrn-control-group {
+      display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 110px;
+    }
+    .lrn-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--muted);
+    }
+    .lrn-arrow {
+      padding-bottom: 12px; font-size: 1.1rem; color: var(--muted); flex-shrink: 0;
+    }
+
+    /* Read mode – anchor card */
+    .lrn-anchor-card {
+      position: relative; overflow: hidden;
+      background: #ffffff; color: #111111;
+      border: 1px solid #e4e4e4;
+      border-radius: 14px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.05);
+      padding: 16px 18px; margin-bottom: 10px;
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+      transition: transform .18s ease, box-shadow .22s ease, border-color .22s ease;
+    }
+    .lrn-anchor-card::after {
+      content: ""; position: absolute; left: 0; bottom: 0;
+      width: 100%; height: 4px;
+      background: linear-gradient(90deg, #111 0 50%, #c40000 50% 100%);
+      transform: scaleX(1);
+    }
+    .lrn-anchor-lang {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .8px; color: rgba(17,17,17,0.7); margin-bottom: 6px;
+    }
+    .lrn-anchor-text { font-size: 1.2rem; font-weight: 700; line-height: 1.4; color: #111111; }
+    .lrn-anchor-audio {
+      flex-shrink: 0; background: transparent;
+      border: 1px solid #e4e4e4; color: #111111;
+      border-radius: 12px; padding: 7px 14px;
+      font-size: 1rem; cursor: pointer; width: auto; transition: all .12s;
+    }
+    .lrn-anchor-audio:hover { border-color: #c40000; color: #c40000; background: rgba(196,0,0,.05); }
+
+    /* Read mode – language card grid */
+    .lrn-lang-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    }
+    @media (max-width: 420px) { .lrn-lang-grid { grid-template-columns: 1fr; } }
+    .lrn-mode > .card { border-top: 3px solid var(--red); }
+    .lrn-lang-card {
+      position: relative; overflow: hidden;
+      background: #ffffff; color: #111111;
+      border: 1px solid #e4e4e4;
+      border-radius: 14px; padding: 10px 12px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.05);
+      display: flex; flex-direction: column; gap: 5px;
+      transition: transform .18s ease, box-shadow .22s ease, border-color .22s ease;
+    }
+    .lrn-lang-card::after {
+      content: ""; position: absolute; left: 0; bottom: 0;
+      width: 100%; height: 4px;
+      background: linear-gradient(90deg, #111 0 50%, #c40000 50% 100%);
+      transform: scaleX(0); transform-origin: center; transition: transform .2s ease;
+    }
+    .lrn-lang-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 26px rgba(0,0,0,0.10);
+      border-color: #d3d3d3;
+    }
+    .lrn-lang-card:hover::after { transform: scaleX(1); }
+    .lrn-lang-card-header {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .lrn-lang-name {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--muted);
+    }
+    .lrn-card-audio {
+      background: transparent; border: 1px solid var(--border); color: var(--black);
+      border-radius: 6px; padding: 2px 8px; font-size: 13px;
+      cursor: pointer; width: auto; line-height: 1.5; transition: all .12s;
+    }
+    .lrn-card-audio:hover { border-color: var(--red); color: var(--red); background: transparent; }
+    .lrn-lang-text {
+      font-size: .97rem; line-height: 1.4; color: var(--text); word-break: break-word;
+    }
+    .lrn-lang-empty { color: var(--muted); font-style: italic; font-size: .9rem; }
+
+    /* Nav row */
+    .lrn-nav-row {
+      display: flex; gap: 10px; align-items: center; justify-content: space-between;
+    }
+    .lrn-progress {
+      font-size: .9rem; font-weight: 700; color: var(--muted); flex: 1; text-align: center;
+    }
+
+    /* Quiz & Listen – question box */
+    .lrn-question-box {
+      background: #fafafa; border: 1px solid var(--border);
+      border-left: 4px solid var(--red); border-radius: var(--radiusSm);
+      padding: 14px 16px; margin-bottom: 12px;
+    }
+    .lrn-question-label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .5px; color: var(--muted); margin-bottom: 6px;
+    }
+    .lrn-question-text { font-size: 1.1rem; font-weight: 700; line-height: 1.4; }
+
+    /* Options grid */
+    .lrn-options-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px;
+    }
+    @media (max-width: 380px) { .lrn-options-grid { grid-template-columns: 1fr; } }
+    .lrn-opt {
+      padding: 10px 12px; border: 2px solid var(--border);
+      border-radius: var(--radiusSm); background: #fff;
+      color: var(--text); font-size: .93rem; font-weight: 500;
+      cursor: pointer; text-align: left; line-height: 1.4; width: 100%;
+      transition: border-color .12s, background .12s;
+    }
+    .lrn-opt:hover:not(:disabled) { border-color: var(--red); background: #fff8f8; }
+    .lrn-opt.correct { background: #e6f9ed; border-color: #2e7d32; color: #1b5e20; }
+    .lrn-opt.wrong   { background: #fde8e8; border-color: var(--red); color: #8f0000; }
+    .lrn-opt:disabled { cursor: default; }
+
+    .lrn-feedback {
+      padding: 9px 14px; border-radius: var(--radiusSm);
+      font-weight: 700; margin-bottom: 10px; font-size: .93rem; display: none;
+    }
+    .lrn-feedback.correct { background: #e6f9ed; color: #1b5e20; display: block; }
+    .lrn-feedback.wrong   { background: #fde8e8; color: #8f0000; display: block; }
+
+    .lrn-score {
+      font-size: .82rem; color: var(--muted); text-align: right; margin-bottom: 6px;
+    }
+    .lrn-next-btn { display: none; margin-top: 2px; }
+    .lrn-next-btn.visible { display: block; }
+
+    /* Listening – play button */
+    .lrn-play-btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 14px 20px; background: var(--red); color: #fff;
+      border: none; border-radius: var(--radius); font-size: 1.05rem;
+      font-weight: 800; cursor: pointer; width: 100%; margin-bottom: 14px;
+    }
+    .lrn-play-btn:hover { background: var(--redHover); }
+    .lrn-play-btn.playing { background: #333; }
+
+    /* Speed controls */
+    .lrn-speed-row { display: flex; gap: 5px; }
+    .lrn-speed-btn {
+      flex: 1; padding: 7px 4px; border: 2px solid var(--border);
+      border-radius: var(--radiusSm); background: #fff; color: var(--black);
+      font-size: .82rem; font-weight: 700; cursor: pointer; width: auto;
+    }
+    .lrn-speed-btn:hover { border-color: var(--red); color: var(--red); background: #fff; }
+    .lrn-speed-btn.active { background: var(--black); color: #fff; border-color: var(--black); }
+
+    .lrn-listen-prompt {
+      font-size: .93rem; font-weight: 700; color: var(--muted);
+      margin-bottom: 10px; text-align: center;
+    }
+
+    .lrn-empty {
+      padding: 20px 0; color: var(--muted); font-style: italic; text-align: center;
+    }
+    .lrn-ad { margin: 10px 0; }
+    .lrn-ad ins { display: block; }
   </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696" crossorigin="anonymous"></script></head>
 <body>
@@ -101,7 +271,7 @@
        target="_blank"
        rel="noopener noreferrer"
        aria-label="Download on App Store">
-      <span aria-hidden="true"></span>
+      <span aria-hidden="true"></span>
       <span>Download on App Store</span>
     </a>
   </div>
@@ -167,91 +337,140 @@
   </aside>
 
   <main class="content" id="main">
-    <section class="card">
-      <h2>Practice</h2>
-      <div class="row" style="margin-top:12px;">
-        <select id="learnDirection">
-          <option value="om_en">Oromo to English</option>
-          <option value="en_om">English to Oromo</option>
-        </select>
-        <button type="button" onclick="openTranslator()">Start Practice</button>
-      </div>
-    </section>
 
-    <section class="card">
-      <h2>Multilingual Study Table</h2>
-      {% if learn_rows and learn_rows|length > 0 %}
-        <div style="overflow-x:auto; margin-top:12px;">
-          <table style="width:100%; border-collapse:collapse;">
-            <thead>
-              <tr>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">English</th>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Amharic</th>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Arabic</th>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">French</th>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Chinese</th>
-                <th style="text-align:left; border-bottom:1px solid rgba(0,0,0,.12); padding:8px;">Oromo</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in learn_rows %}
-                <tr data-entry-type="{{ row.entry_type }}" data-entry-id="{{ row.entry_id }}">
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text">{{ row.english }}</span>
-                    {% if row.audio.en %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.en }}" aria-label="Play English pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text">{{ row.am or "-" }}</span>
-                    {% if row.audio.am %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.am }}" aria-label="Play Amharic pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text" dir="rtl">{{ row.ar or "-" }}</span>
-                    {% if row.audio.ar %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.ar }}" aria-label="Play Arabic pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text">{{ row.fr or "-" }}</span>
-                    {% if row.audio.fr %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.fr }}" aria-label="Play French pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text">{{ row['zh-CN'] or "-" }}</span>
-                    {% if row.audio['zh-CN'] %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio['zh-CN'] }}" aria-label="Play Chinese pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                  <td style="padding:8px; border-bottom:1px solid rgba(0,0,0,.08);">
-                    <span class="learn-word-text">{{ row.oromo or "-" }}</span>
-                    {% if row.audio.oromo %}
-                      <button class="learn-audio-inline" type="button" data-audio="{{ row.audio.oromo }}" aria-label="Play Oromo pronunciation">🔊</button>
-                    {% endif %}
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
+    <!-- hidden select kept for openTranslatorWithText compatibility -->
+    <select id="learnDirection" style="display:none">
+      <option value="om_en">Oromo to English</option>
+      <option value="en_om">English to Oromo</option>
+    </select>
+
+    <!-- ── Mode tabs ── -->
+    <div class="lrn-tabs" role="tablist">
+      <button class="lrn-tab active" data-mode="read" role="tab" aria-selected="true">📖 Read &amp; Listen</button>
+      <button class="lrn-tab" data-mode="quiz" role="tab" aria-selected="false">🧠 Quiz</button>
+      <button class="lrn-tab" data-mode="listen" role="tab" aria-selected="false">🎧 Listening</button>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         READ & LISTEN
+    ══════════════════════════════════════ -->
+    <div id="mode-read" class="lrn-mode">
+      <div class="card">
+        <div class="lrn-controls-row">
+          <div class="lrn-control-group">
+            <label class="lrn-label" for="anchorLangSel">Anchor language</label>
+            <select id="anchorLangSel">
+              <option value="english">🇬🇧 English</option>
+              <option value="oromo">🌿 Oromo</option>
+              <option value="am">🇪🇹 Amharic</option>
+              <option value="ar">🇸🇦 Arabic</option>
+              <option value="fr">🇫🇷 French</option>
+              <option value="zh-CN">🇨🇳 Chinese</option>
+            </select>
+          </div>
         </div>
-      {% else %}
-        <p class="muted" style="margin-top:10px;">No approved words/phrases found yet.</p>
-      {% endif %}
-    </section>
 
-    <section class="card">
-      <h2>Learning plan (simple)</h2>
-      <div class="subtle">No accounts needed. Just practice every day.</div>
-      <div style="margin-top:10px; line-height:1.5;">
-        <p><b>Day 1-3:</b> Learn 10 common words/day</p>
-        <p><b>Day 4-7:</b> Learn 5 phrases/day plus pronunciation listening</p>
-        <p><b>Week 2:</b> Practice short sentences (use Translator)</p>
-        <p><b>Oromo audio:</b> If you can, record pronunciation to help the community.</p>
+        <div id="read-anchor" style="margin-top:14px;"></div>
+
+        <!-- Ad unit 1: between anchor card and translation grid -->
+        <div class="lrn-ad">
+          <ins class="adsbygoogle"
+               style="display:block"
+               data-ad-client="ca-pub-5940649678566696"
+               data-ad-slot="7308967771"
+               data-ad-format="auto"
+               data-full-width-responsive="true"></ins>
+          <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+        </div>
+
+        <div id="read-langs"></div>
+
+        <div class="lrn-nav-row" style="margin-top:14px;">
+          <button class="btn" type="button" id="readPrev">◀ Prev</button>
+          <span id="read-progress" class="lrn-progress">—</span>
+          <button class="btn primary" type="button" id="readNext">Next ▶</button>
+        </div>
+
+        <!-- Ad unit 2: below Prev/Next navigation -->
+        <div class="lrn-ad" style="margin-top:10px;">
+          <ins class="adsbygoogle"
+               style="display:block"
+               data-ad-client="ca-pub-5940649678566696"
+               data-ad-slot="6241778200"
+               data-ad-format="auto"
+               data-full-width-responsive="true"></ins>
+          <script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
+        </div>
       </div>
-    </section>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         QUIZ
+    ══════════════════════════════════════ -->
+    <div id="mode-quiz" class="lrn-mode" style="display:none">
+      <div class="card">
+        <div class="lrn-controls-row">
+          <div class="lrn-control-group">
+            <label class="lrn-label" for="quizFrom">From</label>
+            <select id="quizFrom">
+              <option value="english">🇬🇧 English</option>
+              <option value="oromo">🌿 Oromo</option>
+              <option value="am">🇪🇹 Amharic</option>
+              <option value="ar">🇸🇦 Arabic</option>
+              <option value="fr">🇫🇷 French</option>
+              <option value="zh-CN">🇨🇳 Chinese</option>
+            </select>
+          </div>
+          <span class="lrn-arrow">→</span>
+          <div class="lrn-control-group">
+            <label class="lrn-label" for="quizTo">To</label>
+            <select id="quizTo">
+              <option value="oromo">🌿 Oromo</option>
+              <option value="english">🇬🇧 English</option>
+              <option value="am">🇪🇹 Amharic</option>
+              <option value="ar">🇸🇦 Arabic</option>
+              <option value="fr">🇫🇷 French</option>
+              <option value="zh-CN">🇨🇳 Chinese</option>
+            </select>
+          </div>
+          <button class="btn primary" type="button" id="quizStartBtn" style="flex:none; align-self:flex-end;">Start</button>
+        </div>
+
+        <div id="quiz-content" style="margin-top:14px;"></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         LISTENING
+    ══════════════════════════════════════ -->
+    <div id="mode-listen" class="lrn-mode" style="display:none">
+      <div class="card">
+        <div class="lrn-controls-row">
+          <div class="lrn-control-group">
+            <label class="lrn-label" for="listenLangSel">Listen in</label>
+            <select id="listenLangSel">
+              <option value="oromo">🌿 Oromo</option>
+              <option value="english">🇬🇧 English</option>
+              <option value="am">🇪🇹 Amharic</option>
+              <option value="ar">🇸🇦 Arabic</option>
+              <option value="fr">🇫🇷 French</option>
+              <option value="zh-CN">🇨🇳 Chinese</option>
+            </select>
+          </div>
+          <div class="lrn-control-group">
+            <span class="lrn-label">Speed</span>
+            <div class="lrn-speed-row">
+              <button class="lrn-speed-btn" data-speed="0.5">0.5×</button>
+              <button class="lrn-speed-btn active" data-speed="1">1×</button>
+              <button class="lrn-speed-btn" data-speed="1.5">1.5×</button>
+            </div>
+          </div>
+          <button class="btn primary" type="button" id="listenStartBtn" style="flex:none; align-self:flex-end;">Start</button>
+        </div>
+
+        <div id="listen-content" style="margin-top:14px;"></div>
+      </div>
+    </div>
 
     {% if trending %}
       <section class="card">
@@ -298,11 +517,469 @@ function openTranslatorWithText(text){
 }
 </script>
 
+<!-- Learn data + 3-mode engine -->
+<script>
+window.LEARN_ROWS = {{ learn_rows | tojson }};
+
+(function () {
+  'use strict';
+
+  var LANGS = [
+    { key: 'english', audioKey: 'en',    label: 'English', flag: '🇬🇧', dir: 'ltr' },
+    { key: 'oromo',   audioKey: 'oromo', label: 'Oromo',   flag: '🌿',  dir: 'ltr' },
+    { key: 'am',      audioKey: 'am',    label: 'Amharic', flag: '🇪🇹', dir: 'ltr' },
+    { key: 'ar',      audioKey: 'ar',    label: 'Arabic',  flag: '🇸🇦', dir: 'rtl' },
+    { key: 'fr',      audioKey: 'fr',    label: 'French',  flag: '🇫🇷', dir: 'ltr' },
+    { key: 'zh-CN',   audioKey: 'zh-CN', label: 'Chinese', flag: '🇨🇳', dir: 'ltr' },
+  ];
+
+  var ROWS = window.LEARN_ROWS || [];
+
+  function getLang(key) {
+    for (var i = 0; i < LANGS.length; i++) { if (LANGS[i].key === key) return LANGS[i]; }
+    return LANGS[0];
+  }
+  function getText(row, key) { return (row[key] || '').trim(); }
+  function getAudio(row, audioKey) { return ((row.audio || {})[audioKey] || '').trim(); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+
+  /* ── Shared audio (quiz / listen modes use this; read mode uses audio.js) ── */
+  var _sharedAudio = null;
+  function playUrl(url, speed) {
+    if (_sharedAudio) { try { _sharedAudio.pause(); } catch (e) {} _sharedAudio = null; }
+    if (!url) return null;
+    var a = new Audio(url);
+    a.playbackRate = speed || 1;
+    _sharedAudio = a;
+    a.addEventListener('ended', function () { if (_sharedAudio === a) _sharedAudio = null; });
+    a.addEventListener('error', function () { if (_sharedAudio === a) _sharedAudio = null; });
+    a.play().catch(function () {});
+    return a;
+  }
+
+  /* ══════════════════════════════════════════
+     MODE SWITCHING
+  ══════════════════════════════════════════ */
+  function switchMode(mode) {
+    document.querySelectorAll('.lrn-mode').forEach(function (el) { el.style.display = 'none'; });
+    document.querySelectorAll('.lrn-tab').forEach(function (el) {
+      el.classList.remove('active');
+      el.setAttribute('aria-selected', 'false');
+    });
+    var modeEl = document.getElementById('mode-' + mode);
+    var tabEl  = document.querySelector('.lrn-tab[data-mode="' + mode + '"]');
+    if (modeEl) modeEl.style.display = '';
+    if (tabEl)  { tabEl.classList.add('active'); tabEl.setAttribute('aria-selected', 'true'); }
+    if (mode === 'read')   renderRead();
+    if (mode === 'quiz')   renderQuiz();
+    if (mode === 'listen') renderListen();
+  }
+
+  /* ══════════════════════════════════════════
+     READ & LISTEN
+  ══════════════════════════════════════════ */
+  var readIdx    = 0;
+  var anchorKey  = 'english';
+
+  function renderRead() {
+    var elAnchor = document.getElementById('read-anchor');
+    var elLangs  = document.getElementById('read-langs');
+    var prev     = document.getElementById('readPrev');
+    var next     = document.getElementById('readNext');
+    var prog     = document.getElementById('read-progress');
+    if (!elAnchor || !elLangs) return;
+
+    if (!ROWS.length) {
+      elAnchor.innerHTML = '<p class="lrn-empty">No sentences available yet.</p>';
+      elLangs.innerHTML  = '';
+      if (prev) prev.disabled = true;
+      if (next) next.disabled = true;
+      if (prog) prog.textContent = '0 / 0';
+      return;
+    }
+
+    var row    = ROWS[readIdx];
+    var anchor = getLang(anchorKey);
+    var others = LANGS.filter(function (l) { return l.key !== anchorKey; });
+
+    var anchorText  = getText(row, anchorKey);
+    var anchorAudio = getAudio(row, anchor.audioKey);
+
+    /* ── Anchor card ── */
+    var aHtml = '<div class="lrn-anchor-card">';
+    aHtml += '<div style="flex:1;min-width:0">';
+    aHtml += '<div class="lrn-anchor-lang">' + esc(anchor.flag) + ' ' + esc(anchor.label) + '</div>';
+    aHtml += '<div class="lrn-anchor-text" dir="' + esc(anchor.dir) + '">';
+    aHtml += anchorText ? esc(anchorText) : '<em style="opacity:.5">—</em>';
+    aHtml += '</div></div>';
+    if (anchorAudio) {
+      aHtml += '<button class="lrn-anchor-audio learn-audio-inline" type="button"'
+             + ' data-audio="' + esc(anchorAudio) + '"'
+             + ' aria-label="Play ' + esc(anchor.label) + ' audio">🔊</button>';
+    }
+    aHtml += '</div>';
+    elAnchor.innerHTML = aHtml;
+
+    /* ── Translation grid ── */
+    var lHtml = '<div class="lrn-lang-grid">';
+    others.forEach(function (lang) {
+      var text  = getText(row, lang.key);
+      var audio = getAudio(row, lang.audioKey);
+      lHtml += '<div class="lrn-lang-card">';
+      lHtml += '<div class="lrn-lang-card-header">';
+      lHtml += '<span class="lrn-lang-name">' + esc(lang.flag) + ' ' + esc(lang.label) + '</span>';
+      if (audio) {
+        lHtml += '<button class="lrn-card-audio learn-audio-inline" type="button"'
+               + ' data-audio="' + esc(audio) + '"'
+               + ' aria-label="Play ' + esc(lang.label) + '">🔊</button>';
+      }
+      lHtml += '</div>';
+      lHtml += '<div class="lrn-lang-text' + (text ? '' : ' lrn-lang-empty') + '"'
+             + ' dir="' + esc(lang.dir) + '">'
+             + (text ? esc(text) : '—') + '</div>';
+      lHtml += '</div>';
+    });
+    lHtml += '</div>';
+    elLangs.innerHTML = lHtml;
+
+    if (prog) prog.textContent = (readIdx + 1) + ' / ' + ROWS.length;
+    if (prev) prev.disabled = ROWS.length <= 1;
+    if (next) next.disabled = ROWS.length <= 1;
+  }
+
+  /* ══════════════════════════════════════════
+     QUIZ
+  ══════════════════════════════════════════ */
+  var quizFromKey  = 'english';
+  var quizToKey    = 'oromo';
+  var quizPool     = [];
+  var quizOrder    = [];
+  var quizIdx      = 0;
+  var quizAnswered = false;
+  var quizScore    = { correct: 0, total: 0 };
+  var _quizTimer   = null;
+
+  function buildQuizPool() {
+    var fk = quizFromKey, tk = quizToKey;
+    quizPool  = ROWS.filter(function (r) { return getText(r, fk) && getText(r, tk); });
+    quizOrder = shuffle(quizPool.map(function (_, i) { return i; }));
+  }
+
+  function renderQuiz() {
+    var el = document.getElementById('quiz-content');
+    if (!el) return;
+
+    if (quizFromKey === quizToKey) {
+      el.innerHTML = '<p class="lrn-empty">Please select different "From" and "To" languages.</p>';
+      return;
+    }
+
+    if (!quizPool.length) buildQuizPool();
+
+    if (quizPool.length < 4) {
+      el.innerHTML = '<p class="lrn-empty">Not enough sentences for this language pair. Try different languages.</p>';
+      return;
+    }
+
+    var fromLang = getLang(quizFromKey);
+    var toLang   = getLang(quizToKey);
+    var rowIdx   = quizOrder[quizIdx % quizOrder.length];
+    var row      = quizPool[rowIdx];
+    var question = getText(row, quizFromKey);
+    var correct  = getText(row, quizToKey);
+
+    var others = quizPool.filter(function (r) { return getText(r, quizToKey) !== correct; });
+    var wrongs  = shuffle(others).slice(0, 3).map(function (r) { return getText(r, quizToKey); });
+    var options = shuffle([correct].concat(wrongs));
+
+    var html = '';
+    html += '<div class="lrn-score">Score: ' + quizScore.correct + ' / ' + quizScore.total + '</div>';
+    html += '<div class="lrn-question-box">';
+    html += '<div class="lrn-question-label">'
+          + esc(fromLang.flag) + ' ' + esc(fromLang.label)
+          + ' &rarr; ' + esc(toLang.flag) + ' ' + esc(toLang.label) + '</div>';
+    html += '<div class="lrn-question-text" dir="' + esc(fromLang.dir) + '">' + esc(question) + '</div>';
+    html += '</div>';
+
+    html += '<div class="lrn-options-grid">';
+    options.forEach(function (opt) {
+      html += '<button class="lrn-opt" type="button"'
+            + ' data-selected="' + esc(opt) + '"'
+            + ' data-correct="' + esc(correct) + '"'
+            + ' dir="' + esc(toLang.dir) + '">'
+            + esc(opt) + '</button>';
+    });
+    html += '</div>';
+
+    html += '<div class="lrn-feedback" id="quiz-feedback"></div>';
+    html += '<button class="btn primary lrn-next-btn" id="quizNextBtn" type="button">Next ▶</button>';
+
+    el.innerHTML = html;
+  }
+
+  function handleQuizAnswer(btn) {
+    if (quizAnswered) return;
+    quizAnswered = true;
+    quizScore.total++;
+
+    var selected = btn.dataset.selected;
+    var correct  = btn.dataset.correct;
+    var isRight  = selected === correct;
+    if (isRight) quizScore.correct++;
+
+    document.querySelectorAll('#quiz-content .lrn-opt').forEach(function (b) {
+      b.disabled = true;
+      if (b.dataset.selected === correct) b.classList.add('correct');
+      else if (b === btn) b.classList.add('wrong');
+    });
+
+    var fb = document.getElementById('quiz-feedback');
+    if (fb) {
+      fb.className = 'lrn-feedback ' + (isRight ? 'correct' : 'wrong');
+      fb.textContent = isRight ? '✅ Correct!' : '❌ The answer was: ' + correct;
+    }
+
+    var nb = document.getElementById('quizNextBtn');
+    if (nb) nb.classList.add('visible');
+
+    var scoreEl = document.querySelector('#quiz-content .lrn-score');
+    if (scoreEl) scoreEl.textContent = 'Score: ' + quizScore.correct + ' / ' + quizScore.total;
+
+    if (_quizTimer) clearTimeout(_quizTimer);
+    _quizTimer = setTimeout(advanceQuiz, 2000);
+  }
+
+  function advanceQuiz() {
+    if (_quizTimer) { clearTimeout(_quizTimer); _quizTimer = null; }
+    quizIdx++;
+    quizAnswered = false;
+    renderQuiz();
+  }
+
+  /* ══════════════════════════════════════════
+     LISTENING
+  ══════════════════════════════════════════ */
+  var listenLangKey  = 'oromo';
+  var listenSpeed    = 1.0;
+  var listenPool     = [];
+  var listenOrder    = [];
+  var listenIdx      = 0;
+  var listenAnswered = false;
+  var listenScore    = { correct: 0, total: 0 };
+  var _listenTimer   = null;
+  var _listenAudio   = null;
+
+  function buildListenPool() {
+    var lk = listenLangKey;
+    var lang = getLang(lk);
+    listenPool  = ROWS.filter(function (r) {
+      return getAudio(r, lang.audioKey) && getText(r, 'english');
+    });
+    listenOrder = shuffle(listenPool.map(function (_, i) { return i; }));
+  }
+
+  function renderListen() {
+    var el = document.getElementById('listen-content');
+    if (!el) return;
+
+    if (!listenPool.length) buildListenPool();
+
+    if (listenPool.length < 4) {
+      el.innerHTML = '<p class="lrn-empty">Not enough audio available for this language. Try a different one.</p>';
+      return;
+    }
+
+    var lang     = getLang(listenLangKey);
+    var rowIdx   = listenOrder[listenIdx % listenOrder.length];
+    var row      = listenPool[rowIdx];
+    var audioUrl = getAudio(row, lang.audioKey);
+    var correctEn = getText(row, 'english');
+
+    var others = listenPool.filter(function (r) { return getText(r, 'english') !== correctEn; });
+    var wrongs  = shuffle(others).slice(0, 3).map(function (r) { return getText(r, 'english'); });
+    var options = shuffle([correctEn].concat(wrongs));
+
+    var html = '';
+    html += '<div class="lrn-score">Score: ' + listenScore.correct + ' / ' + listenScore.total + '</div>';
+    html += '<button class="lrn-play-btn" type="button" id="listenPlayBtn"'
+          + ' data-url="' + esc(audioUrl) + '">'
+          + '▶ Play Audio &nbsp;(' + esc(lang.flag) + ' ' + esc(lang.label) + ')</button>';
+
+    html += '<p class="lrn-listen-prompt">What does this mean in English?</p>';
+
+    html += '<div class="lrn-options-grid">';
+    options.forEach(function (opt) {
+      html += '<button class="lrn-opt" type="button"'
+            + ' data-selected="' + esc(opt) + '"'
+            + ' data-correct="' + esc(correctEn) + '">'
+            + esc(opt) + '</button>';
+    });
+    html += '</div>';
+
+    html += '<div class="lrn-feedback" id="listen-feedback"></div>';
+    html += '<button class="btn primary lrn-next-btn" id="listenNextBtn" type="button">Next ▶</button>';
+
+    el.innerHTML = html;
+  }
+
+  function handleListenPlay(url) {
+    var btn = document.getElementById('listenPlayBtn');
+    if (_listenAudio) { try { _listenAudio.pause(); } catch (e) {} _listenAudio = null; }
+    if (!url) return;
+    if (btn) btn.classList.add('playing');
+    var a = new Audio(url);
+    a.playbackRate = listenSpeed;
+    _listenAudio = a;
+    a.addEventListener('ended', function () {
+      if (_listenAudio === a) _listenAudio = null;
+      if (btn) btn.classList.remove('playing');
+    });
+    a.addEventListener('error', function () {
+      if (_listenAudio === a) _listenAudio = null;
+      if (btn) btn.classList.remove('playing');
+    });
+    a.play().catch(function () { if (btn) btn.classList.remove('playing'); });
+  }
+
+  function handleListenAnswer(btn) {
+    if (listenAnswered) return;
+    listenAnswered = true;
+    listenScore.total++;
+
+    var selected  = btn.dataset.selected;
+    var correct   = btn.dataset.correct;
+    var isRight   = selected === correct;
+    if (isRight) listenScore.correct++;
+
+    document.querySelectorAll('#listen-content .lrn-opt').forEach(function (b) {
+      b.disabled = true;
+      if (b.dataset.selected === correct) b.classList.add('correct');
+      else if (b === btn) b.classList.add('wrong');
+    });
+
+    var fb = document.getElementById('listen-feedback');
+    if (fb) {
+      fb.className = 'lrn-feedback ' + (isRight ? 'correct' : 'wrong');
+      fb.textContent = isRight ? '✅ Correct!' : '❌ The answer was: "' + correct + '"';
+    }
+
+    var nb = document.getElementById('listenNextBtn');
+    if (nb) nb.classList.add('visible');
+
+    var scoreEl = document.querySelector('#listen-content .lrn-score');
+    if (scoreEl) scoreEl.textContent = 'Score: ' + listenScore.correct + ' / ' + listenScore.total;
+
+    if (_listenTimer) clearTimeout(_listenTimer);
+    _listenTimer = setTimeout(advanceListen, 2000);
+  }
+
+  function advanceListen() {
+    if (_listenTimer) { clearTimeout(_listenTimer); _listenTimer = null; }
+    listenIdx++;
+    listenAnswered = false;
+    renderListen();
+  }
+
+  /* ══════════════════════════════════════════
+     GLOBAL EVENT DELEGATION
+  ══════════════════════════════════════════ */
+  document.addEventListener('click', function (e) {
+    /* tabs */
+    var tab = e.target.closest('.lrn-tab');
+    if (tab) { switchMode(tab.dataset.mode); return; }
+
+    /* read – prev/next */
+    if (e.target.closest('#readPrev')) {
+      if (!ROWS.length) return;
+      readIdx = (readIdx - 1 + ROWS.length) % ROWS.length;
+      renderRead(); return;
+    }
+    if (e.target.closest('#readNext')) {
+      if (!ROWS.length) return;
+      readIdx = (readIdx + 1) % ROWS.length;
+      renderRead(); return;
+    }
+
+    /* read – anchor language */
+    /* (handled via anchorLangSel change event below) */
+
+    /* quiz – start / next */
+    if (e.target.closest('#quizStartBtn')) {
+      quizFromKey = (document.getElementById('quizFrom') || {}).value || 'english';
+      quizToKey   = (document.getElementById('quizTo')   || {}).value || 'oromo';
+      quizScore   = { correct: 0, total: 0 };
+      quizIdx     = 0;
+      quizAnswered = false;
+      buildQuizPool();
+      renderQuiz(); return;
+    }
+    if (e.target.closest('#quizNextBtn')) { advanceQuiz(); return; }
+
+    /* quiz – option */
+    var qOpt = e.target.closest('#mode-quiz .lrn-opt');
+    if (qOpt && !qOpt.disabled) { handleQuizAnswer(qOpt); return; }
+
+    /* listen – start / play / next */
+    if (e.target.closest('#listenStartBtn')) {
+      listenLangKey  = (document.getElementById('listenLangSel') || {}).value || 'oromo';
+      listenScore    = { correct: 0, total: 0 };
+      listenIdx      = 0;
+      listenAnswered = false;
+      buildListenPool();
+      renderListen(); return;
+    }
+    var lPlay = e.target.closest('#listenPlayBtn');
+    if (lPlay) { handleListenPlay(lPlay.dataset.url); return; }
+
+    if (e.target.closest('#listenNextBtn')) { advanceListen(); return; }
+
+    /* listen – option */
+    var lOpt = e.target.closest('#mode-listen .lrn-opt');
+    if (lOpt && !lOpt.disabled) { handleListenAnswer(lOpt); return; }
+
+    /* speed buttons */
+    var spd = e.target.closest('.lrn-speed-btn');
+    if (spd) {
+      listenSpeed = parseFloat(spd.dataset.speed) || 1;
+      document.querySelectorAll('.lrn-speed-btn').forEach(function (b) {
+        b.classList.toggle('active', parseFloat(b.dataset.speed) === listenSpeed);
+      });
+      return;
+    }
+  });
+
+  /* anchor language select change */
+  document.addEventListener('change', function (e) {
+    if (e.target && e.target.id === 'anchorLangSel') {
+      anchorKey = e.target.value;
+      renderRead();
+    }
+  });
+
+  /* ── Init ── */
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { renderRead(); });
+  } else {
+    renderRead();
+  }
+
+})();
+</script>
+
 <script src="{{ url_for('static', filename='audio.js') }}?v={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}" data-asset="audio.js" data-asset-version="{{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}?v={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}" data-asset="pwa-ui.js" data-asset-version="{{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}"></script>
 
 </body>
 </html>
-
-
-
