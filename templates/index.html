@@ -14,9 +14,11 @@
     if (/Android/i.test(ua)) {
       document.documentElement.classList.add("is-android");
     }
-    // Capacitor WKWebView: has iPhone/iPad but omits "Safari" from UA string
-    if (/iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua)) {
-      document.documentElement.classList.add("is-ios-app");
+    var isIOS = /iPhone|iPad|iPod/.test(ua);
+    var isWKWebView = !!(window.webkit && window.webkit.messageHandlers);
+    var isCapacitor = !!(window.Capacitor);
+    if (isIOS || isWKWebView || isCapacitor) {
+      document.documentElement.classList.add('is-ios-app');
     }
   })();
 </script>
@@ -193,7 +195,11 @@
     html.is-ios-app [data-ios-hide],
     html.is-ios-app #playBtn,
     html.is-ios-app #installBtn,
-    html.is-ios-app #installBtnQuick {
+    html.is-ios-app #installBtnQuick,
+    html.is-ios-app .admin-login,
+    html.is-ios-app .donate-btn,
+    html.is-ios-app a[href*="admin"],
+    html.is-ios-app a[href*="donate"] {
       display: none !important;
     }
   </style>
