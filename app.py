@@ -15068,17 +15068,15 @@ if __name__ == "__main__":
 
 @app.route('/app-ads.txt')
 def app_ads_txt():
-    content = "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n"
-    resp = make_response(content, 200)
-    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
-    resp.headers["Cache-Control"] = "public, max-age=86400"
-    return resp
+    return "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n", 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'public, max-age=86400',
+    }
 
 @app.route('/ads.txt')
 def ads_txt():
-    content = "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n"
-    resp = make_response(content, 200)
-    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
-    resp.headers["Cache-Control"] = "public, max-age=86400"
-    return resp
+    return "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n", 200, {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'Cache-Control': 'public, max-age=86400',
+    }
 
