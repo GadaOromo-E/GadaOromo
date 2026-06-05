@@ -51,6 +51,12 @@ a:hover{ color: var(--redHover); }
   align-items:flex-start;
   justify-content:space-between;
   gap: 12px;
+
+  /* escape the container's 14px/18px padding so the bar is edge-to-edge */
+  width: auto;
+  margin-top: -14px;
+  margin-left: -18px;
+  margin-right: -18px;
 }
 
 .mini-copy{
