@@ -14,6 +14,10 @@
     if (/Android/i.test(ua)) {
       document.documentElement.classList.add("is-android");
     }
+    // Capacitor WKWebView: has iPhone/iPad but omits "Safari" from UA string
+    if (/iPhone|iPad|iPod/i.test(ua) && !/Safari/i.test(ua)) {
+      document.documentElement.classList.add("is-ios-app");
+    }
   })();
 </script>
 
@@ -181,6 +185,17 @@
       background: #111;
       color: #fff;
     }
+
+    /* Hide web-only elements when running inside Capacitor iOS app */
+    html.is-ios-app .share-card,
+    html.is-ios-app #iosInstallHelp,
+    html.is-ios-app #androidInstallSection,
+    html.is-ios-app [data-ios-hide],
+    html.is-ios-app #playBtn,
+    html.is-ios-app #installBtn,
+    html.is-ios-app #installBtnQuick {
+      display: none !important;
+    }
   </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696"
      crossorigin="anonymous"></script>
@@ -269,10 +284,10 @@
     <a class="side-link{% if current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit_phrase">➕ Submit Phrase</a>
     <a class="side-link{% if current_path.startswith('/recorder') %} current{% endif %}" href="/recorder">🎙 Add Voice</a>
     {% if not IS_IOS_WEBVIEW_REQUEST %}
-    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support">Donate</a>
+    <a class="side-link{% if current_path.startswith('/support') %} current{% endif %}" href="/support" data-ios-hide>Donate</a>
     {% endif %}
     {% if not IS_IOS_WEBVIEW_REQUEST %}
-    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin">Admin login</a>
+    <a class="side-link{% if current_path.startswith('/admin') %} current{% endif %}" href="/admin" data-ios-hide>Admin login</a>
     {% endif %}
   </aside>
 
@@ -292,12 +307,13 @@
       <a class="btn" href="/gadaa-ai">&#129302; Gadaa AI</a>
       <a class="btn" href="/learn">&#128218; Learning</a>
       {% if not IS_IOS_WEBVIEW_REQUEST %}
-      <a class="btn danger" href="/support">&#10084;&#65039; Donate</a>
+      <a class="btn danger" href="/support" data-ios-hide>&#10084;&#65039; Donate</a>
       {% endif %}
       <button id="installBtnQuick" class="btn primary" type="button" style="display:none;">&#11015;&#65039; Install App</button>
     </div>
   </section>
 
+  {% if not IS_IOS_WEBVIEW_REQUEST %}
   <section class="card share-card" aria-labelledby="share-gadaa-title">
     <h2 id="share-gadaa-title" class="share-title">Share Gadaa</h2>
     <p class="muted share-desc">
@@ -316,6 +332,7 @@
       <span id="copyHomeShareFeedback" class="share-feedback" aria-live="polite"></span>
     </div>
   </section>
+  {% endif %}
 
   <section class="card small-note">
   <div class="muted" style="font-weight:600;">
@@ -323,7 +340,7 @@
   </div>
 </section>
     {% if not HIDE_ANDROID_BRANDING %}
-    <div style="margin-top:14px;">
+    <div id="androidInstallSection" style="margin-top:14px;">
       <h2 style="margin-bottom:8px;">Install on Android</h2>
       <div class="muted">Get the app from Google Play:</div>
       <div style="margin-top:8px;">
@@ -345,7 +362,7 @@
            target="_blank"
            rel="noopener noreferrer"
            aria-label="Download on App Store">
-          <span aria-hidden="true"></span>
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 814 1000" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-37.5-155.5-127.4c-42.8-74.3-78-196.2-78-311.5 0-177.8 115.3-272.6 228.5-272.6 60.3 0 110.5 39.5 148.4 39.5 36.4 0 93.2-41.7 161.2-41.7 25.7 0 108.2 2.6 164.5 101.3zm-96.2-193.3c28.2-33.5 47.8-80.6 47.8-127.4 0-6.5-.6-13-1.9-18.2-45.3 1.9-99.1 30.1-131.7 67.5-25.1 28.8-49.4 75.9-49.4 123.7 0 7.1 1.3 14.2 1.9 16.5 2.6.6 6.5 1.3 10.4 1.3 40.2 0 90.1-26.9 122.9-63.4z"/></svg>
           <span>Download on App Store</span>
         </a>
       </div>
@@ -408,6 +425,15 @@
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
+
+<script>
+// Capacitor bridge available after DOM — secondary check covering edge cases
+document.addEventListener("DOMContentLoaded", function () {
+  if (window.Capacitor && window.Capacitor.isNative) {
+    document.documentElement.classList.add("is-ios-app");
+  }
+});
+</script>
 
 </body>
 </html>
