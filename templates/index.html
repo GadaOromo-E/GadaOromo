@@ -14,10 +14,11 @@
     if (/Android/i.test(ua)) {
       document.documentElement.classList.add("is-android");
     }
-    var isIOS = /iPhone|iPad|iPod/.test(ua);
-    var isWKWebView = !!(window.webkit && window.webkit.messageHandlers);
-    var isCapacitor = !!(window.Capacitor);
-    if (isIOS || isWKWebView || isCapacitor) {
+    // Only set is-ios-app when inside the Capacitor native bridge.
+    // window.Capacitor is injected exclusively by Capacitor — it is NOT
+    // present in regular Safari (even on iPhone), so this won't affect
+    // normal website visitors browsing on an iPhone.
+    if (window.Capacitor) {
       document.documentElement.classList.add('is-ios-app');
     }
   })();
