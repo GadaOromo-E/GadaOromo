@@ -15068,9 +15068,17 @@ if __name__ == "__main__":
 
 @app.route('/app-ads.txt')
 def app_ads_txt():
-    return app.send_static_file('app-ads.txt')
+    content = "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n"
+    resp = make_response(content, 200)
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 @app.route('/ads.txt')
 def ads_txt():
-    return app.send_static_file('ads.txt')
+    content = "google.com, pub-5940649678566696, DIRECT, f08c47fec0942fa0\n"
+    resp = make_response(content, 200)
+    resp.headers["Content-Type"] = "text/plain; charset=utf-8"
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
