@@ -913,6 +913,40 @@ header.topbar .copy-name{
   }
 }
 
+/* Desktop web premium styles — not applied to native iOS/Android apps */
+@media (min-width: 1000px) {
+  /* 1. Sidebar menu items */
+  html:not(.is-ios-app) .side-link {
+    font-size: 16px;
+    padding: 14px 16px;
+    min-height: 54px;
+  }
+
+  /* 2. Main content cards */
+  html:not(.is-ios-app) .card {
+    font-size: 15px;
+    padding: 20px 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  html:not(.is-ios-app) .card h2 {
+    font-size: 18px;
+    font-weight: 600;
+  }
+
+  /* 3. Quick-action buttons */
+  html:not(.is-ios-app) .quick-actions .btn {
+    padding: 12px 20px;
+    font-size: 15px;
+  }
+
+  /* 4. General typography — base size + line-height on main content */
+  html:not(.is-ios-app) .main-panel,
+  html:not(.is-ios-app) .content {
+    font-size: 15px;
+    line-height: 1.6;
+  }
+}
+
 /* Native-app style PDF.js reader */
 .pdf-reader-native{
   margin: 0;
