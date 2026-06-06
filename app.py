@@ -13524,6 +13524,73 @@ def _make_lesson_card(entry: dict):
     }
 
 
+def _chat_lookup(q: str, limit: int = 5):
+    """LIKE search across words + phrases, exact matches first."""
+    clean = normalize_text(q)
+    if not clean:
+        return []
+    pat = "%" + clean + "%"
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    results = []
+    seen = set()
+
+    for tbl, etype in (("phrases", "phrase"), ("words", "word")):
+        c.execute(
+            "SELECT id, english, oromo FROM " + tbl
+            + " WHERE status='approved' AND (LOWER(english)=LOWER(?) OR LOWER(oromo)=LOWER(?)) LIMIT ?",
+            (clean, clean, limit),
+        )
+        for r in c.fetchall():
+            k = etype + "_" + str(r[0])
+            if k not in seen and len(results) < limit:
+                seen.add(k)
+                results.append({"type": etype, "id": r[0], "english": r[1] or "", "oromo": r[2] or ""})
+
+    for tbl, etype in (("words", "word"), ("phrases", "phrase")):
+        if len(results) >= limit:
+            break
+        c.execute(
+            "SELECT id, english, oromo FROM " + tbl
+            + " WHERE status='approved' AND (english LIKE ? OR oromo LIKE ?) LIMIT ?",
+            (pat, pat, limit - len(results)),
+        )
+        for r in c.fetchall():
+            k = etype + "_" + str(r[0])
+            if k not in seen and len(results) < limit:
+                seen.add(k)
+                results.append({"type": etype, "id": r[0], "english": r[1] or "", "oromo": r[2] or ""})
+
+    conn.close()
+    return results
+
+
+def _chat_random_words(n: int = 5):
+    """n random approved words that have both EN and OM text."""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute(
+        "SELECT id, english, oromo FROM words "
+        "WHERE status='approved' AND english!='' AND oromo!='' "
+        "ORDER BY RANDOM() LIMIT ?",
+        (n,),
+    )
+    rows = [{"type": "word", "id": r[0], "english": r[1], "oromo": r[2]} for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
+def _chat_best_audio(entry_type: str, entry_id: int, english: str = "", oromo: str = "") -> str:
+    """Best audio URL for an entry — Oromo preferred, falls back to English."""
+    try:
+        audio = _get_saved_audio_for_entry(
+            entry_type, int(entry_id), english_text=english, oromo_text=oromo
+        )
+        return audio.get("oromo") or audio.get("english") or ""
+    except Exception:
+        return ""
+
+
 @app.route("/gadaa-ai", methods=["GET"])
 def gadaa_ai_page():
     trending = get_trending(limit=12)
@@ -13531,87 +13598,145 @@ def gadaa_ai_page():
 
 
 @app.route("/api/gadaa-ai", methods=["POST"])
+@app.route("/api/chat", methods=["POST"])
 def gadaa_ai_api():
-    ok, ip, count = _rate_limit_ok()
+    ok, ip, _count = _rate_limit_ok()
     if not ok:
-        return jsonify({
-            "ok": False,
-            "error": "Too many requests. Please wait 1 minute and try again."
-        }), 429
+        return jsonify({"ok": False, "error": "Too many requests. Please wait a minute."}), 429
 
     data = request.get_json(silent=True) or {}
     msg = (data.get("message") or "").strip()
     if not msg:
         return jsonify({"ok": False, "error": "Empty message"}), 400
 
-    clean = normalize_text(msg)
+    session = data.get("session") or {}
+    clean = normalize_text(msg).lower()
 
-    # basic commands
-    if clean in ("help", "what can you do", "menu"):
+    def resp(reply, audio_url=None, session_out=None):
         return jsonify({
             "ok": True,
-            "reply": {
-                "type": "text",
-                "text": (
-                    "Hi! Iâ€™m **Gadaa AI (free demo)**.\n\n"
-                    "Try:\n"
-                    "- Type a word/phrase in Oromo or English (exact match)\n"
-                    "- Ask: `quiz me` or `lesson`\n"
-                    "- Ask: `suggest <word>`\n\n"
-                    "Note: This demo uses your dictionary database (no paid AI yet)."
+            "reply": reply,
+            "audio_url": audio_url or None,
+            "session": session_out if session_out is not None else {},
+        })
+
+    # ── Quiz answer flow ────────────────────────────────────────────────────────
+    if session.get("mode") == "quiz":
+        questions = session.get("questions") or []
+        idx = int(session.get("idx") or 0)
+        score = int(session.get("score") or 0)
+
+        if 0 <= idx < len(questions):
+            q = questions[idx]
+            expected = normalize_text(q.get("om") or "").lower()
+            given = normalize_text(msg).lower()
+            correct = given == expected
+
+            if correct:
+                score += 1
+                feedback = "Correct! Galatoomi! It's **" + q["om"] + "** (" + q["en"] + ")"
+            else:
+                feedback = "Not quite. The Oromo for *" + q["en"] + "* is **" + q["om"] + "**"
+
+            next_idx = idx + 1
+            if next_idx < len(questions):
+                nq = questions[next_idx]
+                next_q = (
+                    "\n\nQuestion " + str(next_idx + 1) + "/" + str(len(questions))
+                    + ": What is **" + nq["en"] + "** in Oromo?\n\nType your answer."
                 )
-            }
-        })
+                return resp(
+                    feedback + next_q,
+                    session_out={"mode": "quiz", "questions": questions, "idx": next_idx, "score": score},
+                )
+            else:
+                total = len(questions)
+                pct = score / total if total else 0
+                if pct == 1.0:
+                    grade = "Perfect score! Baay'ee gaarii!"
+                elif pct >= 0.6:
+                    grade = "Galatoomi! Great job!"
+                else:
+                    grade = "Keep practicing! Ittuma fufii!"
+                return resp(
+                    feedback + "\n\nQuiz done! You scored **" + str(score) + "/" + str(total) + "**. "
+                    + grade + "\n\nTry: quiz me | teach me | type a word",
+                    session_out={},
+                )
 
-    if clean.startswith("suggest "):
-        term = clean.replace("suggest ", "", 1).strip()
-        sug = _db_suggest(term, limit=8) if term else []
-        if not sug:
-            text = "No suggestions found."
+        return resp("Let's start fresh! Type **quiz me** to begin a new quiz.")
+
+    # ── Greeting ────────────────────────────────────────────────────────────────
+    if clean in ("hello", "hi", "start", "nagaa", "nagaa!", "akkam", "hey"):
+        return resp(
+            "Nagaa! I'm Gadaa AI — your Oromo language teacher!\n\n"
+            "I can help you:\n"
+            "Translate a word or phrase — just type it\n"
+            "Quiz you on Oromo vocabulary — type **quiz me**\n"
+            "Teach you new words — type **teach me**\n\n"
+            "Try: quiz me | teach me | water | bishaan"
+        )
+
+    # ── Quiz start ──────────────────────────────────────────────────────────────
+    if clean in ("quiz me", "quiz", "test me", "quiz!", "test"):
+        words = _chat_random_words(5)
+        if len(words) < 2:
+            return resp("I need more approved words in the dictionary to quiz you. Try: **teach me**")
+        questions = [{"en": w["english"], "om": w["oromo"], "type": w["type"], "id": w["id"]} for w in words]
+        q0 = questions[0]
+        return resp(
+            "Quiz time! I'll ask you " + str(len(questions)) + " questions.\n\n"
+            + "Question 1/" + str(len(questions)) + ": What is **" + q0["en"] + "** in Oromo?\n\nType your answer.",
+            session_out={"mode": "quiz", "questions": questions, "idx": 0, "score": 0},
+        )
+
+    # ── Lesson ──────────────────────────────────────────────────────────────────
+    if clean in ("teach me", "lesson", "learn", "teach me greetings", "words", "vocabulary", "teach"):
+        words = _chat_random_words(8)
+        if not words:
+            return resp("No words found yet. Check back after some words are approved!")
+        lines = ["Let's learn! Here are some Oromo words:\n"]
+        audio_url = None
+        for i, w in enumerate(words, 1):
+            lines.append(str(i) + ". **" + w["english"] + "** = " + w["oromo"])
+            if not audio_url:
+                audio_url = _chat_best_audio(w["type"], w["id"], w["english"], w["oromo"]) or None
+        lines.append("\nTry one: quiz me | type a word to translate")
+        return resp("\n".join(lines), audio_url=audio_url)
+
+    # ── Word / phrase lookup ────────────────────────────────────────────────────
+    results = _chat_lookup(msg, limit=5)
+    if results:
+        r0 = results[0]
+        audio_url = _chat_best_audio(r0["type"], r0["id"], r0["english"], r0["oromo"]) or None
+        en0 = normalize_text(r0["english"] or "").lower()
+        om0 = normalize_text(r0["oromo"] or "").lower()
+        if clean == om0 or om0.startswith(clean):
+            primary = "**" + r0["oromo"] + "** means *" + r0["english"] + "* in English"
         else:
-            text = "Suggestions: " + ", ".join(sug)
-        return jsonify({"ok": True, "reply": {"type": "text", "text": text}})
+            primary = "*" + r0["english"] + "* = **" + r0["oromo"] + "** in Oromo"
+        if len(results) > 1:
+            extras = [r["english"] + " = " + r["oromo"] for r in results[1:3]]
+            primary += "\n\nAlso found:\n" + "\n".join("- " + e for e in extras)
+        return resp(primary + "\n\nTry: quiz me | teach me | type another word", audio_url=audio_url)
 
-    # "quiz me" -> use a trending query if exists, else generic
-    if clean in ("quiz me", "quiz", "test me"):
-        trending = get_trending(limit=1)
-        pick = trending[0][0] if trending else "hello"
-        entry = _db_lookup_word_or_phrase(pick) or _db_lookup_word_or_phrase("hello")
-        if entry:
-            card = _make_lesson_card(entry)
-            return jsonify({"ok": True, "reply": {"type": "card", "card": card}})
-        return jsonify({
-            "ok": True,
-            "reply": {"type": "text", "text": "I need more approved words/phrases to quiz you."}
-        })
-
-    # Normal: try dictionary lookup
-    entry = _db_lookup_word_or_phrase(msg)
-    if entry:
-        card = _make_lesson_card(entry)
-        return jsonify({"ok": True, "reply": {"type": "card", "card": card}})
-
-    # Not found: suggestions
-    sug = _db_suggest(clean, limit=8) if clean else []
+    # ── Fuzzy suggestions ────────────────────────────────────────────────────────
+    sug = _db_suggest(clean, limit=5) if clean else []
     if sug:
-        return jsonify({
-            "ok": True,
-            "reply": {
-                "type": "text",
-                "text": "I couldn't find an exact match. Try one of these: " + ", ".join(sug)
-            }
-        })
+        picks = ", ".join("**" + s + "**" for s in sug[:4])
+        return resp(
+            "I couldn't find an exact match.\n\nDid you mean: " + picks + "?\n\n"
+            "Or try: quiz me | teach me"
+        )
 
-    return jsonify({
-        "ok": True,
-        "reply": {
-            "type": "text",
-            "text": (
-                "I couldn't find that in the dictionary yet.\n"
-                "Tip: try a simpler word, or submit it via **Submit Word / Submit Phrase**."
-            )
-        }
-    })
+    # ── Unknown ──────────────────────────────────────────────────────────────────
+    return resp(
+        "I couldn't find that in the dictionary yet.\n\n"
+        "Try another word, or:\n"
+        "**quiz me** — test your Oromo\n"
+        "**teach me** — learn new words\n"
+        "Submit missing words via the Submit Word page"
+    )
 
 
 @app.cli.command("backfill-translations")

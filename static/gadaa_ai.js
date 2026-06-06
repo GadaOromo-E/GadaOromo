@@ -1,84 +1,152 @@
-(function(){
-  const log = document.getElementById("aiLog");
-  const input = document.getElementById("aiInput");
-  const sendBtn = document.getElementById("aiSend");
-  const statusEl = document.getElementById("aiStatus");
+(function () {
+  "use strict";
 
-  function appendLine(who, text){
-    const prefix = who === "me" ? "🧑‍🎓 You: " : "🤖 Gadaa AI: ";
-    log.textContent += prefix + text + "\n\n";
+  const log      = document.getElementById("aiLog");
+  const input    = document.getElementById("aiInput");
+  const sendBtn  = document.getElementById("aiSend");
+
+  let currentSession = {};
+
+  // ── Markdown-lite renderer ──────────────────────────────────────────────────
+  function mdToHtml(text) {
+    return (text || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/\n/g, "<br>");
+  }
+
+  // ── Add a chat bubble ───────────────────────────────────────────────────────
+  function addBubble(who, html, audioUrl) {
+    const row = document.createElement("div");
+    row.className = "ai-bubble-row " + who;
+
+    const avatar = document.createElement("div");
+    avatar.className = "ai-avatar";
+    avatar.textContent = who === "me" ? "🧑" : "🤖";
+
+    const bubble = document.createElement("div");
+    bubble.className = "ai-bubble";
+    bubble.innerHTML = html;
+
+    if (who === "ai" && audioUrl) {
+      const btn = document.createElement("button");
+      btn.className = "ai-play-btn";
+      btn.title = "Play audio";
+      btn.textContent = "🔊";
+      const url = audioUrl;
+      btn.onclick = function () {
+        try { new Audio(url).play(); } catch (e) { /* ignore */ }
+      };
+      bubble.appendChild(btn);
+    }
+
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    log.appendChild(row);
     log.scrollTop = log.scrollHeight;
   }
 
-  function setStatus(t){ if(statusEl) statusEl.textContent = t || ""; }
+  // ── Typing indicator ────────────────────────────────────────────────────────
+  function showTyping() {
+    const row = document.createElement("div");
+    row.className = "ai-bubble-row ai";
+    row.id = "aiTypingRow";
 
-  async function sendMessage(msg){
+    const avatar = document.createElement("div");
+    avatar.className = "ai-avatar";
+    avatar.textContent = "🤖";
+
+    const typing = document.createElement("div");
+    typing.className = "ai-typing";
+    for (var i = 0; i < 3; i++) {
+      const dot = document.createElement("div");
+      dot.className = "ai-dot";
+      typing.appendChild(dot);
+    }
+
+    row.appendChild(avatar);
+    row.appendChild(typing);
+    log.appendChild(row);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function removeTyping() {
+    const el = document.getElementById("aiTypingRow");
+    if (el) el.remove();
+  }
+
+  // ── Send a message ──────────────────────────────────────────────────────────
+  async function sendMessage(msg) {
     const m = (msg || "").trim();
-    if(!m) return;
+    if (!m) return;
 
-    appendLine("me", m);
-    setStatus("Thinking…");
+    input.value = "";
+    sendBtn.disabled = true;
+    addBubble("me", mdToHtml(m), null);
+    showTyping();
 
-    try{
+    try {
       const res = await fetch("/api/gadaa-ai", {
         method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({message: m})
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: m, session: currentSession }),
       });
 
-      const data = await res.json().catch(()=> ({}));
-      if(!res.ok || !data.ok){
-        const err = data.error || ("Error " + res.status);
-        appendLine("ai", err);
-        setStatus("");
+      const data = await res.json().catch(function () { return {}; });
+      removeTyping();
+
+      if (!res.ok || !data.ok) {
+        addBubble("ai", data.error || "Error " + res.status, null);
         return;
       }
 
-      const reply = data.reply || {};
-      if(reply.type === "card" && reply.card){
-        const c = reply.card;
-        appendLine("ai", `${c.title}\nEN: ${c.english}\nOM: ${c.oromo}`);
-
-        if(Array.isArray(c.examples)){
-          appendLine("ai", "Examples:\n- " + c.examples.join("\n- "));
-        }
-        if(Array.isArray(c.quiz)){
-          appendLine("ai", c.quiz.join("\n"));
-        }
-
-        if(c.audio && c.audio.oromo){
-          appendLine("ai", "🎧 Oromo audio is available on the word page (search it on Home/Translate).");
-        }
-      }else{
-        appendLine("ai", reply.text || "(no reply)");
-      }
-
-      setStatus("");
-    }catch(e){
-      console.error(e);
-      appendLine("ai", "Network error. Please try again.");
-      setStatus("");
+      currentSession = data.session || {};
+      addBubble("ai", mdToHtml(data.reply || "(no reply)"), data.audio_url || null);
+    } catch (e) {
+      removeTyping();
+      addBubble("ai", "Network error. Please try again.", null);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
     }
   }
 
-  function wire(){
-    sendBtn?.addEventListener("click", ()=> sendMessage(input.value));
-    input?.addEventListener("keydown", (e)=>{
-      if(e.key === "Enter"){
-        e.preventDefault();
-        sendBtn.click();
-      }
-    });
+  // ── Wire up UI ──────────────────────────────────────────────────────────────
+  function wire() {
+    if (sendBtn) {
+      sendBtn.addEventListener("click", function () { sendMessage(input.value); });
+    }
+    if (input) {
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); sendMessage(input.value); }
+      });
+    }
 
-    document.querySelectorAll("[data-pick]").forEach(chip=>{
-      chip.addEventListener("click", ()=>{
-        const v = chip.getAttribute("data-pick");
-        if(v) sendMessage(v);
+    // Quick-start chips + trending chips
+    document.querySelectorAll("[data-pick]").forEach(function (chip) {
+      chip.addEventListener("click", function () {
+        var v = chip.getAttribute("data-pick");
+        if (v) sendMessage(v);
       });
     });
 
-    appendLine("ai", "Hi! I’m Gadaa AI (free demo). Type a word/phrase, or try: quiz me");
+    // Welcome message
+    addBubble(
+      "ai",
+      "Nagaa! 👋 I'm <strong>Gadaa AI</strong> — your Oromo language teacher!<br><br>" +
+      "Try: <em>quiz me</em> &nbsp;|&nbsp; <em>teach me</em> &nbsp;|&nbsp; type a word in Oromo or English",
+      null
+    );
+
+    if (input) input.focus();
   }
 
-  document.addEventListener("DOMContentLoaded", wire);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", wire);
+  } else {
+    wire();
+  }
 })();
