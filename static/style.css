@@ -901,6 +901,24 @@ header.topbar .copy-name{
   -webkit-user-drag: none;
 }
 
+/* Desktop web: constrain content to ~960px, topbar stays full viewport width.
+   Skipped for native iOS app (is-ios-app class). Android apps run at phone
+   resolution so the 1000px breakpoint keeps them full-width naturally.
+   Uses % (not vw) so the scrollbar gutter doesn't cause horizontal overflow. */
+@media (min-width: 1000px) {
+  html:not(.is-ios-app) .container {
+    padding-left: max(24px, calc((100% - 912px) / 2));
+    padding-right: max(24px, calc((100% - 912px) / 2));
+  }
+
+  /* Topbar escapes the dynamic side padding to stay edge-to-edge */
+  html:not(.is-ios-app) .topbar {
+    width: auto;
+    margin-left: min(-24px, calc((912px - 100%) / 2));
+    margin-right: min(-24px, calc((912px - 100%) / 2));
+  }
+}
+
 /* Native-app style PDF.js reader */
 .pdf-reader-native{
   margin: 0;
