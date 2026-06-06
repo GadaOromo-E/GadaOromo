@@ -458,17 +458,6 @@
       </div>
     </div>
 
-    {% if trending %}
-      <section class="card">
-        <h2>Trending searches</h2>
-        <div class="chips" style="margin-top:10px;">
-          {% for row in trending %}
-            <button type="button" class="chip" onclick="openTranslatorWithText('{{ row[0]|e }}')">{{ row[0] }}</button>
-          {% endfor %}
-        </div>
-      </section>
-    {% endif %}
-
     <footer class="footer">
       <p>&copy; 2026 Gadaa - Open community dictionary</p>
     </footer>

@@ -9240,7 +9240,6 @@ def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
 @app.route("/learn", methods=["GET"])
 def learn():
     _log_db_context("/learn")
-    trending = get_trending(limit=15)
     learn_rows = _load_learn_rows()
     total_rows_loaded = int(len(learn_rows or []))
     words_loaded_with_audio = 0
@@ -9303,7 +9302,7 @@ def learn():
         "sw_canonical_url": SW_CANONICAL_URL,
     }
     resp = make_response(
-        render_template("learn.html", trending=trending, learn_rows=learn_rows, learn_debug=learn_debug)
+        render_template("learn.html", learn_rows=learn_rows, learn_debug=learn_debug)
     )
     resp.headers["X-Gadaa-Build"] = APP_BUILD_TOKEN
     resp.headers["X-Learn-Template-Version"] = LEARN_TEMPLATE_VERSION
