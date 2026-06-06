@@ -125,21 +125,8 @@
       });
     }
 
-    // Quick-start chips + trending chips
-    document.querySelectorAll("[data-pick]").forEach(function (chip) {
-      chip.addEventListener("click", function () {
-        var v = chip.getAttribute("data-pick");
-        if (v) sendMessage(v);
-      });
-    });
-
     // Welcome message
-    addBubble(
-      "ai",
-      "Nagaa! 👋 I'm <strong>Gadaa AI</strong> — your Oromo language teacher!<br><br>" +
-      "Try: <em>quiz me</em> &nbsp;|&nbsp; <em>teach me</em> &nbsp;|&nbsp; type a word in Oromo or English",
-      null
-    );
+    addBubble("ai", "Nagaa! 👋 Type a word or sentence in Oromo or English.", null);
 
     if (input) input.focus();
   }

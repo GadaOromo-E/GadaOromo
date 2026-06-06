@@ -123,23 +123,6 @@
 .ai-send-btn:active { background: #5a0000; }
 .ai-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ── Chip rows (quick-start + trending) ────────────────────────────── */
-.ai-chip-row  { display: flex; flex-wrap: wrap; gap: 6px; }
-.ai-chip-item {
-  padding: 6px 14px;
-  border-radius: 20px;
-  border: 1.5px solid #ddd;
-  background: #fff;
-  font-size: 13px;
-  cursor: pointer;
-  color: #333;
-  transition: border-color .12s, color .12s;
-  white-space: nowrap;
-}
-.ai-chip-item:hover { border-color: #8B0000; color: #8B0000; }
-.ai-chip-label {
-  font-size: 12px; color: #888; margin-bottom: 8px;
-}
 </style>
 </head>
 <body>
@@ -187,40 +170,17 @@
     <div class="card" style="padding: 0; overflow: hidden;">
       <div id="aiLog" class="ai-log"></div>
       <div class="ai-input-bar">
-        <input id="aiInput" type="text" placeholder="Type in Oromo or English…"
+        <input id="aiInput" type="text" placeholder="Type a word or sentence…"
                autocomplete="off" autocorrect="off" spellcheck="false" />
         <button id="aiSend" class="ai-send-btn" type="button">Send</button>
       </div>
     </div>
-
-    <!-- Quick-start chips -->
-    <div class="card" style="padding-top: 12px; padding-bottom: 14px;">
-      <div class="ai-chip-label">Try:</div>
-      <div class="ai-chip-row">
-        <button class="ai-chip-item" data-pick="quiz me">🎯 Quiz me</button>
-        <button class="ai-chip-item" data-pick="teach me">📚 Teach me</button>
-        <button class="ai-chip-item" data-pick="hello">👋 Hello</button>
-        <button class="ai-chip-item" data-pick="water">water</button>
-        <button class="ai-chip-item" data-pick="bishaan">bishaan</button>
-      </div>
-    </div>
-
-    {% if trending %}
-    <div class="card" style="padding-top: 12px; padding-bottom: 14px;">
-      <div class="ai-chip-label">Trending</div>
-      <div class="ai-chip-row">
-        {% for row in trending %}
-          <span class="ai-chip-item" data-pick="{{ row[0] }}">{{ row[0] }}</span>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
 
   </main>
 </div>
 </div>
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260608"></script>
+<script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260609"></script>
 </body>
 </html>
