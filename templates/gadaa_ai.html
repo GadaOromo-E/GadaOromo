@@ -16,7 +16,6 @@
   })();
 </script>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
-  <!-- PWA -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
 
@@ -28,56 +27,61 @@
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   background: #f7f8fa;
-  border-radius: var(--radius) var(--radius) 0 0;
 }
-.ai-bubble-row {
-  display: flex;
-  gap: 8px;
-  max-width: 86%;
-}
-.ai-bubble-row.me  { align-self: flex-end;   flex-direction: row-reverse; }
-.ai-bubble-row.ai  { align-self: flex-start; }
+
+/* ── Bubble rows ───────────────────────────────────────────────────── */
+.ai-bubble-row        { display: flex; gap: 8px; max-width: 88%; }
+.ai-bubble-row.me     { align-self: flex-end;   flex-direction: row-reverse; }
+.ai-bubble-row.ai     { align-self: flex-start; }
+
+/* ── Avatar ────────────────────────────────────────────────────────── */
 .ai-avatar {
   width: 28px; height: 28px; border-radius: 50%;
-  background: #0b5cff; color: #fff; font-size: 13px;
+  background: #444; color: #fff; font-size: 13px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; margin-top: 2px;
 }
-.ai-bubble-row.me .ai-avatar { background: #555; }
+
+/* ── AI bubble ─────────────────────────────────────────────────────── */
 .ai-bubble {
   background: #fff;
-  border: 1px solid #e4e4e4;
+  border: 1px solid #e2e2e2;
   border-radius: 16px 16px 16px 4px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   font-size: 14px;
   line-height: 1.6;
   max-width: 100%;
   word-break: break-word;
+  color: #1a1a1a;
 }
+
+/* ── User bubble ───────────────────────────────────────────────────── */
 .ai-bubble-row.me .ai-bubble {
-  background: #0b5cff;
+  background: #8B0000;
   color: #fff;
-  border-color: #0b5cff;
+  border-color: #8B0000;
   border-radius: 16px 16px 4px 16px;
 }
+
+/* ── Audio play button inside bubble ───────────────────────────────── */
 .ai-play-btn {
   background: none; border: none; cursor: pointer;
-  font-size: 17px; padding: 0 0 0 6px;
-  vertical-align: middle; opacity: 0.75; line-height: 1;
+  font-size: 16px; padding: 0 0 0 6px;
+  vertical-align: middle; opacity: 0.7; line-height: 1;
 }
 .ai-play-btn:hover { opacity: 1; }
 
 /* ── Typing indicator ──────────────────────────────────────────────── */
 .ai-typing {
   display: flex; align-items: center; gap: 4px;
-  padding: 12px 14px;
-  background: #fff; border: 1px solid #e4e4e4;
+  padding: 12px 16px;
+  background: #fff; border: 1px solid #e2e2e2;
   border-radius: 16px 16px 16px 4px;
 }
 .ai-dot {
-  width: 7px; height: 7px; border-radius: 50%; background: #aaa;
+  width: 7px; height: 7px; border-radius: 50%; background: #bbb;
   animation: aiBounce 1.3s infinite ease-in-out;
 }
 .ai-dot:nth-child(2) { animation-delay: 0.18s; }
@@ -89,23 +93,53 @@
 
 /* ── Input bar ─────────────────────────────────────────────────────── */
 .ai-input-bar {
-  display: flex; gap: 8px; align-items: stretch;
-  padding: 10px 14px;
-  border-top: 1px solid #e4e4e4;
+  display: flex; gap: 8px; align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid #e8e8e8;
   background: #fff;
   border-radius: 0 0 var(--radius) var(--radius);
 }
-.ai-input-bar input { flex: 1; min-width: 0; }
-
-/* ── Suggestion chips ──────────────────────────────────────────────── */
-.ai-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.ai-chip {
-  padding: 5px 12px; border-radius: 20px;
-  border: 1.5px solid #d0d0d0; background: #fff;
-  font-size: 13px; cursor: pointer; transition: all .12s;
-  color: var(--black);
+.ai-input-bar input {
+  flex: 1; min-width: 0;
+  border-radius: 24px;
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1.5px solid #d8d8d8;
+  outline: none;
+  background: #fafafa;
+  transition: border-color .15s;
 }
-.ai-chip:hover { border-color: #0b5cff; color: #0b5cff; }
+.ai-input-bar input:focus { border-color: #8B0000; background: #fff; }
+.ai-send-btn {
+  flex-shrink: 0;
+  background: #8B0000; color: #fff;
+  border: none; border-radius: 24px;
+  padding: 12px 24px;
+  font-size: 14px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: background .15s;
+}
+.ai-send-btn:hover  { background: #6e0000; }
+.ai-send-btn:active { background: #5a0000; }
+.ai-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Chip rows (quick-start + trending) ────────────────────────────── */
+.ai-chip-row  { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-chip-item {
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1.5px solid #ddd;
+  background: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  color: #333;
+  transition: border-color .12s, color .12s;
+  white-space: nowrap;
+}
+.ai-chip-item:hover { border-color: #8B0000; color: #8B0000; }
+.ai-chip-label {
+  font-size: 12px; color: #888; margin-bottom: 8px;
+}
 </style>
 </head>
 <body>
@@ -114,7 +148,6 @@
 <header class="topbar">
   <div class="brand">
     <h1>Gadaa AI</h1>
-    <p class="tagline">Oromo language teacher — powered by the dictionary</p>
   </div>
   <div class="topbar-right">
     <div class="mini-copy">
@@ -152,40 +185,32 @@
 
     <!-- Chat card -->
     <div class="card" style="padding: 0; overflow: hidden;">
-      <div style="padding: 14px 16px 10px; border-bottom: 1px solid #f0f0f0;">
-        <div style="font-weight: 700; font-size: 15px;">🤖 Gadaa AI</div>
-        <div class="muted" style="font-size: 12px; margin-top: 2px;">
-          Type a word to translate · quiz me · teach me
-        </div>
-      </div>
-
       <div id="aiLog" class="ai-log"></div>
-
       <div class="ai-input-bar">
         <input id="aiInput" type="text" placeholder="Type in Oromo or English…"
                autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button id="aiSend" class="btn primary" type="button">Send</button>
+        <button id="aiSend" class="ai-send-btn" type="button">Send</button>
       </div>
     </div>
 
     <!-- Quick-start chips -->
-    <div class="card" style="padding-top: 12px; padding-bottom: 12px;">
-      <div class="muted" style="font-size: 12px; margin-bottom: 8px;">Quick start</div>
-      <div class="ai-chips">
-        <button class="ai-chip" data-pick="quiz me">🎯 Quiz me</button>
-        <button class="ai-chip" data-pick="teach me">📚 Teach me</button>
-        <button class="ai-chip" data-pick="hello">👋 Hello</button>
-        <button class="ai-chip" data-pick="water">water</button>
-        <button class="ai-chip" data-pick="bishaan">bishaan</button>
+    <div class="card" style="padding-top: 12px; padding-bottom: 14px;">
+      <div class="ai-chip-label">Try:</div>
+      <div class="ai-chip-row">
+        <button class="ai-chip-item" data-pick="quiz me">🎯 Quiz me</button>
+        <button class="ai-chip-item" data-pick="teach me">📚 Teach me</button>
+        <button class="ai-chip-item" data-pick="hello">👋 Hello</button>
+        <button class="ai-chip-item" data-pick="water">water</button>
+        <button class="ai-chip-item" data-pick="bishaan">bishaan</button>
       </div>
     </div>
 
     {% if trending %}
-    <div class="card" style="padding-top: 12px; padding-bottom: 12px;">
-      <div class="muted" style="font-size: 12px; margin-bottom: 8px;">Trending searches</div>
-      <div class="chips">
+    <div class="card" style="padding-top: 12px; padding-bottom: 14px;">
+      <div class="ai-chip-label">Trending</div>
+      <div class="ai-chip-row">
         {% for row in trending %}
-          <span class="chip" data-pick="{{ row[0] }}">{{ row[0] }}</span>
+          <span class="ai-chip-item" data-pick="{{ row[0] }}">{{ row[0] }}</span>
         {% endfor %}
       </div>
     </div>
@@ -196,6 +221,6 @@
 </div>
 
 <script src="{{ url_for('static', filename='pwa-ui.js') }}"></script>
-<script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260607"></script>
+<script src="{{ url_for('static', filename='gadaa_ai.js') }}?v=20260608"></script>
 </body>
 </html>
