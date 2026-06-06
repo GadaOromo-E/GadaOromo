@@ -1562,7 +1562,7 @@ IMPORT_MAX_WORDS = 200
 MISSING_OROMO_KEY_SENTINEL = "__missing_oromo__"
 LEARN_RECENT_PHRASE_LIMIT = max(
     10,
-    int((os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or "200").strip() or 200),
+    int((os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or "1000").strip() or 1000),
 )
 
 

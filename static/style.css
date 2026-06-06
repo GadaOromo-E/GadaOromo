@@ -945,6 +945,12 @@ header.topbar .copy-name{
     font-size: 15px;
     line-height: 1.6;
   }
+
+  /* 5. Learn page: keep mode cards at original padding so the tab→card gap
+     stays tight; the generic .card rule above would over-pad them. */
+  html:not(.is-ios-app) .lrn-mode > .card {
+    padding: 14px;
+  }
 }
 
 /* Native-app style PDF.js reader */
