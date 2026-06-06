@@ -14,6 +14,11 @@
     if (/Android/i.test(ua)) {
       document.documentElement.classList.add("is-android");
     }
+    // Detect Android native app: Flutter InAppWebView, injected Android JS bridge,
+    // or the "wv" WebView flag Chrome appends in Android WebView UAs.
+    if (window.flutter_inappwebview || window.Android || (/Android/i.test(ua) && /\bwv\b/.test(ua))) {
+      document.documentElement.classList.add("is-android-app");
+    }
     // window.Capacitor is injected by the Capacitor bridge only — never
     // present in Safari or Chrome, so this won't affect regular visitors.
     if (window.Capacitor) {
@@ -187,10 +192,15 @@
       color: #fff;
     }
 
-    /* Inside Capacitor iOS app only — hide Admin, Donate, and Android install */
+    /* Inside native apps — hide all download/install banners */
+    html.is-capacitor-app #iosInstallHelp,
+    html.is-capacitor-app #android-install,
+    html.is-capacitor-app #playBtn,
     html.is-capacitor-app a[href="/admin"],
     html.is-capacitor-app a[href="/support"],
-    html.is-capacitor-app #android-install { display: none !important; }
+    html.is-android-app #iosInstallHelp,
+    html.is-android-app #android-install,
+    html.is-android-app #playBtn { display: none !important; }
   </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696"
      crossorigin="anonymous"></script>
