@@ -959,6 +959,7 @@ def _resolve_private_pdf_path(book: dict):
     
 @app.context_processor
 def inject_globals():
+    pwa_debug = (not IS_PROD) or (os.environ.get("PWA_DEBUG", "").strip() == "1")
     return dict(
         APP_NAME=APP_NAME,
         SUPPORT_MIN_NOK=SUPPORT_MIN_NOK,
@@ -971,6 +972,7 @@ def inject_globals():
         PWA_UI_JS_VERSION=PWA_UI_JS_VERSION,
         SW_JS_VERSION=SW_JS_VERSION,
         SW_CANONICAL_URL=SW_CANONICAL_URL,
+        PWA_DEBUG=pwa_debug,
         IS_IOS_WEBVIEW_REQUEST=_is_ios_webview_request(),
         HIDE_ANDROID_BRANDING=_is_ios_webview_request(),
     )

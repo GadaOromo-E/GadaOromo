@@ -34,6 +34,7 @@
   <meta name="theme-color" content="#0b5cff">
   <meta name="gadaa-build-token" content="{{ APP_BUILD_TOKEN }}">
   <meta name="gadaa-sw-canonical-url" content="{{ SW_CANONICAL_URL }}">
+  {% if PWA_DEBUG %}<meta name="gadaa-pwa-debug" content="1">{% endif %}
 
   <!-- ✅ iPhone / iOS "real app" -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -276,26 +277,9 @@
 </div>
 </header>
 
-<!-- gadaa-build: {{ APP_BUILD_TOKEN }} -->
 <div class="layout">
   <div class="app-shell">
   {% set current_path = request.path if request is defined else '' %}
-
-  <aside id="gadaaPwaDiagPanel" class="card" style="display:none; margin:10px 12px 0; padding:10px 12px; font-size:.78rem; line-height:1.45; background:#fffbe8; border:1px solid #e8d98a; color:#222;">
-    <strong>PWA diagnostics (temporary)</strong>
-    <div>Build SHA: <code id="gadaaDiagBuildSha">{{ APP_BUILD_TOKEN }}</code></div>
-    <div>APP_BUILD_TOKEN: <code id="gadaaDiagAppBuild">{{ APP_BUILD_TOKEN }}</code></div>
-    <div>Service worker URL: <code id="gadaaDiagSwUrl">{{ SW_CANONICAL_URL }}</code></div>
-    <div>Active cache version: <code id="gadaaDiagCacheVersion">pending…</code></div>
-    <div>PWA mode: <code id="gadaaDiagPwaMode">pending…</code></div>
-    <div>Controller script: <code id="gadaaDiagControllerUrl">pending…</code></div>
-    <div>Active script: <code id="gadaaDiagActiveUrl">pending…</code></div>
-    <div>Cache names: <code id="gadaaDiagCacheNames">pending…</code></div>
-    <div>Page source: <code id="gadaaDiagPageSource">pending…</code></div>
-    <div>X-Gadaa-Build header: <code id="gadaaDiagRespBuild">pending…</code></div>
-    <div>Sidebar DOM: Learn Languages=<code id="gadaaDiagHasLearn">pending…</code> English Class=<code id="gadaaDiagHasEc">pending…</code></div>
-    <div>Force update: <code id="gadaaDiagForceUpdate">pending…</code></div>
-  </aside>
 
   <aside class="side-menu">
     <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
@@ -447,211 +431,7 @@
 
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script>window.__GADAA_SW_URL = "{{ SW_CANONICAL_URL }}";</script>
-<script>
-(function () {
-  'use strict';
-
-  var PAGE_BUILD = "{{ APP_BUILD_TOKEN }}";
-  var EXPECTED_CACHE = "gada-" + PAGE_BUILD;
-  var EXPECTED_SW = "{{ SW_CANONICAL_URL }}";
-  var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
-  var isAndroid = /android/i.test(navigator.userAgent || '');
-
-  function setText(id, value) {
-    var el = document.getElementById(id);
-    if (el) el.textContent = String(value == null ? '' : value);
-  }
-
-  function showPanel() {
-    var panel = document.getElementById('gadaaPwaDiagPanel');
-    if (panel) panel.style.display = 'block';
-  }
-
-  async function listCacheNames() {
-    if (!window.caches || !caches.keys) return [];
-    try { return await caches.keys(); } catch (e) { return []; }
-  }
-
-  function sidebarDomState() {
-    var html = document.body ? document.body.innerHTML : '';
-    return {
-      learnLanguages: html.indexOf('🌍 Learn Languages') !== -1,
-      englishClass: html.indexOf('🎓 English Class') !== -1,
-      oldLearn: /href="\/learn"[^>]*>🎓 Learn</.test(html)
-    };
-  }
-
-  async function probePageNetworkBuild() {
-    try {
-      var res = await fetch(location.pathname || '/', { cache: 'no-store' });
-      return (res.headers.get('X-Gadaa-Build') || '').trim();
-    } catch (e) {
-      return 'fetch_error:' + (e && e.message ? e.message : e);
-    }
-  }
-
-  async function collectDiagnostics() {
-    var reg = null;
-    var cacheNames = await listCacheNames();
-    var side = sidebarDomState();
-    var controllerUrl = (navigator.serviceWorker && navigator.serviceWorker.controller)
-      ? navigator.serviceWorker.controller.scriptURL : '(none)';
-    var activeUrl = '(none)';
-    var activeCacheVersion = '(unknown)';
-
-    if ('serviceWorker' in navigator) {
-      try {
-        reg = await navigator.serviceWorker.getRegistration('/');
-        if (reg && reg.active) activeUrl = reg.active.scriptURL || '(none)';
-      } catch (e) {}
-    }
-
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-      activeCacheVersion = await new Promise(function (resolve) {
-        try {
-          var channel = new MessageChannel();
-          var timer = setTimeout(function () { resolve('(timeout)'); }, 1000);
-          channel.port1.onmessage = function (event) {
-            clearTimeout(timer);
-            resolve((event && event.data && event.data.version) ? event.data.version : '(no-version)');
-          };
-          navigator.serviceWorker.controller.postMessage({ type: 'GET_VERSION' }, [channel.port2]);
-        } catch (e) {
-          resolve('(error)');
-        }
-      });
-    }
-
-    var networkBuild = await probePageNetworkBuild();
-    var pageSource = networkBuild && networkBuild === PAGE_BUILD ? 'network/current' : 'possibly-stale';
-
-    var diag = {
-      pageBuild: PAGE_BUILD,
-      expectedCache: EXPECTED_CACHE,
-      expectedSw: EXPECTED_SW,
-      pwaMode: isStandalone ? (isAndroid ? 'android-standalone' : 'standalone') : (isAndroid ? 'android-browser' : 'browser'),
-      controllerScriptURL: controllerUrl,
-      registrationActiveScriptURL: activeUrl,
-      cacheNames: cacheNames,
-      activeCacheVersion: activeCacheVersion,
-      xGadaaBuildHeader: networkBuild,
-      sidebar: side,
-      pageSource: pageSource
-    };
-
-    console.info('[Gadaa PWA diag] navigator.serviceWorker.controller?.scriptURL', controllerUrl);
-    console.info('[Gadaa PWA diag] registration.active?.scriptURL', activeUrl);
-    console.info('[Gadaa PWA diag] cache names', cacheNames);
-    console.info('[Gadaa PWA diag] X-Gadaa-Build (network fetch)', networkBuild);
-    console.info('[Gadaa PWA diag] page source assessment', pageSource);
-    console.info('[Gadaa PWA diag] full', diag);
-
-    setText('gadaaDiagPwaMode', diag.pwaMode);
-    setText('gadaaDiagControllerUrl', controllerUrl);
-    setText('gadaaDiagActiveUrl', activeUrl);
-    setText('gadaaDiagCacheNames', cacheNames.join(', ') || '(none)');
-    setText('gadaaDiagCacheVersion', activeCacheVersion);
-    setText('gadaaDiagRespBuild', networkBuild || '(missing)');
-    setText('gadaaDiagPageSource', pageSource);
-    setText('gadaaDiagHasLearn', side.learnLanguages ? 'yes' : 'no');
-    setText('gadaaDiagHasEc', side.englishClass ? 'yes' : 'no');
-    showPanel();
-
-    return { diag: diag, reg: reg, cacheNames: cacheNames, side: side };
-  }
-
-  async function purgeAllCaches() {
-    var names = await listCacheNames();
-    var deleted = [];
-    for (var i = 0; i < names.length; i++) {
-      try {
-        await caches.delete(names[i]);
-        deleted.push(names[i]);
-      } catch (e) {}
-    }
-    return deleted;
-  }
-
-  async function unregisterAllServiceWorkers() {
-    if (!('serviceWorker' in navigator)) return [];
-    var removed = [];
-    try {
-      var regs = await navigator.serviceWorker.getRegistrations();
-      for (var i = 0; i < regs.length; i++) {
-        var script = (regs[i].active && regs[i].active.scriptURL) || (regs[i].installing && regs[i].installing.scriptURL) || '';
-        var ok = await regs[i].unregister();
-        removed.push({ script: script, unregistered: ok });
-      }
-    } catch (e) {}
-    return removed;
-  }
-
-  async function maybeForceUpdate(ctx) {
-    var diag = ctx.diag;
-    var reg = ctx.reg;
-    var forceReasons = [];
-    var controllerUrl = diag.controllerScriptURL || '';
-    var hasLegacyCache = diag.cacheNames.some(function (n) {
-      return /^gada-v\d+/.test(n) || n.indexOf('gada-v') === 0 || /^gada-v/.test(n);
-    });
-    var cacheMismatch = diag.activeCacheVersion !== '(unknown)'
-      && diag.activeCacheVersion !== '(none)'
-      && diag.activeCacheVersion !== '(timeout)'
-      && diag.activeCacheVersion !== '(no-version)'
-      && diag.activeCacheVersion !== '(error)'
-      && diag.activeCacheVersion !== EXPECTED_CACHE;
-    var swUrlMismatch = controllerUrl !== '(none)' && controllerUrl.indexOf(PAGE_BUILD) === -1;
-    var domStale = !diag.sidebar.learnLanguages || !diag.sidebar.englishClass || diag.sidebar.oldLearn;
-    var networkFreshDomStale = diag.xGadaaBuildHeader === PAGE_BUILD && domStale;
-
-    if (hasLegacyCache) forceReasons.push('legacy_cache');
-    if (cacheMismatch) forceReasons.push('cache_version_mismatch');
-    if (swUrlMismatch) forceReasons.push('controller_script_mismatch');
-    if (domStale) forceReasons.push('dom_sidebar_stale');
-    if (networkFreshDomStale) forceReasons.push('sw_served_stale_html');
-
-    if (!forceReasons.length) {
-      setText('gadaaDiagForceUpdate', 'not needed');
-      return;
-    }
-
-    setText('gadaaDiagForceUpdate', 'running: ' + forceReasons.join(', '));
-    console.warn('[Gadaa PWA diag] force update', forceReasons);
-
-    if (reg && reg.waiting) {
-      try { reg.waiting.postMessage({ type: 'SKIP_WAITING' }); } catch (e) {}
-    }
-
-    var deleted = await purgeAllCaches();
-    console.warn('[Gadaa PWA diag] deleted caches', deleted);
-
-    var removed = [];
-    if (swUrlMismatch || hasLegacyCache || cacheMismatch || networkFreshDomStale) {
-      removed = await unregisterAllServiceWorkers();
-      console.warn('[Gadaa PWA diag] unregistered service workers', removed);
-      setText('gadaaDiagForceUpdate', 'unregistered SW + purged caches; reloading (' + forceReasons.join(', ') + ')');
-      setTimeout(function () { location.reload(); }, 500);
-      return;
-    }
-
-    if (isAndroid && isStandalone && domStale) {
-      setText('gadaaDiagForceUpdate', 'reloading after purge: ' + forceReasons.join(', '));
-      setTimeout(function () { location.reload(); }, 400);
-      return;
-    }
-
-    setText('gadaaDiagForceUpdate', 'purged; reload app if sidebar still old (' + forceReasons.join(', ') + ')');
-  }
-
-  window.addEventListener('load', function () {
-    collectDiagnostics().then(maybeForceUpdate).catch(function (err) {
-      console.error('[Gadaa PWA diag] failed', err);
-      setText('gadaaDiagForceUpdate', 'diag_error');
-      showPanel();
-    });
-  });
-})();
-</script>
+{% if PWA_DEBUG %}<script>window.__GADAA_PWA_DEBUG__ = true;</script>{% endif %}
 <script src="{{ url_for('static', filename='pwa-ui.js') }}?v={{ PWA_UI_JS_VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
 

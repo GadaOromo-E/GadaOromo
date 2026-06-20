@@ -201,10 +201,159 @@ let deferredPrompt = null;
   let pwaUpdateUiBound = false;
 
   function logPwa(eventName, payload) {
+    if (!isPwaDebug()) return;
     try {
       if (payload === undefined) console.info(eventName);
       else console.info(eventName, payload);
     } catch (_) {}
+  }
+
+  function isPwaDebug() {
+    if (window.__GADAA_PWA_DEBUG__ === true) return true;
+    const meta = document.querySelector('meta[name="gadaa-pwa-debug"]');
+    return !!(meta && String(meta.content || "").trim() === "1");
+  }
+
+  function getPageBuildToken() {
+    const meta = document.querySelector('meta[name="gadaa-build-token"]');
+    return (meta && meta.content ? String(meta.content).trim() : "");
+  }
+
+  function sidebarDomState() {
+    const html = document.body ? document.body.innerHTML : "";
+    return {
+      learnLanguages: html.indexOf("🌍 Learn Languages") !== -1,
+      englishClass: html.indexOf("🎓 English Class") !== -1,
+      oldLearn: /href="\/learn"[^>]*>🎓 Learn</.test(html),
+    };
+  }
+
+  async function listCacheNames() {
+    if (!window.caches || !caches.keys) return [];
+    try {
+      return await caches.keys();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  async function purgeAllCaches() {
+    const names = await listCacheNames();
+    const deleted = [];
+    for (const name of names) {
+      try {
+        if (await caches.delete(name)) deleted.push(name);
+      } catch (_) {}
+    }
+    return deleted;
+  }
+
+  async function unregisterAllServiceWorkers() {
+    if (!("serviceWorker" in navigator)) return [];
+    const removed = [];
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const reg of regs) {
+        const script =
+          (reg.active && reg.active.scriptURL) ||
+          (reg.installing && reg.installing.scriptURL) ||
+          "";
+        const ok = await reg.unregister();
+        removed.push({ script, unregistered: ok });
+      }
+    } catch (_) {}
+    return removed;
+  }
+
+  async function probePageNetworkBuild() {
+    try {
+      const res = await fetch(location.pathname || "/", { cache: "no-store" });
+      return (res.headers.get("X-Gadaa-Build") || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  async function getControllerCacheVersion() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.controller) return "";
+    return new Promise((resolve) => {
+      try {
+        const channel = new MessageChannel();
+        const timer = setTimeout(() => resolve(""), 1000);
+        channel.port1.onmessage = (event) => {
+          clearTimeout(timer);
+          resolve(event?.data?.version ? String(event.data.version) : "");
+        };
+        navigator.serviceWorker.controller.postMessage({ type: "GET_VERSION" }, [channel.port2]);
+      } catch (_) {
+        resolve("");
+      }
+    });
+  }
+
+  async function runStalePwaRepairIfNeeded() {
+    if (!document.querySelector(".side-menu")) return;
+
+    const pageBuild = getPageBuildToken() || (await probePageNetworkBuild());
+    if (!pageBuild) return;
+
+    const expectedCache = `gada-${pageBuild}`;
+    const cacheNames = await listCacheNames();
+    const side = sidebarDomState();
+    const controllerUrl = navigator.serviceWorker?.controller?.scriptURL || "";
+    const activeCacheVersion = await getControllerCacheVersion();
+    const networkBuild = await probePageNetworkBuild();
+
+    const hasLegacyCache = cacheNames.some(
+      (n) => /^gada-v\d+/.test(n) || n.indexOf("gada-v") === 0
+    );
+    const cacheMismatch = !!(
+      activeCacheVersion && activeCacheVersion !== expectedCache
+    );
+    const swUrlMismatch = !!(controllerUrl && controllerUrl.indexOf(pageBuild) === -1);
+    const domStale = !side.learnLanguages || !side.englishClass || side.oldLearn;
+    const networkFreshDomStale = networkBuild === pageBuild && domStale;
+
+    const forceReasons = [];
+    if (hasLegacyCache) forceReasons.push("legacy_cache");
+    if (cacheMismatch) forceReasons.push("cache_version_mismatch");
+    if (swUrlMismatch) forceReasons.push("controller_script_mismatch");
+    if (domStale) forceReasons.push("dom_sidebar_stale");
+    if (networkFreshDomStale) forceReasons.push("sw_served_stale_html");
+
+    logPwa("PWA_REPAIR_CHECK", {
+      pageBuild,
+      expectedCache,
+      controllerUrl,
+      activeCacheVersion,
+      cacheNames,
+      networkBuild,
+      sidebar: side,
+      forceReasons,
+    });
+
+    if (!forceReasons.length) return;
+
+    logPwa("PWA_REPAIR_START", { forceReasons });
+
+    try {
+      const reg = await navigator.serviceWorker.getRegistration("/");
+      reg?.waiting?.postMessage({ type: "SKIP_WAITING" });
+    } catch (_) {}
+
+    const deleted = await purgeAllCaches();
+    logPwa("PWA_REPAIR_PURGED_CACHES", { deleted });
+
+    if (swUrlMismatch || hasLegacyCache || cacheMismatch || networkFreshDomStale) {
+      const removed = await unregisterAllServiceWorkers();
+      logPwa("PWA_REPAIR_UNREGISTERED", { removed });
+      setTimeout(() => location.reload(), 500);
+      return;
+    }
+
+    if (isAndroid && isStandalone && domStale) {
+      setTimeout(() => location.reload(), 400);
+    }
   }
 
   function getStored(key) {
@@ -404,6 +553,7 @@ let deferredPrompt = null;
       try {
         bindControllerChangeReload();
         bindSwActivatedReload();
+        await runStalePwaRepairIfNeeded();
         const resolvedSwUrl = await resolveSwUrl();
         const reg = await navigator.serviceWorker.register(resolvedSwUrl, { scope: "/" });
         const marker = document.getElementById("pwaSwDebug");
@@ -420,9 +570,7 @@ let deferredPrompt = null;
           marker.dataset.controlled = swDebug.controlled ? "1" : "0";
           marker.dataset.controllerScript = swDebug.controller_script || "";
         }
-        try {
-          console.info("PWA_SW_DEBUG", swDebug);
-        } catch (_) {}
+        logPwa("PWA_SW_DEBUG", swDebug);
 
         if (reg.waiting) await maybeShowUpdateBar(reg, "registration_waiting");
 
@@ -456,9 +604,7 @@ let deferredPrompt = null;
             marker2.dataset.controlled = updated.controlled ? "1" : "0";
             marker2.dataset.controllerScript = updated.controller_script || "";
           }
-          try {
-            console.info("PWA_SW_READY_DEBUG", updated);
-          } catch (_) {}
+          logPwa("PWA_SW_READY_DEBUG", updated);
           getActiveSwVersion(readyReg).then((version) => {
             if (version) setStored(PWA_ACTIVE_VERSION_KEY, version);
           }).catch(() => {});
