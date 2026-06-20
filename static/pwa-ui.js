@@ -242,6 +242,55 @@ let deferredPrompt = null;
     }
   }
 
+  async function resolveSwUrl() {
+    if (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim()) {
+      return String(window.__GADAA_SW_URL).trim();
+    }
+    const swMeta = document.querySelector('meta[name="gadaa-sw-canonical-url"]');
+    if (swMeta && swMeta.content && swMeta.content.trim()) {
+      return swMeta.content.trim();
+    }
+    const buildMeta = document.querySelector('meta[name="gadaa-build-token"]');
+    if (buildMeta && buildMeta.content && buildMeta.content.trim()) {
+      return `/service-worker.js?v=${encodeURIComponent(buildMeta.content.trim())}`;
+    }
+    try {
+      const probe = await fetch("/service-worker.js", { cache: "no-store" });
+      const build = (probe.headers.get("X-Gadaa-Build") || "").trim();
+      if (build) return `/service-worker.js?v=${encodeURIComponent(build)}`;
+    } catch (_) {}
+    return "/service-worker.js";
+  }
+
+  function bindSwActivatedReload() {
+    if (!navigator.serviceWorker) return;
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event?.data?.type !== "SW_ACTIVATED") return;
+      const activatedVersion = String(event.data.version || "");
+      const pageBuild = (
+        document.querySelector('meta[name="gadaa-build-token"]')?.content || ""
+      ).trim();
+      const expectedVersion = pageBuild ? `gada-${pageBuild}` : "";
+      if (expectedVersion && activatedVersion && activatedVersion !== expectedVersion) {
+        logPwa("PWA_SW_ACTIVATED_VERSION_DRIFT", {
+          activated_version: activatedVersion,
+          expected_version: expectedVersion,
+        });
+      }
+      if (isAndroid && isStandalone && activatedVersion) {
+        const lastActivated = getStored("gadaa_pwa_last_activated_version");
+        if (lastActivated && lastActivated !== activatedVersion && !pwaReloadTriggered) {
+          setStored("gadaa_pwa_last_activated_version", activatedVersion);
+          setSession(PWA_RELOAD_PENDING_KEY, "1");
+          pwaReloadTriggered = true;
+          location.reload();
+          return;
+        }
+        setStored("gadaa_pwa_last_activated_version", activatedVersion);
+      }
+    });
+  }
+
   function requestSwVersion(worker) {
     return new Promise((resolve) => {
       try {
@@ -349,18 +398,17 @@ let deferredPrompt = null;
     });
     showUpdateBar(reg, waitingVersion);
   }
-const SW_URL = (window.__GADAA_SW_URL && String(window.__GADAA_SW_URL).trim())
-    || "/service-worker.js";
-
   hideForIosAppReview();
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", async () => {
       try {
         bindControllerChangeReload();
-        const reg = await navigator.serviceWorker.register(SW_URL, { scope: "/" });
+        bindSwActivatedReload();
+        const resolvedSwUrl = await resolveSwUrl();
+        const reg = await navigator.serviceWorker.register(resolvedSwUrl, { scope: "/" });
         const marker = document.getElementById("pwaSwDebug");
         const swDebug = {
-          requested_script: SW_URL,
+          requested_script: resolvedSwUrl,
           registration_scope: (reg && reg.scope) || "",
           controlled: !!navigator.serviceWorker.controller,
           controller_script: (navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL) || "",

@@ -32,6 +32,8 @@
   <!-- ✅ PWA (Android + iPhone) -->
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
+  <meta name="gadaa-build-token" content="{{ APP_BUILD_TOKEN }}">
+  <meta name="gadaa-sw-canonical-url" content="{{ SW_CANONICAL_URL }}">
 
   <!-- ✅ iPhone / iOS "real app" -->
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -427,7 +429,8 @@
 
 
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
-<script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
+<script>window.__GADAA_SW_URL = "{{ SW_CANONICAL_URL }}";</script>
+<script src="{{ url_for('static', filename='pwa-ui.js') }}?v={{ PWA_UI_JS_VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
 
 </body>

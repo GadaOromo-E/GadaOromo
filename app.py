@@ -985,7 +985,7 @@ def add_security_headers(resp):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     if resp.mimetype == "text/html":
-        resp.headers.setdefault("Cache-Control", "no-cache")
+        resp.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
         # Keep utility/private surfaces out of search indexing.
         noindex_prefixes = ("/admin", "/recorder", "/create_admin", "/api/", "/recorder/api/")
         noindex_exact = ("/offline", "/health")
@@ -1450,17 +1450,34 @@ def manifest():
     return resp
 
 
+@app.route("/static/service-worker.js")
+def static_service_worker_redirect():
+    # Always serve the deployment-scoped worker, never the raw static file copy.
+    return redirect(f"/service-worker.js?v={SW_JS_VERSION}", code=302)
+
+
 @app.route("/service-worker.js")
 def service_worker():
-    resp = make_response(
-        send_from_directory(app.static_folder, "service-worker.js")
-    )
+    sw_path = os.path.join(app.static_folder, "service-worker.js")
+    try:
+        with open(sw_path, "r", encoding="utf-8") as f:
+            body = f.read()
+    except OSError as e:
+        app.logger.error("service_worker_read_failed path=%s err=%r", sw_path, e)
+        abort(404)
+
+    # Tie cache namespaces to the deployed build so each release invalidates old HTML/assets.
+    cache_version = f"gada-{APP_BUILD_TOKEN}"
+    body = body.replace("__GADAA_CACHE_VERSION__", cache_version)
+
+    resp = make_response(body)
     resp.headers["Content-Type"] = "application/javascript"
     resp.headers["Service-Worker-Allowed"] = "/"
-    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     resp.headers["X-Gadaa-Build"] = APP_BUILD_TOKEN
     resp.headers["X-SW-JS-Version"] = SW_JS_VERSION
     resp.headers["X-SW-Canonical-URL"] = SW_CANONICAL_URL
+    resp.headers["X-SW-Cache-Version"] = cache_version
     return resp
 
 @app.route("/sw.js")
