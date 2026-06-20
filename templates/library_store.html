@@ -24,7 +24,8 @@
       <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
       <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
       <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
-      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🎓Learn</a>
+      <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🌍 Learn Languages</a>
+      <a class="side-link{% if current_path.startswith('/english-class') %} current{% endif %}" href="/english-class">🎓 English Class</a>
       <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> 📚Library Store</a>
       <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
       <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>

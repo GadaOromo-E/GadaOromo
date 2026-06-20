@@ -264,12 +264,20 @@
 </div>
 
 <div class="container">
-<!-- learn_debug template_version={{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }} build={{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }} render_path={{ (learn_debug or {}).get('render_path', 'unknown') }} legacy_cards_path={{ (learn_debug or {}).get('legacy_cards_path', false) }} phrases_loaded_with_audio={{ (learn_debug or {}).get('phrases_loaded_with_audio', 0) }} words_loaded_with_audio={{ (learn_debug or {}).get('words_loaded_with_audio', 0) }} total_rows_loaded={{ (learn_debug or {}).get('total_rows_loaded', 0) }} rows_with_any_audio={{ (learn_debug or {}).get('rows_with_any_audio', 0) }} rows_rendered_with_audio_url={{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }} audio_js={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }} pwa_ui_js={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }} sw_js={{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }} -->
+<!-- learn_debug template_version={{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }} build={{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }} render_path={{ (learn_debug or {}).get('render_path', 'unknown') }} legacy_cards_path={{ (learn_debug or {}).get('legacy_cards_path', false) }} learn_recent_limit={{ (learn_debug or {}).get('learn_recent_limit', 0) }} sql_limit_applied={{ (learn_debug or {}).get('sql_limit_applied', 0) }} approved_phrases_total={{ (learn_debug or {}).get('approved_phrases_total', 0) }} eligible_multi_lang_https_total={{ (learn_debug or {}).get('eligible_multi_lang_https_total', 0) }} eligible_phrase_count={{ (learn_debug or {}).get('eligible_phrase_count', 0) }} backend_rows_returned={{ (learn_debug or {}).get('backend_rows_returned', 0) }} phrases_filtered_out={{ (learn_debug or {}).get('phrases_filtered_out', 0) }} frontend_rows_expected={{ (learn_debug or {}).get('frontend_rows_expected', 0) }} phrases_loaded_with_audio={{ (learn_debug or {}).get('phrases_loaded_with_audio', 0) }} words_loaded_with_audio={{ (learn_debug or {}).get('words_loaded_with_audio', 0) }} total_rows_loaded={{ (learn_debug or {}).get('total_rows_loaded', 0) }} rows_with_any_audio={{ (learn_debug or {}).get('rows_with_any_audio', 0) }} rows_rendered_with_audio_url={{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }} audio_js={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }} pwa_ui_js={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }} sw_js={{ (learn_debug or {}).get('sw_js_version', SW_JS_VERSION) }} -->
 <div id="learnDebugMarker" style="display:none"
      data-template-version="{{ (learn_debug or {}).get('template_version', LEARN_TEMPLATE_VERSION) }}"
      data-build-token="{{ (learn_debug or {}).get('build_token', APP_BUILD_TOKEN) }}"
      data-render-path="{{ (learn_debug or {}).get('render_path', 'unknown') }}"
      data-legacy-cards-path="{{ (learn_debug or {}).get('legacy_cards_path', false) }}"
+     data-learn-recent-limit="{{ (learn_debug or {}).get('learn_recent_limit', 0) }}"
+     data-sql-limit-applied="{{ (learn_debug or {}).get('sql_limit_applied', 0) }}"
+     data-approved-phrases-total="{{ (learn_debug or {}).get('approved_phrases_total', 0) }}"
+     data-eligible-multi-lang-https-total="{{ (learn_debug or {}).get('eligible_multi_lang_https_total', 0) }}"
+     data-eligible-phrase-count="{{ (learn_debug or {}).get('eligible_phrase_count', 0) }}"
+     data-backend-rows-returned="{{ (learn_debug or {}).get('backend_rows_returned', 0) }}"
+     data-phrases-filtered-out="{{ (learn_debug or {}).get('phrases_filtered_out', 0) }}"
+     data-frontend-rows-expected="{{ (learn_debug or {}).get('frontend_rows_expected', 0) }}"
      data-words-loaded-with-audio="{{ (learn_debug or {}).get('words_loaded_with_audio', 0) }}"
      data-phrases-loaded-with-audio="{{ (learn_debug or {}).get('phrases_loaded_with_audio', 0) }}"
      data-total-rows-loaded="{{ (learn_debug or {}).get('total_rows_loaded', 0) }}"
@@ -304,7 +312,8 @@
     <a class="side-link{% if current_path == '/' %} current{% endif %}" href="/">🏠 Home</a>
     <a class="side-link{% if current_path.startswith('/dictionary') %} current{% endif %}" href="/dictionary">📖 Dictionary</a>
     <a class="side-link{% if current_path.startswith('/translate') %} current{% endif %}" href="/translate">🌍 Translate</a>
-    <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🎓Learn</a>
+    <a class="side-link{% if current_path.startswith('/learn') %} current{% endif %}" href="/learn">🌍 Learn Languages</a>
+    <a class="side-link{% if current_path.startswith('/english-class') %} current{% endif %}" href="/english-class">🎓 English Class</a>
     <a class="side-link{% if current_path.startswith('/library-store') or current_path.startswith('/book') or current_path.startswith('/read/') %} current{% endif %}" href="/library-store"> 📚Library Store</a>
     <a class="side-link{% if current_path.startswith('/gadaa-ai') %} current{% endif %}" href="/gadaa-ai">🤖 Gadaa AI</a>
     <a class="side-link{% if current_path.startswith('/submit') and not current_path.startswith('/submit_phrase') %} current{% endif %}" href="/submit">➕ Submit Word</a>
@@ -474,6 +483,13 @@ window.__gadaaLearnDebug = {
   wordsLoadedWithAudio: "{{ (learn_debug or {}).get('words_loaded_with_audio', 0) }}",
   phrasesLoadedWithAudio: "{{ (learn_debug or {}).get('phrases_loaded_with_audio', 0) }}",
   totalRowsLoaded: "{{ (learn_debug or {}).get('total_rows_loaded', 0) }}",
+  learnRecentLimit: "{{ (learn_debug or {}).get('learn_recent_limit', 0) }}",
+  approvedPhrasesTotal: "{{ (learn_debug or {}).get('approved_phrases_total', 0) }}",
+  eligibleMultiLangHttpsTotal: "{{ (learn_debug or {}).get('eligible_multi_lang_https_total', 0) }}",
+  eligiblePhraseCount: "{{ (learn_debug or {}).get('eligible_phrase_count', 0) }}",
+  backendRowsReturned: "{{ (learn_debug or {}).get('backend_rows_returned', 0) }}",
+  phrasesFilteredOut: "{{ (learn_debug or {}).get('phrases_filtered_out', 0) }}",
+  frontendRowsExpected: "{{ (learn_debug or {}).get('frontend_rows_expected', 0) }}",
   rowsWithAnyAudio: "{{ (learn_debug or {}).get('rows_with_any_audio', 0) }}",
   rowsRenderedWithAudioUrl: "{{ (learn_debug or {}).get('rows_rendered_with_audio_url', 0) }}",
   audioJsVersion: "{{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}",
@@ -509,6 +525,19 @@ window.LEARN_ROWS = {{ learn_rows | tojson }};
   ];
 
   var ROWS = window.LEARN_ROWS || [];
+  var learnMarker = document.getElementById('learnDebugMarker');
+  var pipeline = {
+    learnRecentLimit: learnMarker ? parseInt(learnMarker.getAttribute('data-learn-recent-limit') || '0', 10) : 0,
+    approvedPhrasesTotal: learnMarker ? parseInt(learnMarker.getAttribute('data-approved-phrases-total') || '0', 10) : 0,
+    eligibleMultiLangHttpsTotal: learnMarker ? parseInt(learnMarker.getAttribute('data-eligible-multi-lang-https-total') || '0', 10) : 0,
+    eligiblePhraseCount: learnMarker ? parseInt(learnMarker.getAttribute('data-eligible-phrase-count') || '0', 10) : 0,
+    backendRowsReturned: learnMarker ? parseInt(learnMarker.getAttribute('data-backend-rows-returned') || '0', 10) : 0,
+    frontendRowsReceived: ROWS.length,
+    phrasesFilteredOut: learnMarker ? parseInt(learnMarker.getAttribute('data-phrases-filtered-out') || '0', 10) : 0
+  };
+  if (window.console && console.info) {
+    console.info('[Learn] phrase pipeline', pipeline);
+  }
 
   function getLang(key) {
     for (var i = 0; i < LANGS.length; i++) { if (LANGS[i].key === key) return LANGS[i]; }

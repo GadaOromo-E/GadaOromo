@@ -1,0 +1,189 @@
+{
+  "version": 2,
+  "levels": [
+    {
+      "id": "a1",
+      "name": "A1 Beginner",
+      "description": "Basic greetings, everyday words, and simple conversations.",
+      "file": "a1.json",
+      "categories": [
+        {
+          "id": "greetings",
+          "name": "Greetings"
+        },
+        {
+          "id": "family",
+          "name": "Family"
+        },
+        {
+          "id": "food",
+          "name": "Food"
+        },
+        {
+          "id": "numbers",
+          "name": "Numbers"
+        },
+        {
+          "id": "colors",
+          "name": "Colors"
+        },
+        {
+          "id": "school",
+          "name": "School"
+        },
+        {
+          "id": "daily_life",
+          "name": "Daily Life"
+        }
+      ]
+    },
+    {
+      "id": "a2",
+      "name": "A2 Elementary",
+      "description": "Practical situations: shopping, travel, and services.",
+      "file": "a2.json",
+      "categories": [
+        {
+          "id": "shopping",
+          "name": "Shopping"
+        },
+        {
+          "id": "travel",
+          "name": "Travel"
+        },
+        {
+          "id": "restaurant",
+          "name": "Restaurant"
+        },
+        {
+          "id": "hotel",
+          "name": "Hotel"
+        },
+        {
+          "id": "hospital",
+          "name": "Hospital"
+        },
+        {
+          "id": "transportation",
+          "name": "Transportation"
+        }
+      ]
+    },
+    {
+      "id": "b1",
+      "name": "B1 Intermediate",
+      "description": "Work, social life, and handling everyday problems.",
+      "file": "b1.json",
+      "categories": [
+        {
+          "id": "work",
+          "name": "Work"
+        },
+        {
+          "id": "office",
+          "name": "Office"
+        },
+        {
+          "id": "phone_calls",
+          "name": "Phone Calls"
+        },
+        {
+          "id": "banking",
+          "name": "Banking"
+        },
+        {
+          "id": "friendships",
+          "name": "Friendships"
+        },
+        {
+          "id": "housing",
+          "name": "Housing"
+        }
+      ]
+    },
+    {
+      "id": "b2",
+      "name": "B2 Upper Intermediate",
+      "description": "Professional settings, meetings, and complex discussions.",
+      "file": "b2.json",
+      "categories": [
+        {
+          "id": "business",
+          "name": "Business"
+        },
+        {
+          "id": "meetings",
+          "name": "Meetings"
+        },
+        {
+          "id": "presentations",
+          "name": "Presentations"
+        },
+        {
+          "id": "negotiation",
+          "name": "Negotiation"
+        },
+        {
+          "id": "leadership",
+          "name": "Leadership"
+        }
+      ]
+    },
+    {
+      "id": "c1",
+      "name": "C1 Advanced",
+      "description": "Academic, technical, and nuanced professional English.",
+      "file": "c1.json",
+      "categories": [
+        {
+          "id": "academic",
+          "name": "Academic Discussions"
+        },
+        {
+          "id": "technology",
+          "name": "Technology"
+        },
+        {
+          "id": "politics",
+          "name": "Politics"
+        },
+        {
+          "id": "research",
+          "name": "Research"
+        },
+        {
+          "id": "management",
+          "name": "Management"
+        }
+      ]
+    },
+    {
+      "id": "c2",
+      "name": "C2 Mastery",
+      "description": "Sophisticated debates, philosophy, and expert communication.",
+      "file": "c2.json",
+      "categories": [
+        {
+          "id": "debates",
+          "name": "Advanced Debates"
+        },
+        {
+          "id": "philosophy",
+          "name": "Philosophy"
+        },
+        {
+          "id": "international_relations",
+          "name": "International Relations"
+        },
+        {
+          "id": "professional_communication",
+          "name": "Professional Communication"
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "lessons": 1200,
+    "lines": 18531
+  }
+}

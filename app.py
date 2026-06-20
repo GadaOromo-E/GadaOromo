@@ -442,6 +442,9 @@ APP_ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
 LIBRARY_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BOOKS_FILE = os.path.join(LIBRARY_BASE_DIR, "data", "books.json")
 BOOKS_JSON_PATH = BOOKS_FILE
+ENGLISH_CLASS_DIR = os.path.join(LIBRARY_BASE_DIR, "data", "english-class")
+ENGLISH_CLASS_INDEX_FILE = os.path.join(ENGLISH_CLASS_DIR, "index.json")
+ENGLISH_CLASS_LEVEL_IDS = ("a1", "a2", "b1", "b2", "c1", "c2")
 PRIVATE_BOOKS_DIR = os.path.join(LIBRARY_BASE_DIR, "private_books")
 LIBRARY_STORE_CATEGORIES = [
     "Religious Books",
@@ -834,6 +837,42 @@ def _get_library_book_by_id(book_id: str):
         if normalize_text(book.get("id", "")).strip() == needle:
             return book, load_error
     return None, load_error
+
+
+def _load_english_class_index():
+    """Load English Class course index (levels + categories). Fail-safe."""
+    try:
+        if not os.path.isfile(ENGLISH_CLASS_INDEX_FILE):
+            app.logger.warning("english-class index missing path=%s", ENGLISH_CLASS_INDEX_FILE)
+            return {}, "English Class content is not available yet."
+        with open(ENGLISH_CLASS_INDEX_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return {}, "English Class index format is invalid."
+        return payload, ""
+    except Exception as e:
+        app.logger.exception("english-class index load failed: %r", e)
+        return {}, "English Class content is temporarily unavailable."
+
+
+def _load_english_class_level(level_id: str):
+    """Load full lesson data for one CEFR level. Fail-safe."""
+    level_key = normalize_text(level_id or "").strip().lower()
+    if level_key not in ENGLISH_CLASS_LEVEL_IDS:
+        return None, "Invalid level."
+    level_path = os.path.join(ENGLISH_CLASS_DIR, f"{level_key}.json")
+    try:
+        if not os.path.isfile(level_path):
+            app.logger.warning("english-class level missing path=%s", level_path)
+            return None, "Level content is not available."
+        with open(level_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return None, "Level content format is invalid."
+        return payload, ""
+    except Exception as e:
+        app.logger.exception("english-class level load failed level=%s err=%r", level_key, e)
+        return None, "Level content is temporarily unavailable."
 
 
 def _resolve_private_pdf_path(book: dict):
@@ -1560,10 +1599,16 @@ def uploads(filename):
 IMPORT_BATCH_SIZE = 100
 IMPORT_MAX_WORDS = 200
 MISSING_OROMO_KEY_SENTINEL = "__missing_oromo__"
-LEARN_RECENT_PHRASE_LIMIT = max(
-    10,
-    int((os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or "1000").strip() or 1000),
-)
+def _get_learn_recent_phrase_limit(default: int = 500) -> int:
+    """Resolve Learn phrase cap from LEARN_RECENT_PHRASE_LIMIT at call time."""
+    raw = (os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or str(default)).strip()
+    try:
+        return max(10, int(raw or default))
+    except (TypeError, ValueError):
+        return max(10, int(default))
+
+
+LEARN_RECENT_PHRASE_LIMIT = _get_learn_recent_phrase_limit()
 
 
 # ------------------ STOPWORDS ------------------
@@ -2057,6 +2102,11 @@ app.logger.info(
     int(TTS_JOB_ENTRY_DELAY_MS),
     int(TTS_JOB_LANGUAGE_DELAY_MS),
     tuple(POST_IMPORT_TTS_LANGS or ("en",)),
+)
+app.logger.info(
+    "Startup learn phrase limit env=%s resolved=%s",
+    (os.environ.get("LEARN_RECENT_PHRASE_LIMIT") or "").strip() or "(default)",
+    int(_get_learn_recent_phrase_limit()),
 )
 
 AZURE_BLOB_CONNECTION_STRING = (os.environ.get("AZURE_BLOB_CONNECTION_STRING") or "").strip()
@@ -8929,8 +8979,56 @@ def _is_usable_learn_audio_ref(ref: str) -> bool:
 
 
 def _load_learn_rows():
+    recent_limit = _get_learn_recent_phrase_limit()
+    loader_stats = {
+        "learn_recent_limit": int(recent_limit),
+        "approved_phrases_total": 0,
+        "eligible_multi_lang_https_total": 0,
+        "sql_limit_applied": int(recent_limit),
+        "eligible_phrase_count": 0,
+        "phrases_loaded_raw": 0,
+        "backend_rows_returned": 0,
+        "phrases_rendered": 0,
+        "phrases_filtered_out": 0,
+    }
+
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+
+    c.execute(
+        "SELECT COUNT(*) FROM phrases WHERE status='approved' AND english IS NOT NULL AND TRIM(english) != ''"
+    )
+    loader_stats["approved_phrases_total"] = int((c.fetchone() or [0])[0] or 0)
+
+    c.execute(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT phrase_id
+            FROM (
+                SELECT
+                    gta.entry_id AS phrase_id,
+                    LOWER(REPLACE(TRIM(gta.lang_code), '_', '-')) AS lang_key
+                FROM generated_tts_audio gta
+                WHERE gta.entry_type='phrase'
+                  AND gta.file_path LIKE 'https://%'
+                  AND gta.lang_code IS NOT NULL
+                  AND TRIM(gta.lang_code) != ''
+                UNION
+                SELECT
+                    gpt.phrase_id AS phrase_id,
+                    LOWER(REPLACE(TRIM(gpt.lang_code), '_', '-')) AS lang_key
+                FROM generated_phrase_translations gpt
+                WHERE gpt.tts_audio_url LIKE 'https://%'
+                  AND gpt.lang_code IS NOT NULL
+                  AND TRIM(gpt.lang_code) != ''
+            ) audio_langs
+            GROUP BY phrase_id
+            HAVING COUNT(DISTINCT lang_key) >= 2
+        ) eligible_all
+        """
+    )
+    loader_stats["eligible_multi_lang_https_total"] = int((c.fetchone() or [0])[0] or 0)
 
     c.execute(
         """
@@ -8958,7 +9056,7 @@ def _load_learn_rows():
         ORDER BY phrase_id DESC
         LIMIT ?
         """,
-        (int(LEARN_RECENT_PHRASE_LIMIT),),
+        (int(recent_limit),),
     )
     eligible_rows = c.fetchall()
     eligible_phrase_ids = [int(r[0] or 0) for r in eligible_rows if int(r[0] or 0) > 0]
@@ -8966,15 +9064,22 @@ def _load_learn_rows():
 
     if not eligible_phrase_ids:
         conn.close()
+        loader_stats["eligible_phrase_count"] = 0
+        loader_stats["backend_rows_returned"] = 0
         app.logger.info(
-            "/learn loader eligible_phrase_count=%s phrases_rendered=%s audio_urls_attached=%s min_lang_count=%s max_lang_count=%s",
+            "/learn loader approved_phrases_total=%s eligible_multi_lang_https_total=%s sql_limit_applied=%s eligible_phrase_count=%s phrases_rendered=%s backend_rows_returned=%s audio_urls_attached=%s min_lang_count=%s max_lang_count=%s learn_recent_limit=%s",
+            loader_stats["approved_phrases_total"],
+            loader_stats["eligible_multi_lang_https_total"],
+            loader_stats["sql_limit_applied"],
             0,
             0,
             0,
             0,
             0,
+            0,
+            int(recent_limit),
         )
-        return []
+        return [], loader_stats
 
     id_marks = ",".join("?" for _ in eligible_phrase_ids)
     c.execute(
@@ -9153,14 +9258,28 @@ def _load_learn_rows():
     total_rows_loaded = int(len(rows))
     learn_visible_phrase_count = total_rows_loaded
     eligible_phrase_count = int(len(eligible_phrase_ids))
+    phrases_filtered_out = max(0, int(phrases_loaded_raw) - int(phrases_rendered))
     lang_counts = [int(v or 0) for v in lang_count_by_phrase.values()]
     min_lang_count = int(min(lang_counts) if lang_counts else 0)
     max_lang_count = int(max(lang_counts) if lang_counts else 0)
 
+    loader_stats.update({
+        "eligible_phrase_count": eligible_phrase_count,
+        "phrases_loaded_raw": int(phrases_loaded_raw),
+        "backend_rows_returned": total_rows_loaded,
+        "phrases_rendered": int(phrases_rendered),
+        "phrases_filtered_out": phrases_filtered_out,
+    })
+
     app.logger.info(
-        "/learn loader eligible_phrase_count=%s phrases_rendered=%s audio_urls_attached=%s min_lang_count=%s max_lang_count=%s total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s phrases_checked=%s phrases_with_multi_lang_audio=%s phrases_with_local_only_audio=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
+        "/learn loader approved_phrases_total=%s eligible_multi_lang_https_total=%s sql_limit_applied=%s eligible_phrase_count=%s phrases_rendered=%s phrases_filtered_out=%s backend_rows_returned=%s audio_urls_attached=%s min_lang_count=%s max_lang_count=%s total_rows_loaded=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s words_loaded_raw=%s phrases_loaded_raw=%s audio_rows_found=%s word_audio_rows_found=%s phrase_audio_rows_found=%s rows_with_audio_in_db_all=%s rows_with_audio_in_db_words_all=%s rows_with_audio_in_db_phrases_all=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s phrases_checked=%s phrases_with_multi_lang_audio=%s phrases_with_local_only_audio=%s phrases_with_missing_oromo_but_shown=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids=%s",
+        loader_stats["approved_phrases_total"],
+        loader_stats["eligible_multi_lang_https_total"],
+        loader_stats["sql_limit_applied"],
         eligible_phrase_count,
         phrases_rendered,
+        phrases_filtered_out,
+        total_rows_loaded,
         audio_attached_count,
         min_lang_count,
         max_lang_count,
@@ -9182,10 +9301,10 @@ def _load_learn_rows():
         phrases_with_local_only_audio,
         phrases_with_missing_oromo_but_shown,
         learn_visible_phrase_count,
-        int(LEARN_RECENT_PHRASE_LIMIT),
+        int(recent_limit),
         newest_phrase_ids[:20],
     )
-    return rows
+    return rows, loader_stats
 
 
 def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
@@ -9240,7 +9359,7 @@ def _warmup_learn_tts_for_rows(learn_rows, max_entries: int = 0):
 @app.route("/learn", methods=["GET"])
 def learn():
     _log_db_context("/learn")
-    learn_rows = _load_learn_rows()
+    learn_rows, loader_stats = _load_learn_rows()
     total_rows_loaded = int(len(learn_rows or []))
     words_loaded_with_audio = 0
     phrases_loaded_with_audio = 0
@@ -9262,8 +9381,9 @@ def learn():
     ]
     learn_render_path = "table_rows" if total_rows_loaded > 0 else "table_rows_empty"
     legacy_cards_path = False
+    learn_recent_limit = int((loader_stats or {}).get("learn_recent_limit") or _get_learn_recent_phrase_limit())
     app.logger.info(
-        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s total_rows_loaded=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s learn_visible_phrase_count=%s learn_recent_limit=%s newest_phrase_ids_selected=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
+        "/learn render template_version=%s build=%s render_path=%s legacy_cards_path=%s phrases_loaded_with_audio=%s words_loaded_with_audio=%s total_rows_loaded=%s rows_with_any_audio=%s rows_rendered_with_audio_url=%s learn_visible_phrase_count=%s learn_recent_limit=%s approved_phrases_total=%s eligible_multi_lang_https_total=%s backend_rows_returned=%s newest_phrase_ids_selected=%s audio_js=%s pwa_ui_js=%s sw_js=%s",
         LEARN_TEMPLATE_VERSION,
         APP_BUILD_TOKEN,
         learn_render_path,
@@ -9274,7 +9394,10 @@ def learn():
         rows_with_any_audio,
         rows_rendered_with_audio_url,
         learn_visible_phrase_count,
-        int(LEARN_RECENT_PHRASE_LIMIT),
+        learn_recent_limit,
+        int((loader_stats or {}).get("approved_phrases_total") or 0),
+        int((loader_stats or {}).get("eligible_multi_lang_https_total") or 0),
+        int((loader_stats or {}).get("backend_rows_returned") or total_rows_loaded),
         newest_phrase_ids_selected[:20],
         AUDIO_JS_VERSION,
         PWA_UI_JS_VERSION,
@@ -9290,7 +9413,14 @@ def learn():
         "rows_with_any_audio": rows_with_any_audio,
         "rows_rendered_with_audio_url": rows_rendered_with_audio_url,
         "learn_visible_phrase_count": learn_visible_phrase_count,
-        "learn_recent_limit": int(LEARN_RECENT_PHRASE_LIMIT),
+        "learn_recent_limit": learn_recent_limit,
+        "approved_phrases_total": int((loader_stats or {}).get("approved_phrases_total") or 0),
+        "eligible_multi_lang_https_total": int((loader_stats or {}).get("eligible_multi_lang_https_total") or 0),
+        "sql_limit_applied": int((loader_stats or {}).get("sql_limit_applied") or learn_recent_limit),
+        "eligible_phrase_count": int((loader_stats or {}).get("eligible_phrase_count") or 0),
+        "backend_rows_returned": int((loader_stats or {}).get("backend_rows_returned") or total_rows_loaded),
+        "phrases_filtered_out": int((loader_stats or {}).get("phrases_filtered_out") or 0),
+        "frontend_rows_expected": total_rows_loaded,
         "newest_phrase_ids_selected": newest_phrase_ids_selected[:20],
         "template_version": LEARN_TEMPLATE_VERSION,
         "build_token": APP_BUILD_TOKEN,
@@ -9311,7 +9441,37 @@ def learn():
     resp.headers["X-Audio-JS-Version"] = AUDIO_JS_VERSION
     resp.headers["X-PWA-UI-JS-Version"] = PWA_UI_JS_VERSION
     resp.headers["X-SW-JS-Version"] = SW_JS_VERSION
+    resp.headers["X-Learn-Recent-Limit"] = str(learn_recent_limit)
+    resp.headers["X-Learn-Rows-Count"] = str(total_rows_loaded)
+    resp.headers["X-Learn-Eligible-Count"] = str(int((loader_stats or {}).get("eligible_phrase_count") or 0))
+    resp.headers["X-Learn-Approved-Phrases"] = str(int((loader_stats or {}).get("approved_phrases_total") or 0))
     return resp
+
+
+@app.route("/english-class", methods=["GET"])
+def english_class():
+    """English Class learning hub — isolated from dictionary/translate/learn."""
+    index_data, load_error = _load_english_class_index()
+    stats = (index_data or {}).get("stats") or {}
+    resp = make_response(
+        render_template(
+            "english_class.html",
+            ec_index=index_data,
+            ec_error=load_error,
+            ec_stats=stats,
+        )
+    )
+    resp.headers["X-Gadaa-Build"] = APP_BUILD_TOKEN
+    return resp
+
+
+@app.route("/api/english-class/<level_id>", methods=["GET"])
+def english_class_level_api(level_id):
+    """JSON API for lazy-loading level lesson content."""
+    payload, load_error = _load_english_class_level(level_id)
+    if payload is None:
+        return jsonify({"ok": False, "error": load_error or "Not found."}), 404
+    return jsonify({"ok": True, "level": payload})
 
 
 # ------------------ SUPPORT ------------------
