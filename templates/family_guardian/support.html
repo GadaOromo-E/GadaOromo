@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Support | Family Guardian</title>
+  <meta name="description" content="Family Guardian Support — contact, FAQs, subscription help, and account deletion instructions.">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/family-guardian/support' }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <meta name="theme-color" content="#0b5cff">
+  <style>
+    .fg-legal-wrap { max-width: 820px; margin: 0 auto; }
+    .fg-legal-brand { margin-bottom: 8px; }
+    .fg-legal-brand h1 { margin: 0; font-size: 1.35rem; }
+    .fg-legal-brand p { margin: 4px 0 0; color: var(--muted); font-size: .92rem; }
+    .fg-legal-nav {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin: 12px 0 16px; font-size: .92rem;
+    }
+    .fg-legal-nav a { font-weight: 700; }
+    .fg-legal-nav-sep { color: var(--muted); }
+    .fg-legal-body h2 { margin-top: 0; }
+    .fg-legal-body h3 { margin-top: 18px; margin-bottom: 8px; }
+    .fg-legal-body p, .fg-legal-body li { line-height: 1.75; }
+    .fg-legal-body ul, .fg-legal-body ol { margin: 8px 0 12px; padding-left: 1.25rem; }
+    .fg-legal-updated { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+    .fg-back-home { margin-top: 16px; font-size: .92rem; }
+    .fg-faq-item { margin-bottom: 14px; }
+    .fg-faq-q { font-weight: 800; margin-bottom: 4px; }
+    .fg-contact-box {
+      margin-top: 10px; padding: 14px 16px;
+      border: 1px solid var(--border); border-radius: 12px;
+      background: linear-gradient(180deg, #ffffff 0%, #fcfcfc 100%);
+    }
+    @media (max-width: 640px) {
+      .fg-legal-wrap { padding: 0 4px; }
+      .fg-legal-body h2 { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="container fg-legal-wrap">
+  <header class="topbar fg-legal-brand">
+    <div class="brand">
+      <h1>Family Guardian</h1>
+      <p>Family safety &amp; parental controls — hosted on {{ APP_NAME or "Gadaa" }}</p>
+    </div>
+    <div class="small-actions">
+      <a class="btn" href="https://gadaadictionary.com/">Gadaa Dictionary</a>
+    </div>
+  </header>
+
+  {% include "family_guardian/_legal_nav.html" %}
+
+  <section class="card fg-legal-body">
+    <h2>Support</h2>
+    <p class="fg-legal-updated">Last updated: June 20, 2026</p>
+
+    <p>
+      Welcome to Family Guardian support. Here you can find contact information, answers to common
+      questions, subscription help, and instructions for account deletion.
+    </p>
+
+    <h3>Contact Us</h3>
+    <div class="fg-contact-box">
+      <p><strong>Family Guardian Support</strong></p>
+      <p>Email: <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a></p>
+      <p class="muted" style="margin-top:8px; font-size:.9rem;">
+        Please include your registered email address and a brief description of the issue.
+        For account-specific requests, we may ask you to verify ownership of the account.
+      </p>
+    </div>
+
+    <h3>Frequently Asked Questions</h3>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">What is Family Guardian?</p>
+      <p>Family Guardian is a family safety and parental controls app that helps parents manage
+      location sharing, SOS alerts, check-ins, tasks and rewards, schedules, and screen time for
+      their family members.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Who can create a child account?</p>
+      <p>Only a parent or legal guardian with an administrator account can create and manage child
+      accounts within a family group.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Why is location not updating?</p>
+      <p>Ensure location permissions are enabled for Family Guardian on the device, background
+      location is allowed where required, and the device has network connectivity. Some devices
+      restrict background location until configured in system settings.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">How do SOS alerts work?</p>
+      <p>When a family member triggers SOS, authorized family members receive a notification with
+      alert details. SOS is a supplemental tool — always contact local emergency services in a
+      life-threatening emergency.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">How do geofences work?</p>
+      <p>Parents define geographic boundaries in the app. When a member enters or leaves a geofence,
+      the app can log the event and send notifications to selected family members.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Are push notifications required?</p>
+      <p>Notifications are optional but recommended for SOS alerts, check-in reminders, and schedule
+      alerts. You can adjust notification preferences in the app and device settings.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Where can I read about data collection?</p>
+      <p>See our <a href="{{ url_for('family_guardian_privacy_policy') }}">Privacy Policy</a> for
+      details on Firebase, location data, subscriptions, and children’s privacy.</p>
+    </div>
+
+    <h3>Subscription Help</h3>
+    <p>Family Guardian offers free and paid plans, including <strong>Premium</strong> and
+    <strong>Premium Plus</strong>. Paid plans are processed through the Apple App Store or Google
+    Play and managed with RevenueCat.</p>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">How do I subscribe?</p>
+      <p>Open Family Guardian → Settings → Subscription (or the upgrade screen in the app) and
+      follow the prompts. Purchases are completed through your Apple or Google account.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">How do I cancel my subscription?</p>
+      <p><strong>iPhone / iPad:</strong> Settings → Apple ID → Subscriptions → Family Guardian → Cancel.</p>
+      <p><strong>Android:</strong> Google Play → Payments &amp; subscriptions → Subscriptions →
+      Family Guardian → Cancel.</p>
+      <p>Cancellation stops future renewals. Access to premium features typically continues until
+      the end of the current billing period.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Will I get a refund?</p>
+      <p>Refund eligibility is determined by Apple or Google according to their policies. Contact
+      Apple Support or Google Play support for purchase refunds. You may also email us at
+      <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> and we will help where we can.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Premium vs Premium Plus</p>
+      <p><strong>Premium</strong> includes enhanced safety and family management features.
+      <strong>Premium Plus</strong> may include additional screen-time and app-usage insights and
+      other advanced controls. Exact features are shown in the app before purchase and may vary by
+      device and region.</p>
+    </div>
+
+    <div class="fg-faq-item">
+      <p class="fg-faq-q">Subscription not showing after purchase</p>
+      <p>Try restoring purchases from the in-app subscription screen. Ensure you are signed in with
+      the same Apple ID or Google account used for the purchase. If the issue persists, contact
+      <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> with your platform
+      (iOS/Android) and approximate purchase date.</p>
+    </div>
+
+    <h3>Account Deletion Request</h3>
+    <p>You may delete your Family Guardian account and request removal of associated personal data.</p>
+    <ol>
+      <li>Open the Family Guardian app and sign in as the account administrator (parent).</li>
+      <li>Go to <strong>Settings → Account</strong> (or equivalent) and select <strong>Delete Account</strong>
+      if available.</li>
+      <li>Confirm deletion when prompted. This may remove family group data linked to your account.</li>
+      <li>If you cannot access the app, email
+      <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> from your registered email
+      with the subject line <strong>Account Deletion Request</strong>. Include your full name and
+      registered email address.</li>
+      <li>We will verify your request and process deletion within a reasonable timeframe, subject to
+      legal retention requirements.</li>
+    </ol>
+    <p>Deleting a parent account may affect child accounts in the same family group. Parents are
+    responsible for managing child account deletion before removing the family administrator account.</p>
+    <p>For more detail, see the Data Deletion section in our
+    <a href="{{ url_for('family_guardian_privacy_policy') }}">Privacy Policy</a>.</p>
+
+    <h3>Related Policies</h3>
+    <ul>
+      <li><a href="{{ url_for('family_guardian_privacy_policy') }}">Privacy Policy</a></li>
+      <li><a href="{{ url_for('family_guardian_terms') }}">Terms of Service</a></li>
+    </ul>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 Family Guardian ·
+      <a href="{{ url_for('family_guardian_privacy_policy') }}">Privacy</a> ·
+      <a href="{{ url_for('family_guardian_terms') }}">Terms</a>
+    </p>
+    <p class="fg-back-home"><a href="https://gadaadictionary.com/">Return to Gadaa Dictionary</a></p>
+  </footer>
+</div>
+</body>
+</html>

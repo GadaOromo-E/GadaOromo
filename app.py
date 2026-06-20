@@ -422,6 +422,10 @@ ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
+FAMILY_GUARDIAN_SUPPORT_EMAIL = (
+    os.environ.get("FAMILY_GUARDIAN_SUPPORT_EMAIL", "").strip()
+    or "support@gadaadictionary.com"
+)
 API_URL = os.environ.get("API_URL", "").strip()
 MINHAAJUL_MUSLIM_PDF_URL = (
     os.environ.get("MINHAAJUL_MUSLIM_PDF_URL", "").strip()
@@ -990,7 +994,7 @@ def add_security_headers(resp):
         resp.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
         resp.headers.setdefault("X-Gadaa-Build", APP_BUILD_TOKEN)
         # Keep utility/private surfaces out of search indexing.
-        noindex_prefixes = ("/admin", "/recorder", "/create_admin", "/api/", "/recorder/api/")
+        noindex_prefixes = ("/admin", "/recorder", "/create_admin", "/api/", "/recorder/api/", "/family-guardian/")
         noindex_exact = ("/offline", "/health")
         req_path = (request.path or "").strip()
         if req_path in noindex_exact or any(req_path.startswith(p) for p in noindex_prefixes):
@@ -9703,6 +9707,30 @@ def support():
 @app.route("/privacy", methods=["GET"])
 def privacy():
     return render_template("privacy.html")
+
+
+@app.route("/family-guardian/privacy-policy", methods=["GET"])
+def family_guardian_privacy_policy():
+    return render_template(
+        "family_guardian/privacy_policy.html",
+        fg_support_email=FAMILY_GUARDIAN_SUPPORT_EMAIL,
+    )
+
+
+@app.route("/family-guardian/terms", methods=["GET"])
+def family_guardian_terms():
+    return render_template(
+        "family_guardian/terms_of_service.html",
+        fg_support_email=FAMILY_GUARDIAN_SUPPORT_EMAIL,
+    )
+
+
+@app.route("/family-guardian/support", methods=["GET"])
+def family_guardian_support():
+    return render_template(
+        "family_guardian/support.html",
+        fg_support_email=FAMILY_GUARDIAN_SUPPORT_EMAIL,
+    )
 
 
 # ------------------ HOME ------------------

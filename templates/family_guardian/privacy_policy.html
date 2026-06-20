@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy | Family Guardian</title>
+  <meta name="description" content="Family Guardian Privacy Policy — account data, location sharing, Firebase, subscriptions, children's privacy, and data deletion.">
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/family-guardian/privacy-policy' }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="icon" href="/static/icons/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+  <meta name="theme-color" content="#0b5cff">
+  <style>
+    .fg-legal-wrap { max-width: 820px; margin: 0 auto; }
+    .fg-legal-brand { margin-bottom: 8px; }
+    .fg-legal-brand h1 { margin: 0; font-size: 1.35rem; }
+    .fg-legal-brand p { margin: 4px 0 0; color: var(--muted); font-size: .92rem; }
+    .fg-legal-nav {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+      margin: 12px 0 16px; font-size: .92rem;
+    }
+    .fg-legal-nav a { font-weight: 700; }
+    .fg-legal-nav-sep { color: var(--muted); }
+    .fg-legal-body h2 { margin-top: 0; }
+    .fg-legal-body h3 { margin-top: 18px; margin-bottom: 8px; }
+    .fg-legal-body p, .fg-legal-body li { line-height: 1.75; }
+    .fg-legal-body ul { margin: 8px 0 12px; padding-left: 1.25rem; }
+    .fg-legal-updated { color: var(--muted); font-size: .9rem; margin-top: 4px; }
+    .fg-back-home { margin-top: 16px; font-size: .92rem; }
+    @media (max-width: 640px) {
+      .fg-legal-wrap { padding: 0 4px; }
+      .fg-legal-body h2 { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+<div class="container fg-legal-wrap">
+  <header class="topbar fg-legal-brand">
+    <div class="brand">
+      <h1>Family Guardian</h1>
+      <p>Family safety &amp; parental controls — hosted on {{ APP_NAME or "Gadaa" }}</p>
+    </div>
+    <div class="small-actions">
+      <a class="btn" href="https://gadaadictionary.com/">Gadaa Dictionary</a>
+    </div>
+  </header>
+
+  {% include "family_guardian/_legal_nav.html" %}
+
+  <section class="card fg-legal-body">
+    <h2>Privacy Policy</h2>
+    <p class="fg-legal-updated">Last updated: June 20, 2026</p>
+
+    <p>
+      This Privacy Policy describes how <strong>Family Guardian</strong> (“we”, “us”, “our”)
+      collects, uses, stores, and shares information when you use the Family Guardian mobile
+      application and related services. Family Guardian is operated in connection with
+      <a href="https://gadaadictionary.com">Gadaadictionary.com</a>.
+    </p>
+    <p>
+      By creating an account or using Family Guardian, you agree to the practices described
+      in this policy. If you do not agree, please do not use the app.
+    </p>
+
+    <h3>1. Information We Collect</h3>
+    <p><strong>Account registration.</strong> When you register, we collect information such as
+    your name, role in the family (parent or child), and credentials used to sign in. Parents
+    create and manage family groups; child accounts are created under parental supervision.</p>
+    <p><strong>Email addresses.</strong> We collect email addresses for account creation,
+    authentication, password recovery, important service notices, and optional notifications.
+    Email addresses are not sold to third parties.</p>
+    <p><strong>Firebase Authentication.</strong> We use Google Firebase Authentication to verify
+    identities and manage sign-in (including email/password and other supported providers).
+    Firebase may process authentication tokens and related metadata necessary to secure your
+    account.</p>
+    <p><strong>Cloud Firestore.</strong> Family profiles, member relationships, tasks, rewards,
+    schedules, check-in history, SOS events, geofence definitions, and app configuration data may
+    be stored in Google Cloud Firestore. Data is organized per family account and access is
+    restricted by security rules.</p>
+    <p><strong>Firebase Cloud Messaging (FCM).</strong> We use FCM to deliver push notifications
+    such as SOS alerts, check-in reminders, task updates, bedtime reminders, and subscription
+    notices. Device tokens and notification preferences may be stored to deliver these messages.</p>
+    <p><strong>GPS location tracking.</strong> With explicit permission, Family Guardian may
+    collect real-time or periodic location data from devices linked to family members. Location
+    is used for map display, safety features, and location-based alerts. You can disable location
+    permissions in device settings; some features may not work without location access.</p>
+    <p><strong>Geofences.</strong> Parents may define geographic boundaries (geofences). When a
+    family member enters or leaves a geofence, the app may record the event and send
+    notifications to authorized family members.</p>
+    <p><strong>Family location sharing.</strong> Location data shared within a family group is
+    visible only to members authorized by the parent account administrator, according to role
+    and feature settings.</p>
+    <p><strong>SOS alerts.</strong> When a user triggers an SOS alert, we process location,
+    timestamp, and account identifiers to notify designated family members and display alert
+    status in the app.</p>
+    <p><strong>Check-ins.</strong> Manual or scheduled check-ins may record time, optional
+    location, and confirmation status for family visibility and safety logs.</p>
+    <p><strong>Tasks and rewards.</strong> Parents may assign tasks and rewards to child accounts.
+    We store task descriptions, completion status, reward points or badges, and related metadata.</p>
+    <p><strong>School schedules.</strong> Optional school schedule information (classes, times,
+    locations) may be stored to support reminders and family coordination.</p>
+    <p><strong>Bedtime schedules.</strong> Bedtime and wake-time settings, plus related reminders,
+    may be stored and used to notify family members or enforce screen-time rules where enabled.</p>
+    <p><strong>Screen time management.</strong> We may collect and store screen-time limits,
+    usage summaries, and enforcement settings configured by parents for child devices.</p>
+    <p><strong>App usage monitoring.</strong> On supported devices and plans, Family Guardian may
+    collect app usage statistics (such as time spent in apps or categories) to help parents
+    understand and manage digital habits. Collection depends on device permissions and OS
+    capabilities.</p>
+
+    <h3>2. Subscriptions and Payments</h3>
+    <p><strong>RevenueCat.</strong> Subscription status, entitlements, and purchase metadata may
+    be processed through RevenueCat to manage Premium and Premium Plus features across platforms.</p>
+    <p><strong>Apple App Store purchases.</strong> If you subscribe via Apple, payment is
+    processed by Apple. We receive transaction and entitlement information from Apple and
+    RevenueCat, not your full payment card details.</p>
+    <p><strong>Google Play purchases.</strong> If you subscribe via Google Play, payment is
+    processed by Google. We receive purchase confirmation and subscription status from Google
+    and RevenueCat, not your full payment card details.</p>
+    <p>We do not store complete credit or debit card numbers on our servers.</p>
+
+    <h3>3. How We Use Information</h3>
+    <ul>
+      <li>Provide, operate, and improve Family Guardian features</li>
+      <li>Authenticate users and secure family accounts</li>
+      <li>Deliver safety alerts, notifications, and family coordination tools</li>
+      <li>Process subscriptions and verify premium feature access</li>
+      <li>Respond to support requests and legal obligations</li>
+      <li>Detect abuse, fraud, and unauthorized access</li>
+    </ul>
+
+    <h3>4. How We Share Information</h3>
+    <p>We share information only as needed to operate the service:</p>
+    <ul>
+      <li><strong>Within your family group</strong> — according to parent-configured roles and permissions</li>
+      <li><strong>Service providers</strong> — such as Google (Firebase, FCM, Firestore), RevenueCat,
+      Apple, and Google Play, under their respective terms and our instructions</li>
+      <li><strong>Legal requirements</strong> — when required by law, court order, or to protect
+      safety and rights</li>
+    </ul>
+    <p>We do not sell personal information to advertisers or data brokers.</p>
+
+    <h3>5. Data Retention</h3>
+    <p>We retain account and family data while your account is active and as needed to provide
+    the service, comply with law, resolve disputes, and enforce agreements. You may request
+    deletion as described below.</p>
+
+    <h3>6. Data Deletion Requests</h3>
+    <p>You may request deletion of your account and associated personal data by:</p>
+    <ul>
+      <li>Using in-app account deletion options where available, or</li>
+      <li>Emailing <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> with your
+      registered email and a clear deletion request</li>
+    </ul>
+    <p>Parents may request deletion of child accounts they administer. Some data may be retained
+    in backups or logs for a limited period for security, legal, or operational reasons.</p>
+    <p>See our <a href="{{ url_for('family_guardian_support') }}">Support page</a> for step-by-step
+    instructions.</p>
+
+    <h3>7. Children’s Privacy</h3>
+    <p>Family Guardian is designed for families and may be used by children under parental
+    supervision. Child accounts are created and managed by a parent or legal guardian. We do not
+    knowingly permit children to create standalone accounts without parental involvement.</p>
+    <p>Parents control what data is collected for child profiles, including location, screen time,
+    and notifications. If you believe we have collected personal information from a child without
+    appropriate consent, contact us at
+    <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> and we will take appropriate
+    steps to delete it.</p>
+    <p>Our practices aim to comply with applicable children’s privacy laws, including COPPA where
+    applicable, through parental gates and guardian-managed accounts.</p>
+
+    <h3>8. Security Practices</h3>
+    <p>We use industry-standard measures to protect your information, including:</p>
+    <ul>
+      <li>Encrypted connections (HTTPS/TLS) for data in transit</li>
+      <li>Firebase security rules and authenticated access controls</li>
+      <li>Role-based permissions within family groups</li>
+      <li>Monitoring for suspicious activity and unauthorized access</li>
+    </ul>
+    <p>No method of transmission or storage is 100% secure. Please use a strong password and
+    keep your device and account credentials private.</p>
+
+    <h3>9. Your Choices and Rights</h3>
+    <p>Depending on your location, you may have rights to access, correct, delete, or restrict
+    processing of your personal data. Contact
+    <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> to exercise these rights.
+    We may need to verify your identity before processing requests.</p>
+
+    <h3>10. International Users</h3>
+    <p>Your information may be processed in countries where our service providers operate,
+    including the United States. By using Family Guardian, you consent to such transfers subject
+    to applicable law and appropriate safeguards.</p>
+
+    <h3>11. Changes to This Policy</h3>
+    <p>We may update this Privacy Policy from time to time. The “Last updated” date at the top
+    will reflect changes. Material changes may be communicated via the app or email where
+    appropriate.</p>
+
+    <h3>12. Contact Us</h3>
+    <p>Questions about this Privacy Policy or our data practices:</p>
+    <p><a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a></p>
+    <p>Support: <a href="{{ url_for('family_guardian_support') }}">Family Guardian Support</a></p>
+  </section>
+
+  <footer class="footer">
+    <p>© 2026 Family Guardian ·
+      <a href="{{ url_for('family_guardian_terms') }}">Terms</a> ·
+      <a href="{{ url_for('family_guardian_support') }}">Support</a>
+    </p>
+    <p class="fg-back-home"><a href="https://gadaadictionary.com/">Return to Gadaa Dictionary</a></p>
+  </footer>
+</div>
+</body>
+</html>
