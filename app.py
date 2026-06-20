@@ -986,6 +986,7 @@ def add_security_headers(resp):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     if resp.mimetype == "text/html":
         resp.headers.setdefault("Cache-Control", "no-cache, no-store, must-revalidate")
+        resp.headers.setdefault("X-Gadaa-Build", APP_BUILD_TOKEN)
         # Keep utility/private surfaces out of search indexing.
         noindex_prefixes = ("/admin", "/recorder", "/create_admin", "/api/", "/recorder/api/")
         noindex_exact = ("/offline", "/health")
