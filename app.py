@@ -9733,6 +9733,21 @@ def family_guardian_support():
     )
 
 
+@app.route("/kidsacademy/privacy", methods=["GET"])
+def kidsacademy_privacy():
+    return render_template("kidsacademy/privacy.html")
+
+
+@app.route("/kidsacademy/terms", methods=["GET"])
+def kidsacademy_terms():
+    return render_template("kidsacademy/terms.html")
+
+
+@app.route("/kidsacademy/support", methods=["GET"])
+def kidsacademy_support():
+    return render_template("kidsacademy/support.html")
+
+
 # ------------------ HOME ------------------
 
 @app.route("/", methods=["GET", "POST"])
