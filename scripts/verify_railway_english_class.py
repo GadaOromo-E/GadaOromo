@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = (os.environ.get("VERIFY_BASE_URL") or "https://www.gadaadictionary.com").rstrip("/")
+BASE = (os.environ.get("VERIFY_BASE_URL") or "https://gadaadictionary.com").rstrip("/")
 MAIN_SHA = (os.environ.get("GITHUB_MAIN_SHA") or "").strip()
 
 

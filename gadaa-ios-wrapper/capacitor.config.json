@@ -3,7 +3,7 @@
   "appName": "Gadaa Dictionary",
   "webDir": "www",
   "server": {
-    "url": "https://www.gadaadictionary.com",
+    "url": "https://gadaadictionary.com",
     "cleartext": false
   }
 }

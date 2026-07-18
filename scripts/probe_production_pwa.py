@@ -4,7 +4,7 @@ import json
 import re
 import urllib.request
 
-BASE = "https://www.gadaadictionary.com"
+BASE = "https://gadaadictionary.com"
 
 
 def fetch(url, timeout=60):
