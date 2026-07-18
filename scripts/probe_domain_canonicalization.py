@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
-"""Verify canonical apex domain responses for Gadaa (https://gadaadictionary.com)."""
+"""Verify production domain responses for Gadaa (apex + www)."""
 import json
 import re
 import urllib.error
 import urllib.request
 
 DNS_GOOGLE = "https://dns.google/resolve"
-CANONICAL_BASE = "https://gadaadictionary.com"
+PRODUCTION_SITE_URLS = (
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com",
+)
+CANONICAL_BASE = PRODUCTION_SITE_URLS[0]
 
 HOSTS = [
     CANONICAL_BASE,
+    PRODUCTION_SITE_URLS[1],
     "http://gadaadictionary.com",
+    "http://www.gadaadictionary.com",
 ]
 PATHS = ["/", "/english-class", "/service-worker.js", "/learn"]
 
@@ -93,10 +99,13 @@ def dns_lookup(name, rtype):
 def main():
     report = {
         "canonical_base": CANONICAL_BASE,
+        "production_urls": list(PRODUCTION_SITE_URLS),
         "dns": {
             "apex_a": dns_lookup("gadaadictionary.com", "A"),
             "apex_aaaa": dns_lookup("gadaadictionary.com", "AAAA"),
             "apex_cname": dns_lookup("gadaadictionary.com", "CNAME"),
+            "www_a": dns_lookup("www.gadaadictionary.com", "A"),
+            "www_cname": dns_lookup("www.gadaadictionary.com", "CNAME"),
             "acme_txt": dns_lookup("_acme-challenge.gadaadictionary.com", "TXT"),
         },
         "hosts": {},
@@ -118,36 +127,44 @@ def main():
                 }
             )
 
-    host_report = {}
-    for path in PATHS:
-        url = CANONICAL_BASE + path
-        res = fetch(url, follow=True)
-        entry = {
-            "status": res.get("status"),
-            "final_url": res.get("final_url"),
-            "error": res.get("error"),
-            "x_gadaa_build": (res.get("headers") or {}).get("X-Gadaa-Build")
-            or (res.get("headers") or {}).get("x-gadaa-build"),
-            "server": (res.get("headers") or {}).get("Server"),
-            "cf_ray": (res.get("headers") or {}).get("CF-RAY"),
-            "cache_control": (res.get("headers") or {}).get("Cache-Control"),
-        }
-        if path in ("/", "/english-class") and res.get("body"):
-            entry.update(summarize_html(res["body"]))
-        if path == "/service-worker.js" and res.get("body"):
-            m = re.search(r'const CACHE_VERSION = "([^"]+)"', res["body"])
-            entry["sw_cache_version"] = m.group(1) if m else ""
-        host_report[path] = entry
-    report["hosts"][CANONICAL_BASE] = host_report
+    for base in PRODUCTION_SITE_URLS:
+        host_report = {}
+        for path in PATHS:
+            url = base + path
+            res = fetch(url, follow=True)
+            entry = {
+                "status": res.get("status"),
+                "final_url": res.get("final_url"),
+                "error": res.get("error"),
+                "x_gadaa_build": (res.get("headers") or {}).get("X-Gadaa-Build")
+                or (res.get("headers") or {}).get("x-gadaa-build"),
+                "server": (res.get("headers") or {}).get("Server"),
+                "cf_ray": (res.get("headers") or {}).get("CF-RAY"),
+                "cache_control": (res.get("headers") or {}).get("Cache-Control"),
+            }
+            if path in ("/", "/english-class") and res.get("body"):
+                entry.update(summarize_html(res["body"]))
+            if path == "/service-worker.js" and res.get("body"):
+                m = re.search(r'const CACHE_VERSION = "([^"]+)"', res["body"])
+                entry["sw_cache_version"] = m.group(1) if m else ""
+            host_report[path] = entry
+        report["hosts"][base] = host_report
 
     apex = report["hosts"].get(CANONICAL_BASE, {}).get("/", {})
+    www = report["hosts"].get(PRODUCTION_SITE_URLS[1], {}).get("/", {})
     canonical_link = apex.get("canonical_link") or ""
     report["comparison"] = {
+        "production_urls": list(PRODUCTION_SITE_URLS),
         "canonical_base": CANONICAL_BASE,
         "homepage_build_meta": apex.get("build_meta"),
+        "www_build_meta": www.get("build_meta"),
         "homepage_sidebar": {
             "learn_languages": apex.get("learn_languages"),
             "english_class": apex.get("english_class"),
+        },
+        "www_sidebar": {
+            "learn_languages": www.get("learn_languages"),
+            "english_class": www.get("english_class"),
         },
         "canonical_link": canonical_link,
         "canonical_link_uses_apex": canonical_link.startswith(CANONICAL_BASE),

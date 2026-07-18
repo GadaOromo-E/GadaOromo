@@ -421,6 +421,12 @@ SW_CANONICAL_URL = f"/service-worker.js?v={SW_JS_VERSION}"
 ADMIN_MANAGE_PASSWORD = (os.environ.get("ADMIN_MANAGE_PASSWORD") or "").strip()
 
 # If you set WEBSITE_URL in Render env vars, we use it for sitemap/canonical.
+CANONICAL_SITE_URL = "https://gadaadictionary.com"
+PRODUCTION_SITE_URLS = (
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com",
+)
+PRODUCTION_SITE_HOSTS = frozenset({"gadaadictionary.com", "www.gadaadictionary.com"})
 WEBSITE_URL = os.environ.get("WEBSITE_URL", "").strip().rstrip("/")
 FAMILY_GUARDIAN_SUPPORT_EMAIL = (
     os.environ.get("FAMILY_GUARDIAN_SUPPORT_EMAIL", "").strip()
@@ -589,7 +595,7 @@ def force_primary_domain():
     }
     host = ((request.host or "").split(":")[0] or "").strip().lower()
     if host and (host in redirect_hosts):
-        primary_base = (WEBSITE_URL or "https://gadaadictionary.com").rstrip("/")
+        primary_base = (WEBSITE_URL or CANONICAL_SITE_URL).rstrip("/")
         dest = request.full_path or request.path or "/"
         if dest.endswith("?"):
             dest = dest[:-1]
@@ -614,13 +620,33 @@ def admin_review_route_guard():
         return render_template("review_access.html"), 200
     return None
 
+def _request_production_site_url() -> str:
+    """Return https/http base URL when the request host is a known production domain."""
+    try:
+        host = ((request.host or "").split(":")[0] or "").strip().lower()
+        if host not in PRODUCTION_SITE_HOSTS:
+            return ""
+        proto_raw = (request.headers.get("X-Forwarded-Proto") or "").strip().lower()
+        if not proto_raw:
+            proto_raw = "https" if request.is_secure else "http"
+        proto = proto_raw.split(",")[0].strip()
+        if proto not in ("http", "https"):
+            proto = "https"
+        return f"{proto}://{host}"
+    except Exception:
+        return ""
+
+
 def _site_base_url() -> str:
     if WEBSITE_URL:
         return WEBSITE_URL.rstrip("/")
+    req_prod = _request_production_site_url()
+    if req_prod:
+        return req_prod
     try:
         return (request.url_root or "").rstrip("/")
     except Exception:
-        return "https://gadaadictionary.com"
+        return CANONICAL_SITE_URL
 
 
 def _safe_book_asset_url(url_value: str) -> str:
@@ -969,6 +995,10 @@ def inject_globals():
         SUPPORT_MIN_NOK=SUPPORT_MIN_NOK,
         DONATE_URLS=DONATE_URLS,
         WEBSITE_URL=WEBSITE_URL,
+        CANONICAL_SITE_URL=CANONICAL_SITE_URL,
+        PRODUCTION_SITE_URLS=PRODUCTION_SITE_URLS,
+        PRODUCTION_SITE_HOSTS=PRODUCTION_SITE_HOSTS,
+        SITE_BASE_URL=_site_base_url(),
         API_URL=API_URL,
         APP_BUILD_TOKEN=APP_BUILD_TOKEN,
         LEARN_TEMPLATE_VERSION=LEARN_TEMPLATE_VERSION,

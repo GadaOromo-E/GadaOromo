@@ -2,8 +2,16 @@
   "appId": "com.gadaa.dictionary",
   "appName": "Gadaa Dictionary",
   "webDir": "www",
+  "productionUrls": [
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com"
+  ],
   "server": {
     "url": "https://gadaadictionary.com",
-    "cleartext": false
+    "cleartext": false,
+    "allowNavigation": [
+      "gadaadictionary.com",
+      "www.gadaadictionary.com"
+    ]
   }
 }

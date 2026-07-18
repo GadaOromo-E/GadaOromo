@@ -1,6 +1,10 @@
 {
   "name": "Gadaa",
   "short_name": "Gadaa",
+  "production_urls": [
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com"
+  ],
   "id": "/?source=pwa",
   "start_url": "/?source=pwa",
   "scope": "/",

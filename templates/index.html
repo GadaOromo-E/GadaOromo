@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="description" content="Gadaa homepage for Oromo-English dictionary lookup, multilingual translation, AI help, and community pronunciation.">
   <meta name="robots" content="index,follow">
-  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/' }}">
+  <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/' }}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ APP_NAME or "Gadaa" }} - Oromo Dictionary, Translation and AI</title>
 
@@ -403,7 +403,7 @@
   const feedback = document.getElementById("copyHomeShareFeedback");
   if (!btn || !feedback) return;
 
-  const shareUrl = "https://gadaadictionary.com";
+  const shareUrl = {{ SITE_BASE_URL|tojson }};
   let resetTimer = null;
 
   btn.addEventListener("click", async function () {

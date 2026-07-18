@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="description" content="Translate between Oromo, English, Amharic, Arabic, French, and Chinese using Gadaa's English-pivot dictionary model.">
-  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/translate' }}">
+  <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/translate' }}">
   <meta name="robots" content="{% if is_query_variant %}noindex,follow{% else %}index,follow{% endif %}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Translator | {{ APP_NAME or "Gadaa" }}</title>

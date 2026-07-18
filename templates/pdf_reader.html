@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="description" content="{{ (book.title ~ ' PDF reader') if book else 'PDF reader' }}" />
-  <link rel="canonical" href="{{ (WEBSITE_URL or 'https://gadaadictionary.com') ~ '/read/pdf/' ~ (book.id if book else '') }}">
+  <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/read/pdf/' ~ (book.id if book else '') }}">
   <meta name="robots" content="noindex,follow">
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ (book.title ~ ' | PDF Reader') if book else 'PDF Reader' }}</title>

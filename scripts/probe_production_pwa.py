@@ -5,6 +5,10 @@ import re
 import urllib.request
 
 BASE = "https://gadaadictionary.com"
+PRODUCTION_SITE_URLS = (
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com",
+)
 
 
 def fetch(url, timeout=60):

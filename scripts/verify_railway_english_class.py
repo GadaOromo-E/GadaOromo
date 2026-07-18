@@ -11,6 +11,10 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE = (os.environ.get("VERIFY_BASE_URL") or "https://gadaadictionary.com").rstrip("/")
+PRODUCTION_SITE_URLS = (
+    "https://gadaadictionary.com",
+    "https://www.gadaadictionary.com",
+)
 MAIN_SHA = (os.environ.get("GITHUB_MAIN_SHA") or "").strip()
 
 

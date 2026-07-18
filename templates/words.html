@@ -24,7 +24,7 @@
   {% set page_title = page_title ~ " | Amharic, Arabic, French & Chinese | " ~ (APP_NAME or "Gadaa") %}
 
   {% set meta_desc = english_word ~ " means " ~ (oromo_word or "this Oromo translation") ~ ". Find translations in Oromo, Amharic, Arabic, French, and Chinese on " ~ APP_NAME ~ "." %}
-  {% set canonical_href = canonical_url or ("https://gadaadictionary.com/word/" ~ (english_word|urlencode)) %}
+  {% set canonical_href = canonical_url or (CANONICAL_SITE_URL ~ "/word/" ~ (english_word|urlencode)) %}
 
   <title>{{ page_title }}</title>
   <meta name="description" content="{{ meta_desc }}">
@@ -171,7 +171,7 @@
     "name": "{{ english_word|e }}",
     "description": "{{ meta_desc|e }}",
     "url": "{{ canonical_href }}",
-    "inDefinedTermSet": "https://gadaadictionary.com/dictionary"
+    "inDefinedTermSet": "{{ CANONICAL_SITE_URL }}/dictionary"
   }
   </script>
   {% endif %}
