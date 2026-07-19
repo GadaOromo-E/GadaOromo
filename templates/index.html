@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
+  <link rel="preconnect" href="https://fundingchoicesmessages.google.com" crossorigin>
   <meta name="description" content="Gadaa homepage for Oromo-English dictionary lookup, multilingual translation, AI help, and community pronunciation.">
   <meta name="robots" content="index,follow">
   <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/' }}">
@@ -205,8 +207,7 @@
     html.is-android-app #android-install,
     html.is-android-app #playBtn { display: none !important; }
   </style>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696"
-     crossorigin="anonymous"></script></head>
+</head>
 
 <body>
 
@@ -441,6 +442,7 @@
 <script src="{{ url_for('static', filename='pwa-ui.js') }}?v={{ PWA_UI_JS_VERSION }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260322-1" defer></script>
 
+<script src="{{ url_for('static', filename='lazy-ads.js') }}" defer></script>
 </body>
 </html>
 

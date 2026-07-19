@@ -4,6 +4,8 @@
   <!-- LIGHTHOUSE_DICTIONARY_HEAD_OK -->
   <!-- DICTIONARY_TEMPLATE_ACTIVE -->
   <meta charset="UTF-8" />
+  <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
+  <link rel="preconnect" href="https://fundingchoicesmessages.google.com" crossorigin>
   <meta name="description" content="Gadaa Oromo dictionary and multilingual translation lookup using English as a pivot.">
   <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/dictionary' }}">
   <meta name="robots" content="index,follow">
@@ -43,7 +45,7 @@
       font-weight: 700;
     }
   </style>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696" crossorigin="anonymous"></script></head>
+</head>
 <body>
 <!-- LIGHTHOUSE_DICTIONARY_BODY_OK -->
 <div class="container">
@@ -329,6 +331,7 @@ function speakTextCompat(text, langCode){ if(!text || !('speechSynthesis' in win
 function speakSource(){ const el=document.getElementById('srcText'); speakTextCompat(el?el.innerText:'', '{{ source_speech_lang }}'); }
 function speakTarget(){ const el=document.getElementById('dstText'); speakTextCompat(el?el.innerText:'', '{{ target_speech_lang }}'); }
 </script>
+<script src="{{ url_for('static', filename='lazy-ads.js') }}" defer></script>
 </body>
 </html>
 

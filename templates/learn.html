@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
+  <link rel="preconnect" href="https://fundingchoicesmessages.google.com" crossorigin>
   <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ request.path }}">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Learn | {{ APP_NAME or "Gadaa" }}</title>
@@ -229,7 +231,7 @@
     .lrn-ad { margin: 10px 0; min-height: 0; overflow: hidden; }
     .lrn-ad ins { display: block; }
   </style>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696" crossorigin="anonymous"></script></head>
+</head>
 <body>
 
 <div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
@@ -985,5 +987,6 @@ window.LEARN_ROWS = {{ learn_rows | tojson }};
 <script src="{{ url_for('static', filename='audio.js') }}?v={{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}" data-asset="audio.js" data-asset-version="{{ (learn_debug or {}).get('audio_js_version', AUDIO_JS_VERSION) }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}?v={{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}" data-asset="pwa-ui.js" data-asset-version="{{ (learn_debug or {}).get('pwa_ui_js_version', PWA_UI_JS_VERSION) }}"></script>
 
+<script src="{{ url_for('static', filename='lazy-ads.js') }}" defer></script>
 </body>
 </html>

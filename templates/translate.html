@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <link rel="preconnect" href="https://pagead2.googlesyndication.com" crossorigin>
+  <link rel="preconnect" href="https://fundingchoicesmessages.google.com" crossorigin>
   <meta name="description" content="Translate between Oromo, English, Amharic, Arabic, French, and Chinese using Gadaa's English-pivot dictionary model.">
   <link rel="canonical" href="{{ (WEBSITE_URL or CANONICAL_SITE_URL) ~ '/translate' }}">
   <meta name="robots" content="{% if is_query_variant %}noindex,follow{% else %}index,follow{% endif %}">
@@ -10,7 +12,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=20260218-2">
   <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
   <meta name="theme-color" content="#0b5cff">
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696" crossorigin="anonymous"></script></head>
+</head>
 <body>
 <div class="container">
 <header class="topbar">
@@ -282,6 +284,7 @@ function startVoice(){
 <script src="{{ url_for('static', filename='speak.js') }}" defer></script>
 <script src="{{ url_for('static', filename='pwa-ui.js') }}" defer></script>
 <script src="{{ url_for('static', filename='audio.js') }}?v=20260323-1"></script>
+<script src="{{ url_for('static', filename='lazy-ads.js') }}" defer></script>
 </body>
 </html>
 
