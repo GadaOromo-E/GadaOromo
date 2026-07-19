@@ -112,7 +112,7 @@
           display:inline-flex; align-items:center; justify-content:center;
           margin-bottom:14px;
         ">
-          <span style="font-size:34px;">ðŸ“˜</span>
+          <img src="/static/icons/icon-512.png" alt="Gadaa" width="56" height="56" style="display:block;border-radius:14px;">
         </div>
         <div style="font-size:20px; font-weight:700;">${title}</div>
         <div style="opacity:.9; font-size:13px; margin-top:6px;">Loadingâ€¦</div>
@@ -120,13 +120,12 @@
     `;
     document.body.appendChild(splash);
 
-    window.addEventListener(
-      "load",
-      () => {
-        setTimeout(() => splash.remove(), 420);
-      },
-      { once: true }
-    );
+    // Hide on DOMContentLoaded (CSS applied) rather than window.load, which
+    // waits for every image/ad and keeps the splash up far too long.
+    const hideSplash = () => setTimeout(() => splash.remove(), 200);
+    if (document.readyState !== "loading") hideSplash();
+    else document.addEventListener("DOMContentLoaded", hideSplash, { once: true });
+    setTimeout(() => { if (splash && splash.parentNode) splash.remove(); }, 4000);
   }
 
   // ---------- Native-like transitions ----------

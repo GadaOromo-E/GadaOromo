@@ -206,24 +206,30 @@
     html.is-android-app #playBtn { display: none !important; }
   </style>
 <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696"
-     crossorigin="anonymous"></script>
-<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5940649678566696" crossorigin="anonymous"></script></head>
+     crossorigin="anonymous"></script></head>
 
 <body>
 
 <!-- OPTIONAL: tiny splash overlay (native feel) -->
 <div id="bootSplash" style="position:fixed; inset:0; background:#fff; display:flex; align-items:center; justify-content:center; z-index:2000;">
   <div style="text-align:center;">
-    <div style="font-size:42px;">📘</div>
+    <img src="/static/icons/icon-512.png" alt="Gadaa Dictionary" width="84" height="84" style="border-radius:20px;">
     <div style="margin-top:8px; font-weight:700;">{{ APP_NAME }}</div>
     <div class="muted" style="margin-top:6px;">Loading…</div>
   </div>
 </div>
 <script>
-  window.addEventListener("load", () => {
-    const el = document.getElementById("bootSplash");
-    if (el) el.style.display = "none";
-  });
+  (function () {
+    function hideBoot() {
+      var el = document.getElementById("bootSplash");
+      if (el) el.style.display = "none";
+    }
+    // Hide as soon as the DOM + CSS are ready, instead of waiting for
+    // window.load (which blocks on ads/images and stalls the splash).
+    if (document.readyState !== "loading") hideBoot();
+    else document.addEventListener("DOMContentLoaded", hideBoot);
+    setTimeout(hideBoot, 3000); // safety cap
+  })();
 </script>
 
 <!-- PWA Update Bar -->

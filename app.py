@@ -297,6 +297,14 @@ _bootstrap_railway_db()
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev")
 
+# gzip/brotli-compress text responses (HTML/CSS/JS/JSON) to cut transfer size
+# and improve FCP/LCP on mobile. No-op if flask-compress isn't installed.
+try:
+    from flask_compress import Compress
+    Compress(app)
+except Exception:
+    pass
+
 from datetime import timedelta
 
 # True i produksjon/https (Render + Cloudflare). False lokalt pÃ¥ http.
@@ -1029,6 +1037,14 @@ def add_security_headers(resp):
         req_path = (request.path or "").strip()
         if req_path in noindex_exact or any(req_path.startswith(p) for p in noindex_prefixes):
             resp.headers["X-Robots-Tag"] = "noindex, nofollow"
+    elif request.path.startswith("/static/") and resp.status_code == 200:
+        # Static assets are versioned via ?v=... in templates, so they can be
+        # cached aggressively. Exclude the service worker (must revalidate to
+        # ship updates); it is served from /service-worker.js, not /static/,
+        # but guard defensively.
+        _p = request.path
+        if ("service-worker" not in _p) and (not _p.endswith("/sw.js")):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return resp
 
 
