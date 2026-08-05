@@ -28,6 +28,10 @@
     .fg-legal-body ul { margin: 8px 0 12px; padding-left: 1.25rem; }
     .fg-legal-updated { color: var(--muted); font-size: .9rem; margin-top: 4px; }
     .fg-back-home { margin-top: 16px; font-size: .92rem; }
+    .fg-location-notice {
+      background: #fff8e1; border-left: 4px solid #f59e0b;
+      padding: 12px 16px; border-radius: 4px; margin-bottom: 16px;
+    }
     @media (max-width: 640px) {
       .fg-legal-wrap { padding: 0 4px; }
       .fg-legal-body h2 { font-size: 1.25rem; }
@@ -50,10 +54,10 @@
 
   <section class="card fg-legal-body">
     <h2>Privacy Policy</h2>
-    <p class="fg-legal-updated">Last updated: June 20, 2026</p>
+    <p class="fg-legal-updated">Last updated: June 25, 2026</p>
 
     <p>
-      This Privacy Policy describes how <strong>Family Guardian</strong> (“we”, “us”, “our”)
+      This Privacy Policy describes how <strong>Family Guardian</strong> ("we", "us", "our")
       collects, uses, stores, and shares information when you use the Family Guardian mobile
       application and related services. Family Guardian is operated in connection with
       <a href="https://gadaadictionary.com">Gadaadictionary.com</a>.
@@ -63,47 +67,81 @@
       in this policy. If you do not agree, please do not use the app.
     </p>
 
+    <div class="fg-location-notice">
+      <strong>⚠️ Important — Background Location Collection:</strong> Family Guardian collects
+      precise GPS location data continuously in the background from devices where location
+      sharing is enabled by the user. This data is used to display family members on the
+      family map, trigger geofence arrival and departure alerts, provide driving reports,
+      and send SOS emergency location alerts. A persistent notification is displayed at all
+      times when background location collection is active. Location data is stored securely
+      in Firebase and is only visible to members of the same family group. You can disable
+      location access in your device settings at any time.
+    </div>
+
     <h3>1. Information We Collect</h3>
+
+    <p><strong>Background Location Data.</strong> Family Guardian collects precise GPS
+    location data continuously in the background from devices where location sharing has
+    been enabled. Location collection requires explicit user permission and is always
+    indicated by a persistent notification on the device. This data is used exclusively
+    for family safety features including the family map, geofencing, driving reports,
+    speed alerts, and SOS emergency alerts. Location data is only shared with members
+    of the same family group as configured by the parent administrator.</p>
+
     <p><strong>Account registration.</strong> When you register, we collect information such as
     your name, role in the family (parent or child), and credentials used to sign in. Parents
     create and manage family groups; child accounts are created under parental supervision.</p>
+
     <p><strong>Email addresses.</strong> We collect email addresses for account creation,
     authentication, password recovery, important service notices, and optional notifications.
     Email addresses are not sold to third parties.</p>
+
     <p><strong>Firebase Authentication.</strong> We use Google Firebase Authentication to verify
     identities and manage sign-in (including email/password and other supported providers).
     Firebase may process authentication tokens and related metadata necessary to secure your
     account.</p>
+
     <p><strong>Cloud Firestore.</strong> Family profiles, member relationships, tasks, rewards,
     schedules, check-in history, SOS events, geofence definitions, and app configuration data may
     be stored in Google Cloud Firestore. Data is organized per family account and access is
     restricted by security rules.</p>
+
     <p><strong>Firebase Cloud Messaging (FCM).</strong> We use FCM to deliver push notifications
     such as SOS alerts, check-in reminders, task updates, bedtime reminders, and subscription
     notices. Device tokens and notification preferences may be stored to deliver these messages.</p>
+
     <p><strong>GPS location tracking.</strong> With explicit permission, Family Guardian may
     collect real-time or periodic location data from devices linked to family members. Location
     is used for map display, safety features, and location-based alerts. You can disable location
     permissions in device settings; some features may not work without location access.</p>
+
     <p><strong>Geofences.</strong> Parents may define geographic boundaries (geofences). When a
     family member enters or leaves a geofence, the app may record the event and send
     notifications to authorized family members.</p>
+
     <p><strong>Family location sharing.</strong> Location data shared within a family group is
     visible only to members authorized by the parent account administrator, according to role
     and feature settings.</p>
+
     <p><strong>SOS alerts.</strong> When a user triggers an SOS alert, we process location,
     timestamp, and account identifiers to notify designated family members and display alert
     status in the app.</p>
+
     <p><strong>Check-ins.</strong> Manual or scheduled check-ins may record time, optional
     location, and confirmation status for family visibility and safety logs.</p>
+
     <p><strong>Tasks and rewards.</strong> Parents may assign tasks and rewards to child accounts.
     We store task descriptions, completion status, reward points or badges, and related metadata.</p>
+
     <p><strong>School schedules.</strong> Optional school schedule information (classes, times,
     locations) may be stored to support reminders and family coordination.</p>
+
     <p><strong>Bedtime schedules.</strong> Bedtime and wake-time settings, plus related reminders,
     may be stored and used to notify family members or enforce screen-time rules where enabled.</p>
+
     <p><strong>Screen time management.</strong> We may collect and store screen-time limits,
     usage summaries, and enforcement settings configured by parents for child devices.</p>
+
     <p><strong>App usage monitoring.</strong> On supported devices and plans, Family Guardian may
     collect app usage statistics (such as time spent in apps or categories) to help parents
     understand and manage digital habits. Collection depends on device permissions and OS
@@ -158,7 +196,7 @@
     <p>See our <a href="{{ url_for('family_guardian_support') }}">Support page</a> for step-by-step
     instructions.</p>
 
-    <h3>7. Children’s Privacy</h3>
+    <h3>7. Children's Privacy</h3>
     <p>Family Guardian is designed for families and may be used by children under parental
     supervision. Child accounts are created and managed by a parent or legal guardian. We do not
     knowingly permit children to create standalone accounts without parental involvement.</p>
@@ -167,7 +205,7 @@
     appropriate consent, contact us at
     <a href="mailto:{{ fg_support_email }}">{{ fg_support_email }}</a> and we will take appropriate
     steps to delete it.</p>
-    <p>Our practices aim to comply with applicable children’s privacy laws, including COPPA where
+    <p>Our practices aim to comply with applicable children's privacy laws, including COPPA where
     applicable, through parental gates and guardian-managed accounts.</p>
 
     <h3>8. Security Practices</h3>
@@ -193,7 +231,7 @@
     to applicable law and appropriate safeguards.</p>
 
     <h3>11. Changes to This Policy</h3>
-    <p>We may update this Privacy Policy from time to time. The “Last updated” date at the top
+    <p>We may update this Privacy Policy from time to time. The "Last updated" date at the top
     will reflect changes. Material changes may be communicated via the app or email where
     appropriate.</p>
 
